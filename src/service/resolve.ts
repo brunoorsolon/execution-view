@@ -2,6 +2,7 @@ import type { ResolvedSource, ResolvedView } from '../config/schema.js';
 import { compareKeys, makeKey, parseKey } from '../core/keys.js';
 import { parseBodyRelations } from '../core/parser.js';
 import type { PlanInput } from '../core/plan.js';
+import { createLimiter } from '../providers/http.js';
 import type {
   DependencyEdge,
   DependencySource,
@@ -16,6 +17,9 @@ import type {
 
 /** Maximum number of `getIssue` calls made for issues that are not in the open set. */
 export const MAX_EXTERNAL_FETCHES = 200;
+
+/** Maximum number of `getIssue` lookups in flight at the same time. */
+export const LOOKUP_CONCURRENCY = 4;
 
 export interface ResolveResult {
   input: PlanInput;
@@ -143,6 +147,7 @@ export async function resolveView(
   const lookups = new Map<IssueKey, Lookup>();
   const unresolved: IssueKey[] = [];
   let fetches = 0;
+  const limit = createLimiter(LOOKUP_CONCURRENCY);
 
   let level: Issue[] = [...nodes.values()].sort((a, b) => compareKeys(a.key, b.key));
   while (level.length > 0) {
@@ -164,14 +169,16 @@ export async function resolveView(
     fetches += toFetch.length;
 
     const outcomes = await Promise.all(
-      toFetch.map(async (key) => {
-        const { repo, number } = parseKey(key);
-        try {
-          return { key, issue: await provider.getIssue(repo, number), error: null };
-        } catch (err) {
-          return { key, issue: null, error: errorMessage(err) };
-        }
-      }),
+      toFetch.map((key) =>
+        limit(async () => {
+          const { repo, number } = parseKey(key);
+          try {
+            return { key, issue: await provider.getIssue(repo, number), error: null };
+          } catch (err) {
+            return { key, issue: null, error: errorMessage(err) };
+          }
+        }),
+      ),
     );
 
     const next: Issue[] = [];

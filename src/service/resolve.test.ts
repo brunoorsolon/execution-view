@@ -12,7 +12,7 @@ import type {
   RawRelation,
   RepoRef,
 } from '../core/types.js';
-import { MAX_EXTERNAL_FETCHES, resolveView } from './resolve.js';
+import { LOOKUP_CONCURRENCY, MAX_EXTERNAL_FETCHES, resolveView } from './resolve.js';
 
 interface MakeOpts {
   state?: IssueState;
@@ -282,6 +282,52 @@ describe('resolveView: references', () => {
     const noHost = { ...SOURCE, webUrl: '' };
     const r2 = await resolveView(view(), noHost, provider);
     expect(r2.input.edges).toEqual([]);
+  });
+});
+
+describe('resolveView: lookup concurrency', () => {
+  it('never has more than LOOKUP_CONCURRENCY getIssue calls in flight and stays deterministic', async () => {
+    expect(LOOKUP_CONCURRENCY).toBe(4);
+    const refs = Array.from({ length: 25 }, (_, i) => `x/y#${i + 1}`);
+    const issues = [
+      mk('a/r#1', { body: `Depends on ${refs.join(', ')}` }),
+      ...refs.map((k) => mk(k, { state: Number(k.split('#')[1]) % 2 === 0 ? 'closed' : 'open' })),
+    ];
+    const baseline = await resolveView(view(), SOURCE, new FakeProvider(issues));
+
+    class GatedProvider extends FakeProvider {
+      inFlight = 0;
+      maxInFlight = 0;
+      readonly gates: (() => void)[] = [];
+      override async getIssue(repo: RepoRef, number: number): Promise<Issue | null> {
+        this.inFlight++;
+        this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+        await new Promise<void>((resolve) => this.gates.push(resolve));
+        try {
+          return await super.getIssue(repo, number);
+        } finally {
+          this.inFlight--;
+        }
+      }
+    }
+    const provider = new GatedProvider(issues);
+    const done = resolveView(view(), SOURCE, provider);
+    // Release the pending lookups one at a time, newest first, until all 25 have completed.
+    let released = 0;
+    while (released < refs.length) {
+      await new Promise((r) => setTimeout(r, 0));
+      const gate = provider.gates.pop();
+      if (gate === undefined) continue;
+      released++;
+      gate();
+    }
+    const { input } = await done;
+
+    expect(provider.maxInFlight).toBeGreaterThan(1);
+    expect(provider.maxInFlight).toBeLessThanOrEqual(LOOKUP_CONCURRENCY);
+    expect(provider.getCalls).toHaveLength(refs.length);
+    expect([...provider.getCalls].sort()).toEqual([...refs].sort());
+    expect(input).toEqual(baseline.input);
   });
 });
 

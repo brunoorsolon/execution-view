@@ -258,7 +258,7 @@ export function createGiteaProvider(opts: GiteaProviderOptions): IssueProvider {
       if (found === null) {
         warnings.push({
           code: 'native-unsupported',
-          message: `Issue dependencies are not available for ${repo.owner}/${repo.repo} (the dependencies endpoint returned 404). Enable dependencies in the repository settings (Settings → Issues → Enable dependencies) or instance config [service] DEFAULT_ENABLE_DEPENDENCIES. Native relations are skipped.`,
+          message: `Issue dependencies are not available for ${repo.owner}/${repo.repo} (the dependencies endpoint returned 404). Gitea: enable issue dependencies in the repository settings (the exact location varies by Gitea version) or set [service] DEFAULT_ENABLE_DEPENDENCIES = true in app.ini. Native relations are skipped.`,
           issues: [],
         });
       } else {

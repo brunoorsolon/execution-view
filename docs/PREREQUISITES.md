@@ -73,7 +73,7 @@ Open an issue and use the **Dependencies** section of the sidebar: add the issue
 
 For this to work, dependencies must be enabled:
 
-- **Per repository:** in the repository settings, in the issues section, enable the option for issue dependencies (it may be labelled "Enable issue dependencies" or similar) **(may vary by version: the exact label and location can differ; the app's own message points at Settings, Issues, "Enable dependencies")**.
+- **Per repository:** in the repository settings, in the issues section, enable the option for issue dependencies (it may be labelled "Enable issue dependencies" or similar) **(may vary by version: the exact label and location can differ, which is why the app's own message only says to enable issue dependencies in the repository settings)**.
 - **Per instance:** `[service] DEFAULT_ENABLE_DEPENDENCIES` in `app.ini` sets the default for new repositories (`true` by default in Gitea). **(may vary by version)**
 - **Across repositories:** a dependency on an issue in another repository needs `[service] ALLOW_CROSS_REPOSITORY_DEPENDENCIES` (`true` by default in Gitea). **(may vary by version)**
 
@@ -281,7 +281,7 @@ Every refresh of a view makes requests to your tracker. Derived from the provide
 | Native dependencies (`native: true`) | 1 per open issue (more when an issue has over 50 dependencies)                                     |
 | Lookups                              | Same as GitHub                                                                                     |
 
-The per-issue dependency and sub-issue requests run with a concurrency of 4; lookups of referenced issues are sent in parallel batches (one batch per level of references). Transient failures (HTTP 429, 502, 503, 504, network errors) are retried up to 3 times with exponential backoff, honouring `Retry-After`. When GitHub reports an exhausted rate limit and the reset is within 60 seconds, the app waits for it; if the reset is further away the refresh fails with a message that includes the reset time.
+The per-issue dependency and sub-issue requests run with a concurrency of 4; lookups of referenced issues run at most 4 at a time (one batch per level of references). Transient failures (HTTP 429, 502, 503, 504, network errors) are retried up to 3 times with exponential backoff, honouring `Retry-After`. When GitHub reports an exhausted rate limit and the reset is within 60 seconds, the app waits for it; if the reset is further away the refresh fails with a message that includes the reset time.
 
 **Example.** A GitHub view with 100 open issues, all with dependencies, and 10 referenced closed or external issues: 1 + 100 + 10 = 111 requests per refresh. Set that against your platform's rate limit (GitHub documents 5,000 requests per hour for authenticated users and 60 for anonymous ones **(may vary by version)**).
 

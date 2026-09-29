@@ -46,7 +46,7 @@ const HINTS: Record<string, string> = {
   'external-unresolved':
     'the cap on transitive lookups of issues outside the view was hit, so some external prerequisites are missing from the plan; narrow the view (scope, repos) or add the repos that hold those issues',
   'native-unsupported':
-    'native dependencies are not available here. Gitea: enable issue dependencies for the repo (Settings, Advanced) on a version that supports them. GitHub Enterprise Server: issue dependencies need a recent GHES version (older ones answer 404). Or set `dependencies.native: false` and declare dependencies with `Depends on #N` lines',
+    'native dependencies are not available here. Gitea: enable issue dependencies in the repository settings (the exact location varies by Gitea version) or set [service] DEFAULT_ENABLE_DEPENDENCIES = true in app.ini. GitHub Enterprise Server: issue dependencies need a recent GHES version (older ones answer 404). Or set `dependencies.native: false` and declare dependencies with `Depends on #N` lines',
   'fetch-error':
     'an issue could not be fetched; check that the token is set and valid, that it can read the repo, and that the network and baseUrl are reachable',
 };
