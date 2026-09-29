@@ -1,0 +1,428 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { FastifyInstance } from 'fastify';
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadConfig } from '../config/load.js';
+import type { AppConfig, ResolvedSource } from '../config/schema.js';
+import type { FetchResult, Issue, IssueProvider, ListOptions, RepoRef } from '../core/types.js';
+import { createProvider } from '../providers/index.js';
+import { PlanService } from '../service/planService.js';
+import { buildApp } from './app.js';
+
+const DEMO_CONFIG = fileURLToPath(new URL('../../config.demo.yaml', import.meta.url));
+const TOKEN = 'ghp_SuperSecretToken123';
+
+function demoConfig(mutate?: (c: AppConfig) => void): AppConfig {
+  const config = loadConfig({ path: DEMO_CONFIG, env: {} });
+  mutate?.(config);
+  return config;
+}
+
+interface FakeProvider extends IssueProvider {
+  list: number;
+  fail: Error | null;
+}
+
+/** The real fixture provider, plus a call counter and an optional failure. */
+function fake(source: ResolvedSource): FakeProvider {
+  const inner = createProvider(source);
+  const wrapper: FakeProvider = {
+    kind: inner.kind,
+    list: 0,
+    fail: null,
+    listOpenIssues(repo: RepoRef, options: ListOptions): Promise<FetchResult> {
+      wrapper.list++;
+      if (wrapper.fail !== null) return Promise.reject(wrapper.fail);
+      return inner.listOpenIssues(repo, options);
+    },
+    getIssue(repo: RepoRef, number: number): Promise<Issue | null> {
+      return inner.getIssue(repo, number);
+    },
+  };
+  return wrapper;
+}
+
+const cleanups: Array<() => Promise<void> | void> = [];
+afterEach(async () => {
+  while (cleanups.length > 0) await cleanups.pop()?.();
+});
+
+function setup(opts: { config?: AppConfig; webDir?: string } = {}) {
+  const config = opts.config ?? demoConfig();
+  const providers: FakeProvider[] = [];
+  const service = new PlanService(config, {
+    providerFor: (source) => {
+      const p = fake(source);
+      providers.push(p);
+      return p;
+    },
+  });
+  const app: FastifyInstance = buildApp(config, service, {
+    webDir: opts.webDir ?? path.join(tmpdir(), 'ev-no-such-web-dir'),
+  });
+  cleanups.push(() => app.close());
+  return { app, providers, config };
+}
+
+function tempWebDir(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), 'ev-web-'));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'index.html'), '<!doctype html><title>UI</title><p>INDEX</p>');
+  writeFileSync(path.join(dir, 'app.js'), 'console.log("app");');
+  mkdirSync(path.join(dir, 'assets'));
+  writeFileSync(path.join(dir, 'assets', 'x.css'), 'body{}');
+  return dir;
+}
+
+function basic(user: string, pass: string): string {
+  return `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
+}
+
+describe('health and views', () => {
+  it('GET /healthz', async () => {
+    const { app } = setup();
+    const res = await app.inject('/healthz');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: 'ok' });
+  });
+
+  it('GET /api/views lists the demo view with no-store', async () => {
+    const { app } = setup();
+    const res = await app.inject('/api/views');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.json()).toEqual([
+      {
+        id: 'demo',
+        title: 'Acme demo roadmap',
+        source: 'demo',
+        kind: 'fixture',
+        repos: ['acme/api', 'acme/web'],
+      },
+    ]);
+  });
+});
+
+describe('snapshot and refresh', () => {
+  it('returns the snapshot with ETag and no-store', async () => {
+    const { app } = setup();
+    const res = await app.inject('/api/views/demo/snapshot');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    const snap = res.json();
+    expect(snap.viewId).toBe('demo');
+    expect(snap.plan.nodes).toHaveLength(23);
+    expect(snap.layout.nodes).toHaveLength(23);
+    expect(res.headers['etag']).toBe(`"${snap.contentHash}"`);
+  });
+
+  it('serves from the cache unless refresh is requested', async () => {
+    const { app, providers } = setup();
+    await app.inject('/api/views/demo/snapshot');
+    await app.inject('/api/views/demo/snapshot');
+    const p = providers[0] as FakeProvider;
+    expect(p.list).toBe(2); // one call per repo, fetched once
+    await app.inject('/api/views/demo/snapshot?refresh=1');
+    expect(p.list).toBe(4);
+    await app.inject('/api/views/demo/snapshot?refresh=true');
+    expect(p.list).toBe(6);
+    await app.inject('/api/views/demo/snapshot?refresh=0');
+    expect(p.list).toBe(6);
+  });
+
+  it('POST /api/views/:id/refresh forces a refresh', async () => {
+    const { app, providers } = setup();
+    await app.inject('/api/views/demo/snapshot');
+    const p = providers[0] as FakeProvider;
+    const before = p.list;
+    const res = await app.inject({ method: 'POST', url: '/api/views/demo/refresh' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().plan.nodes).toHaveLength(23);
+    expect(p.list).toBeGreaterThan(before);
+    expect(res.headers['cache-control']).toBe('no-store');
+  });
+
+  it('answers 304 when If-None-Match matches the content hash', async () => {
+    const { app } = setup();
+    const first = await app.inject('/api/views/demo/snapshot');
+    const etag = first.headers['etag'] as string;
+
+    const same = await app.inject({
+      url: '/api/views/demo/snapshot',
+      headers: { 'if-none-match': etag },
+    });
+    expect(same.statusCode).toBe(304);
+    expect(same.body).toBe('');
+    expect(same.headers['etag']).toBe(etag);
+    expect(same.headers['cache-control']).toBe('no-store');
+
+    const list = await app.inject({
+      url: '/api/views/demo/snapshot',
+      headers: { 'if-none-match': `"other", W/${etag}` },
+    });
+    expect(list.statusCode).toBe(304);
+
+    const star = await app.inject({
+      url: '/api/views/demo/snapshot',
+      headers: { 'if-none-match': '*' },
+    });
+    expect(star.statusCode).toBe(304);
+
+    const different = await app.inject({
+      url: '/api/views/demo/snapshot',
+      headers: { 'if-none-match': '"deadbeef"' },
+    });
+    expect(different.statusCode).toBe(200);
+    expect(different.json().contentHash).toBe(JSON.parse(first.body).contentHash);
+  });
+});
+
+describe('exports', () => {
+  const cases: Array<[string, string, string, string]> = [
+    ['json', 'application/json', 'demo.json', '"viewId"'],
+    ['md', 'text/markdown', 'demo.md', '# '],
+    ['mmd', 'text/plain', 'demo.mmd', 'flowchart LR'],
+    ['dot', 'text/vnd.graphviz', 'demo.dot', 'digraph'],
+  ];
+
+  it.each(cases)('export.%s', async (ext, contentType, filename, marker) => {
+    const { app } = setup();
+    const res = await app.inject(`/api/views/demo/export.${ext}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain(contentType);
+    expect(res.headers['content-type']).toContain('charset=utf-8');
+    expect(res.headers['content-disposition']).toBe(`inline; filename="${filename}"`);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.body).toContain(marker);
+  });
+
+  it('supports ?refresh=1', async () => {
+    const { app, providers } = setup();
+    await app.inject('/api/views/demo/export.md');
+    const p = providers[0] as FakeProvider;
+    const before = p.list;
+    await app.inject('/api/views/demo/export.md?refresh=1');
+    expect(p.list).toBeGreaterThan(before);
+  });
+
+  it('returns 404 for unknown formats', async () => {
+    const { app } = setup();
+    for (const ext of ['txt', 'mermaid', 'xml', 'toString', '']) {
+      const res = await app.inject(`/api/views/demo/export.${ext}`);
+      expect(res.statusCode, ext).toBe(404);
+      expect(res.json()).toEqual({ error: 'Not found' });
+    }
+  });
+});
+
+describe('errors', () => {
+  it('returns 404 for an unknown view on every view route', async () => {
+    const { app } = setup();
+    const requests = [
+      { method: 'GET' as const, url: '/api/views/nope/snapshot' },
+      { method: 'POST' as const, url: '/api/views/nope/refresh' },
+      { method: 'GET' as const, url: '/api/views/nope/export.json' },
+      { method: 'GET' as const, url: '/api/views/nope/export.md' },
+      { method: 'GET' as const, url: '/api/views/nope/export.mmd' },
+      { method: 'GET' as const, url: '/api/views/nope/export.dot' },
+    ];
+    for (const req of requests) {
+      const res = await app.inject(req);
+      expect(res.statusCode, req.url).toBe(404);
+      expect(res.json().error).toContain('nope');
+    }
+  });
+
+  it('maps provider failures to 502 without leaking the token', async () => {
+    const config = demoConfig((c) => {
+      const source = c.sources[0] as ResolvedSource;
+      source.token = TOKEN;
+    });
+    const failing = new Error(`request to https://x/?access_token=${TOKEN} failed (${TOKEN})`);
+    const service = new PlanService(config, {
+      providerFor: (source) => {
+        const p = fake(source);
+        p.fail = failing;
+        return p;
+      },
+    });
+    const app2 = buildApp(config, service);
+    cleanups.push(() => app2.close());
+
+    const urls = [
+      { method: 'GET' as const, url: '/api/views/demo/snapshot' },
+      { method: 'POST' as const, url: '/api/views/demo/refresh' },
+      { method: 'GET' as const, url: '/api/views/demo/export.json' },
+    ];
+    for (const req of urls) {
+      const res = await app2.inject(req);
+      expect(res.statusCode, req.url).toBe(502);
+      expect(res.body).not.toContain(TOKEN);
+      expect(res.json().error).toBe('request to https://x/?access_token=*** failed (***)');
+    }
+  });
+
+  it('does not cache a failed fetch', async () => {
+    const config = demoConfig();
+    const providers: FakeProvider[] = [];
+    const service = new PlanService(config, {
+      providerFor: (source) => {
+        const p = fake(source);
+        p.fail = new Error('boom');
+        providers.push(p);
+        return p;
+      },
+    });
+    const app = buildApp(config, service);
+    cleanups.push(() => app.close());
+    expect((await app.inject('/api/views/demo/snapshot')).statusCode).toBe(502);
+    (providers[0] as FakeProvider).fail = null;
+    expect((await app.inject('/api/views/demo/snapshot')).statusCode).toBe(200);
+  });
+
+  it('returns 404 JSON for unknown API paths', async () => {
+    const { app } = setup({ webDir: tempWebDir() });
+    const res = await app.inject({ url: '/api/nope', headers: { accept: 'text/html' } });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: 'Not found' });
+  });
+});
+
+describe('basic auth', () => {
+  function authed() {
+    return setup({
+      config: demoConfig((c) => {
+        c.server.basicAuth = { username: 'admin', password: 's3cret' };
+      }),
+    });
+  }
+
+  it('rejects requests without credentials', async () => {
+    const { app } = authed();
+    const res = await app.inject('/api/views');
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['www-authenticate']).toBe('Basic realm="execution-view"');
+    for (const url of ['/api/views/demo/snapshot', '/api/views/demo/export.md', '/', '/x']) {
+      expect((await app.inject(url)).statusCode, url).toBe(401);
+    }
+    expect((await app.inject({ method: 'POST', url: '/api/views/demo/refresh' })).statusCode).toBe(
+      401,
+    );
+  });
+
+  it('rejects wrong credentials', async () => {
+    const { app } = authed();
+    const wrong = [
+      basic('admin', 'wrong'),
+      basic('root', 's3cret'),
+      basic('admin', ''),
+      basic('admin', 's3cret-and-more'),
+      basic('adm', 's3cret'),
+      `Basic ${Buffer.from('admin').toString('base64')}`,
+      'Basic !!!',
+      'Bearer s3cret',
+    ];
+    for (const authorization of wrong) {
+      const res = await app.inject({ url: '/api/views', headers: { authorization } });
+      expect(res.statusCode, authorization).toBe(401);
+      expect(res.headers['www-authenticate']).toBe('Basic realm="execution-view"');
+    }
+  });
+
+  it('accepts the right credentials, including a colon in the password', async () => {
+    const { app } = authed();
+    const ok = await app.inject({
+      url: '/api/views',
+      headers: { authorization: basic('admin', 's3cret') },
+    });
+    expect(ok.statusCode).toBe(200);
+
+    const colon = setup({
+      config: demoConfig((c) => {
+        c.server.basicAuth = { username: 'admin', password: 'a:b:c' };
+      }),
+    });
+    const res = await colon.app.inject({
+      url: '/api/views',
+      headers: { authorization: basic('admin', 'a:b:c') },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('exempts /healthz', async () => {
+    const { app } = authed();
+    const res = await app.inject('/healthz');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: 'ok' });
+  });
+
+  it('is off when basicAuth is null', async () => {
+    const { app } = setup();
+    expect((await app.inject('/api/views')).statusCode).toBe(200);
+  });
+});
+
+describe('static UI', () => {
+  it('serves index.html and assets', async () => {
+    const { app } = setup({ webDir: tempWebDir() });
+    const index = await app.inject('/');
+    expect(index.statusCode).toBe(200);
+    expect(index.headers['content-type']).toContain('text/html');
+    expect(index.body).toContain('INDEX');
+
+    const js = await app.inject('/app.js');
+    expect(js.statusCode).toBe(200);
+    expect(js.headers['content-type']).toMatch(/javascript/);
+    expect(js.body).toBe('console.log("app");');
+
+    const css = await app.inject('/assets/x.css');
+    expect(css.statusCode).toBe(200);
+    expect(css.headers['content-type']).toContain('text/css');
+  });
+
+  it('falls back to index.html for HTML navigation', async () => {
+    const { app } = setup({ webDir: tempWebDir() });
+    const res = await app.inject({
+      url: '/some/deep/route',
+      headers: { accept: 'text/html,application/xhtml+xml' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('INDEX');
+  });
+
+  it('returns a JSON 404 for non-HTML requests and API paths', async () => {
+    const { app } = setup({ webDir: tempWebDir() });
+    const missingAsset = await app.inject({
+      url: '/missing.js',
+      headers: { accept: '*/*' },
+    });
+    expect(missingAsset.statusCode).toBe(404);
+    expect(missingAsset.json()).toEqual({ error: 'Not found' });
+
+    const api = await app.inject('/api/nope');
+    expect(api.statusCode).toBe(404);
+    expect(api.json()).toEqual({ error: 'Not found' });
+    expect(api.headers['cache-control']).toBe('no-store');
+
+    const post = await app.inject({
+      method: 'POST',
+      url: '/some/route',
+      headers: { accept: 'text/html' },
+    });
+    expect(post.statusCode).toBe(404);
+  });
+
+  it('starts and explains itself when the web dir is missing', async () => {
+    const { app } = setup({ webDir: path.join(tmpdir(), 'ev-definitely-missing-dir') });
+    const res = await app.inject('/');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('not built');
+    expect(res.body).toContain('href="/api/views"');
+    const other = await app.inject({ url: '/deep', headers: { accept: 'text/html' } });
+    expect(other.statusCode).toBe(404);
+  });
+});
