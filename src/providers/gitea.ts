@@ -175,25 +175,37 @@ export function createGiteaProvider(opts: GiteaProviderOptions): IssueProvider {
   const limit = createLimiter(opts.concurrency ?? 4);
 
   /**
-   * Gitea paginates with `limit`/`page` and sends no reliable Link header for us to follow,
-   * so pages are requested until one is short (or empty).
+   * Gitea paginates with `limit`/`page` and sends no Link header we rely on. The server may
+   * silently cap `limit` (`[api] MAX_RESPONSE_ITEMS`), so a page shorter than PAGE_SIZE does not
+   * mean the last page. Stop rules:
+   * 1. `X-Total-Count` present: stop once that many raw items were fetched, or on an empty page.
+   * 2. Otherwise: stop on an empty page, or on a page shorter than the first page (the
+   *    effective server limit).
    */
   async function getPaged<T>(path: string): Promise<T[]> {
     const sep = path.includes('?') ? '&' : '?';
     const safe = `${apiBase}${path.split('?')[0]}`;
     const items: T[] = [];
+    let firstPageSize = 0;
     for (let page = 1; ; page++) {
       if (page > MAX_PAGES) {
         throw new HttpError(`GET ${safe} failed: pagination did not terminate`, 0, safe);
       }
-      const { data, status } = await client.getJson<T[]>(
+      const { data, headers, status } = await client.getJson<T[]>(
         `${path}${sep}limit=${PAGE_SIZE}&page=${page}`,
       );
       if (!Array.isArray(data)) {
         throw new HttpError(`GET ${safe} returned a non-array JSON body`, status, safe);
       }
       for (const item of data) items.push(item);
-      if (data.length < PAGE_SIZE) return items;
+      if (data.length === 0) return items;
+      const totalHeader = headers.get('x-total-count')?.trim() ?? '';
+      if (/^\d+$/.test(totalHeader)) {
+        if (items.length >= Number(totalHeader)) return items;
+      } else {
+        if (page === 1) firstPageSize = data.length;
+        if (data.length < firstPageSize) return items;
+      }
     }
   }
 

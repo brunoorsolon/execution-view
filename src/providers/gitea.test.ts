@@ -56,6 +56,11 @@ function range(from: number, count: number) {
   return Array.from({ length: count }, (_, i) => gtIssue(from + i));
 }
 
+/** A list response with `X-Total-Count`, as Gitea sends on list endpoints. */
+function list(items: unknown[]): Response {
+  return json(items, { headers: { 'x-total-count': String(items.length) } });
+}
+
 function provider(route: Route, extra: { token?: string | null; concurrency?: number } = {}) {
   const { fetch, calls } = makeFetch(route);
   const sleeps: number[] = [];
@@ -106,8 +111,48 @@ describe('listOpenIssues: listing', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('handles a server that caps the page size at 30, using X-Total-Count', async () => {
+    const all = range(1, 75);
+    const { p, calls } = provider((url) => {
+      const page = Number(url.searchParams.get('page'));
+      return json(all.slice((page - 1) * 30, page * 30), { headers: { 'x-total-count': '75' } });
+    });
+    const res = await p.listOpenIssues(REPO, NONE);
+    expect(res.issues.map((i) => i.number)).toEqual(all.map((i) => i.number));
+    expect(calls).toHaveLength(3);
+  });
+
+  it('without X-Total-Count, stops on a page shorter than the first page (cap of 30)', async () => {
+    const all = range(1, 75);
+    const { p, calls } = provider((url) => {
+      const page = Number(url.searchParams.get('page'));
+      return json(all.slice((page - 1) * 30, page * 30));
+    });
+    const res = await p.listOpenIssues(REPO, NONE);
+    expect(res.issues).toHaveLength(75);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('with X-Total-Count equal to one full page, makes no second request', async () => {
+    const { p, calls } = provider(() => json(range(1, 50), { headers: { 'x-total-count': '50' } }));
+    const res = await p.listOpenIssues(REPO, NONE);
+    expect(res.issues).toHaveLength(50);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('stops on an empty page even when X-Total-Count overstates the total', async () => {
+    const { p, calls } = provider((url) =>
+      url.searchParams.get('page') === '1'
+        ? json(range(1, 30), { headers: { 'x-total-count': '99' } })
+        : json([], { headers: { 'x-total-count': '99' } }),
+    );
+    const res = await p.listOpenIssues(REPO, NONE);
+    expect(res.issues).toHaveLength(30);
+    expect(calls).toHaveLength(2);
+  });
+
   it('makes a single request for an empty repository', async () => {
-    const { p, calls } = provider(() => json([]));
+    const { p, calls } = provider(() => list([]));
     const res = await p.listOpenIssues(REPO, NONE);
     expect(res).toEqual({ issues: [], warnings: [] });
     expect(calls).toHaveLength(1);
@@ -124,7 +169,7 @@ describe('listOpenIssues: listing', () => {
 
   it('filters out pull requests', async () => {
     const { p } = provider(() =>
-      json([gtIssue(1), gtIssue(2, { pull_request: { merged: false } }), gtIssue(3)]),
+      list([gtIssue(1), gtIssue(2, { pull_request: { merged: false } }), gtIssue(3)]),
     );
     const res = await p.listOpenIssues(REPO, NONE);
     expect(res.issues.map((i) => i.number)).toEqual([1, 3]);
@@ -142,7 +187,7 @@ describe('listOpenIssues: listing', () => {
 
   it('maps fields: number (not id), sorted unique labels and assignees, milestone', async () => {
     const { p } = provider(() =>
-      json([
+      list([
         gtIssue(9),
         gtIssue(5, {
           id: 424242,
@@ -174,7 +219,7 @@ describe('listOpenIssues: listing', () => {
 
   it('handles null assignees, null milestone, null body and null labels', async () => {
     const { p } = provider(() =>
-      json([gtIssue(1, { assignees: null, milestone: null, body: null, labels: null })]),
+      list([gtIssue(1, { assignees: null, milestone: null, body: null, labels: null })]),
     );
     const res = await p.listOpenIssues(REPO, NONE);
     expect(res.issues[0]).toMatchObject({
@@ -192,7 +237,7 @@ describe('listOpenIssues: listing', () => {
   });
 
   it('ignores options.subIssues', async () => {
-    const { p, calls } = provider(() => json([gtIssue(1)]));
+    const { p, calls } = provider(() => list([gtIssue(1)]));
     await p.listOpenIssues(REPO, { native: false, subIssues: true });
     expect(calls).toHaveLength(1);
   });
@@ -200,7 +245,7 @@ describe('listOpenIssues: listing', () => {
 
 describe('request construction', () => {
   it('sends Accept, User-Agent and `Authorization: token X`', async () => {
-    const { p, calls } = provider(() => json([]));
+    const { p, calls } = provider(() => list([]));
     await p.listOpenIssues(REPO, NONE);
     expect(calls[0]!.headers).toMatchObject({
       Accept: 'application/json',
@@ -210,7 +255,7 @@ describe('request construction', () => {
   });
 
   it('omits Authorization when the token is null', async () => {
-    const { p, calls } = provider(() => json([]), { token: null });
+    const { p, calls } = provider(() => list([]), { token: null });
     await p.listOpenIssues(REPO, NONE);
     expect(Object.keys(calls[0]!.headers).map((k) => k.toLowerCase())).not.toContain(
       'authorization',
@@ -225,7 +270,7 @@ describe('request construction', () => {
     ['https://example.com/gitea', 'https://example.com/gitea/api/v1'],
     ['https://example.com/gitea/', 'https://example.com/gitea/api/v1'],
   ])('builds the API base from %s', async (baseUrl, api) => {
-    const { fetch, calls } = makeFetch(() => json([]));
+    const { fetch, calls } = makeFetch(() => list([]));
     const p = createGiteaProvider({ baseUrl, token: null, fetch });
     await p.listOpenIssues(REPO, NONE);
     await p.getIssue(REPO, 3);
@@ -236,7 +281,7 @@ describe('request construction', () => {
   });
 
   it('lowercases owner and repo in request paths', async () => {
-    const { p, calls } = provider(() => json([]));
+    const { p, calls } = provider(() => list([]));
     await p.listOpenIssues({ owner: 'Acme', repo: 'API' }, NONE);
     expect(new URL(calls[0]!.url).pathname).toBe(ISSUES_PATH);
   });
@@ -244,16 +289,16 @@ describe('request construction', () => {
 
 describe('listOpenIssues: native dependencies', () => {
   const route: Route = (url) => {
-    if (url.pathname === ISSUES_PATH) return json([gtIssue(1), gtIssue(2), gtIssue(3)]);
+    if (url.pathname === ISSUES_PATH) return list([gtIssue(1), gtIssue(2), gtIssue(3)]);
     if (url.pathname === `${ISSUES_PATH}/2/dependencies`)
-      return json([
+      return list([
         gtIssue(9, { repository: { name: 'lib', owner: 'Other', full_name: 'Other/lib' } }),
         gtIssue(1),
         gtIssue(1),
         gtIssue(4),
       ]);
-    if (url.pathname === `${ISSUES_PATH}/1/dependencies`) return json([]);
-    if (url.pathname === `${ISSUES_PATH}/3/dependencies`) return json([]);
+    if (url.pathname === `${ISSUES_PATH}/1/dependencies`) return list([]);
+    if (url.pathname === `${ISSUES_PATH}/3/dependencies`) return list([]);
     return undefined;
   };
 
@@ -277,8 +322,8 @@ describe('listOpenIssues: native dependencies', () => {
 
   it('falls back to full_name, then to the listed repo, when owner/name are missing', async () => {
     const { p } = provider((url) => {
-      if (url.pathname === ISSUES_PATH) return json([gtIssue(1)]);
-      return json([
+      if (url.pathname === ISSUES_PATH) return list([gtIssue(1)]);
+      return list([
         gtIssue(5, { repository: { full_name: 'Foo/Bar' } }),
         gtIssue(6, { repository: null }),
         gtIssue(7, { repository: undefined }),
@@ -296,7 +341,7 @@ describe('listOpenIssues: native dependencies', () => {
 
   it('paginates the dependencies endpoint', async () => {
     const { p, calls } = provider((url) => {
-      if (url.pathname === ISSUES_PATH) return json([gtIssue(1)]);
+      if (url.pathname === ISSUES_PATH) return list([gtIssue(1)]);
       const page = url.searchParams.get('page');
       return page === '1' ? json(range(100, 50)) : json(range(150, 3));
     });
@@ -307,7 +352,7 @@ describe('listOpenIssues: native dependencies', () => {
 
   it('a 404 on the first probe gives exactly one warning and no further dependency calls', async () => {
     const { p, calls } = provider((url) =>
-      url.pathname === ISSUES_PATH ? json([gtIssue(1), gtIssue(2), gtIssue(3)]) : status(404),
+      url.pathname === ISSUES_PATH ? list([gtIssue(1), gtIssue(2), gtIssue(3)]) : status(404),
     );
     const res = await p.listOpenIssues(REPO, NATIVE);
     expect(res.issues).toHaveLength(3);
@@ -325,9 +370,9 @@ describe('listOpenIssues: native dependencies', () => {
 
   it('a later isolated 404 only skips that issue', async () => {
     const { p } = provider((url) => {
-      if (url.pathname === ISSUES_PATH) return json([gtIssue(1), gtIssue(2), gtIssue(3)]);
+      if (url.pathname === ISSUES_PATH) return list([gtIssue(1), gtIssue(2), gtIssue(3)]);
       if (url.pathname.includes('/issues/2/')) return status(404);
-      return json([gtIssue(7)]);
+      return list([gtIssue(7)]);
     });
     const res = await p.listOpenIssues(REPO, NATIVE);
     expect(res.warnings).toEqual([]);
@@ -342,7 +387,7 @@ describe('listOpenIssues: native dependencies', () => {
   });
 
   it('makes no dependency calls and no warning for a repo without issues', async () => {
-    const { p, calls } = provider(() => json([]));
+    const { p, calls } = provider(() => list([]));
     const res = await p.listOpenIssues(REPO, NATIVE);
     expect(res).toEqual({ issues: [], warnings: [] });
     expect(calls).toHaveLength(1);
@@ -350,7 +395,7 @@ describe('listOpenIssues: native dependencies', () => {
 
   it('propagates non-404 errors from the dependencies endpoint', async () => {
     const { p } = provider((url) =>
-      url.pathname === ISSUES_PATH ? json([gtIssue(1)]) : status(500),
+      url.pathname === ISSUES_PATH ? list([gtIssue(1)]) : status(500),
     );
     const err = await p.listOpenIssues(REPO, NATIVE).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HttpError);
@@ -363,12 +408,12 @@ describe('listOpenIssues: native dependencies', () => {
     const listing = range(1, 15);
     const fetchFn = (async (input: string | URL | Request) => {
       const url = new URL(String(input));
-      if (url.pathname === ISSUES_PATH) return json(listing);
+      if (url.pathname === ISSUES_PATH) return list(listing);
       active++;
       peak = Math.max(peak, active);
       await new Promise((r) => setTimeout(r, 2));
       active--;
-      return json([]);
+      return list([]);
     }) as FetchLike;
     const p = createGiteaProvider({ baseUrl: ROOT, token: null, fetch: fetchFn, concurrency: 3 });
     await p.listOpenIssues(REPO, NATIVE);
@@ -414,12 +459,12 @@ describe('getIssue', () => {
 
 describe('retries and error hygiene', () => {
   it('reports kind gitea', () => {
-    expect(provider(() => json([])).p.kind).toBe('gitea');
+    expect(provider(() => list([])).p.kind).toBe('gitea');
   });
 
   it('retries a 503 with Retry-After and then succeeds', async () => {
     const { p, sleeps, calls } = provider((_url, n) =>
-      n === 1 ? status(503, { 'retry-after': '2' }) : json([gtIssue(1)]),
+      n === 1 ? status(503, { 'retry-after': '2' }) : list([gtIssue(1)]),
     );
     const res = await p.listOpenIssues(REPO, NONE);
     expect(res.issues).toHaveLength(1);
@@ -454,7 +499,7 @@ describe('retries and error hygiene', () => {
 
   it('keeps the token out of a failing dependencies call', async () => {
     const { p } = provider((url) =>
-      url.pathname === ISSUES_PATH ? json([gtIssue(1)]) : status(500),
+      url.pathname === ISSUES_PATH ? list([gtIssue(1)]) : status(500),
     );
     const err = await p.listOpenIssues(REPO, NATIVE).catch((e: unknown) => e);
     expect((err as HttpError).message).not.toContain(TOKEN);
