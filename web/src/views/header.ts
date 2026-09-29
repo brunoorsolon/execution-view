@@ -94,7 +94,7 @@ export function createHeader(ctx: ViewCtx): View {
 
   // ---- row 2
   const tabButtons = new Map<Tab, HTMLButtonElement>();
-  const problemsBadge = h('span', { class: 'badge' }, '0');
+  const problemsBadge = h('span', { class: 'badge', hidden: true }, '0');
   const tabDefs: { tab: Tab; label: string }[] = [
     { tab: 'graph', label: 'Graph' },
     { tab: 'order', label: 'Execution order' },
@@ -122,7 +122,9 @@ export function createHeader(ctx: ViewCtx): View {
   const filterInput = h('input', {
     class: 'filter-input',
     type: 'search',
-    placeholder: 'Filter: text, label:P1, #12, owner/repo#12',
+    placeholder: 'Filter: text, label:P1, #12',
+    title:
+      'Dim issues that do not match. Terms: text (title or key), label:P1, #12, owner/repo#12. Press / to focus.',
     'aria-label': 'Filter issues',
     spellcheck: 'false',
     autocomplete: 'off',

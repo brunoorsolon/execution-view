@@ -32,6 +32,43 @@ export function bezierPath(points: readonly Point[]): string {
   return d;
 }
 
+const GUTTER = 18;
+const CORNER = 8;
+/** Half a node height plus half the row gap, for the default layout (64 / 24). */
+const ROW_GAP_OFFSET = 44;
+
+/**
+ * Path for a layout edge. Forward edges are plain beziers. An edge that goes
+ * backwards or stays in its column (between members of a cycle, which share the
+ * "Unschedulable" column) would sweep across the cards, so it is routed around
+ * them instead: out to the right gutter, along the gap between two rows, and in
+ * from the left gutter of the target.
+ */
+export function edgePath(points: readonly Point[]): string {
+  const a = points[0];
+  const b = points[points.length - 1];
+  if (points.length !== 2 || a === undefined || b === undefined || b.x > a.x) {
+    return bezierPath(points);
+  }
+  const dir = b.y >= a.y ? 1 : -1;
+  const ym = a.y + dir * ROW_GAP_OFFSET;
+  const gx1 = a.x + GUTTER;
+  const gx2 = b.x - GUTTER;
+  const r = CORNER;
+  return [
+    `M${num(a.x)} ${num(a.y)}`,
+    `H${num(gx1 - r)}`,
+    `Q${num(gx1)} ${num(a.y)} ${num(gx1)} ${num(a.y + dir * r)}`,
+    `V${num(ym - dir * r)}`,
+    `Q${num(gx1)} ${num(ym)} ${num(gx1 - r)} ${num(ym)}`,
+    `H${num(gx2 + r)}`,
+    `Q${num(gx2)} ${num(ym)} ${num(gx2)} ${num(ym + dir * r)}`,
+    `V${num(b.y - dir * r)}`,
+    `Q${num(gx2)} ${num(b.y)} ${num(gx2 + r)} ${num(b.y)}`,
+    `H${num(b.x)}`,
+  ].join(' ');
+}
+
 // ---------------------------------------------------------------------------
 // Reachability
 // ---------------------------------------------------------------------------
@@ -243,7 +280,8 @@ export function clampZoom(k: number): number {
 }
 
 /**
- * Transform that shows the whole `content` centred in `viewport`. It never
+ * Transform that shows the whole `content` in `viewport`: centred horizontally
+ * and aligned to the top (wave headers stay close to the toolbar). It never
  * zooms in past 1:1 (small graphs are not blown up) and respects the zoom limits.
  */
 export function fitTransform(content: Size, viewport: Size, padding = 24): Transform {
@@ -256,7 +294,7 @@ export function fitTransform(content: Size, viewport: Size, padding = 24): Trans
   return {
     k,
     x: (viewport.width - content.width * k) / 2,
-    y: (viewport.height - content.height * k) / 2,
+    y: Math.min(padding, (viewport.height - content.height * k) / 2),
   };
 }
 

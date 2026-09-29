@@ -2,7 +2,7 @@ import type { IssueKey, LayoutNode, PlanNode, Snapshot } from '../../../src/core
 import { clear, h, icon, ICONS, svg } from '../dom.js';
 import { displayKey } from '../format.js';
 import {
-  bezierPath,
+  edgePath,
   computeHighlight,
   edgeId,
   ensureVisible,
@@ -275,7 +275,7 @@ export function createGraphView(ctx: ViewCtx): View {
       if (index.criticalEdges.has(id)) cls.push('crit');
       const path = svg('path', {
         class: cls.join(' '),
-        d: bezierPath(le.points),
+        d: edgePath(le.points),
         'marker-end': 'url(#arrow-default)',
       });
       edgeEls.push({ id, from: le.from, to: le.to, el: path });

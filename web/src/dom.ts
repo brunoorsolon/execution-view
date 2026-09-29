@@ -91,8 +91,7 @@ export const ICONS = {
   download: 'M12 3v12m0 0-4-4m4 4 4-4M4 20h16',
   chevron: 'm6 9 6 6 6-6',
   external: 'M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
-  graph:
-    'M5 6a2 2 0 1 0 0 .01M19 6a2 2 0 1 0 0 .01M12 18a2 2 0 1 0 0 .01M6.5 7.5 11 16M17.5 7.5 13 16',
+  graph: 'M3 4h6v6H3zM15 14h6v6h-6zM9 7h3a3 3 0 0 1 3 3v4',
   close: 'M6 6l12 12M18 6 6 18',
   fit: 'M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4',
   plus: 'M12 5v14M5 12h14',

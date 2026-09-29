@@ -100,7 +100,6 @@ export function createProblemsView(ctx: ViewCtx): View {
         section(
           'Cycles',
           plan.cycles.length,
-          h('p', { class: 'muted lead' }, WARNING_EXPLANATIONS['cycle']!.text),
           ...plan.cycles.map((scc, i) => {
             const { path, extra } = cyclePath(scc, plan.edges);
             const seq = path.length > 0 ? path : scc;
@@ -138,7 +137,6 @@ export function createProblemsView(ctx: ViewCtx): View {
         section(
           'Blocked by a cycle',
           blockedByCycle.length,
-          h('p', { class: 'muted lead' }, WARNING_EXPLANATIONS['blocked-by-cycle']!.text),
           h(
             'ul',
             { class: 'plain-list' },

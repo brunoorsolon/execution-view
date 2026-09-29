@@ -11,6 +11,7 @@ import {
   cyclePath,
   derivePriorityLabels,
   downstreamOf,
+  edgePath,
   edgeId,
   ensureVisible,
   fitTransform,
@@ -47,6 +48,34 @@ describe('bezierPath', () => {
     expect(d.match(/C/g)).toHaveLength(2);
     expect(d.endsWith('200 40')).toBe(true);
     expect(bezierPath([])).toBe('');
+  });
+});
+
+describe('edgePath', () => {
+  it('uses a bezier for forward edges', () => {
+    const pts = [
+      { x: 0, y: 0 },
+      { x: 100, y: 50 },
+    ];
+    expect(edgePath(pts)).toBe(bezierPath(pts));
+  });
+
+  it('routes same-column edges through the row gap and the gutters, ending at the target', () => {
+    const down = edgePath([
+      { x: 264, y: 56 },
+      { x: 24, y: 144 },
+    ]);
+    expect(down.startsWith('M264 56 H')).toBe(true);
+    expect(down.endsWith('H24')).toBe(true);
+    expect(down).toContain('V');
+    // horizontal traverse in the gap below the source row (56 + 44)
+    expect(down).toContain('H14 Q6 100');
+    const up = edgePath([
+      { x: 264, y: 144 },
+      { x: 24, y: 56 },
+    ]);
+    expect(up).toContain(' 100 '); // gap above the source row (144 - 44)
+    expect(up.endsWith('H24')).toBe(true);
   });
 });
 
@@ -134,18 +163,29 @@ describe('zoom and pan math', () => {
     expect(MAX_ZOOM).toBe(3);
   });
 
-  it('fits a large graph into the viewport, centred', () => {
+  it('fits a large graph into the viewport: centred horizontally, top-aligned', () => {
     const t = fitTransform({ width: 2000, height: 500 }, { width: 1000, height: 800 }, 0);
     expect(t.k).toBeCloseTo(0.5);
     expect(t.x).toBeCloseTo(0);
-    expect(t.y).toBeCloseTo((800 - 500 * 0.5) / 2);
+    expect(t.y).toBe(0);
+    const padded = fitTransform({ width: 2000, height: 500 }, { width: 1000, height: 800 }, 24);
+    expect(padded.y).toBe(24);
+  });
+
+  it('centres vertically when the content cannot fit even at the minimum zoom', () => {
+    const t = fitTransform({ width: 1000, height: 1000 }, { width: 1000, height: 1000 }, 50);
+    expect(t.y).toBeCloseTo(50);
+    // content taller than the viewport even at the minimum zoom: centred
+    const tall = fitTransform({ width: 100, height: 100000 }, { width: 1000, height: 1000 }, 50);
+    expect(tall.k).toBe(MIN_ZOOM);
+    expect(tall.y).toBeCloseTo((1000 - 100000 * MIN_ZOOM) / 2);
   });
 
   it('never zooms in past 1:1 when fitting a small graph', () => {
     const t = fitTransform({ width: 100, height: 100 }, { width: 1000, height: 800 });
     expect(t.k).toBe(1);
     expect(t.x).toBe(450);
-    expect(t.y).toBe(350);
+    expect(t.y).toBe(24);
   });
 
   it('respects the padding and the minimum zoom, and survives empty sizes', () => {
