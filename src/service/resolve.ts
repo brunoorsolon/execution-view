@@ -274,7 +274,12 @@ export async function resolveView(
     issues: keys.map((k) => nodes.get(k)!),
     externalKeys: keys.filter((k) => !scoped.has(k)),
     edges: allEdges.filter((e) => included.has(e.from) && included.has(e.to)),
-    warnings,
+    // Drop problems that concern issues which are not part of the plan.
+    warnings: warnings.filter(
+      (w) =>
+        (w.code !== 'dangling-reference' && w.code !== 'fetch-error') ||
+        w.issues.every((k) => included.has(k)),
+    ),
     priorityLabels: [...view.ordering.priorityLabels],
   };
   return { input };

@@ -466,4 +466,24 @@ describe('resolveView: scope', () => {
     expect(input.externalKeys).toEqual(['x/y#1', 'x/y#2']);
     expect(input.edges.every((e) => e.from !== 'x/y#3' && e.to !== 'x/y#3')).toBe(true);
   });
+  it('drops dangling and fetch-error warnings of issues outside the plan, keeps the others', async () => {
+    const provider = new FakeProvider([
+      mk('a/r#1', { labels: ['keep'], body: 'Depends on #98, x/y#5' }),
+      mk('a/r#2', { labels: ['skip'], body: 'Depends on #99, x/y#6' }), // out of scope, unrelated
+      mk('x/y#5'),
+      mk('x/y#6'),
+    ]);
+    provider.throwing.add('x/y#6');
+    provider.listWarnings = [{ code: 'native-unsupported', message: 'no native', issues: [] }];
+    const { input } = await resolveView(
+      view({ scope: { labels: ['keep'], excludeLabels: [], milestones: [] } }),
+      SOURCE,
+      provider,
+    );
+    expect(input.issues.map((i) => i.key)).toEqual(['a/r#1', 'x/y#5']);
+    expect(input.warnings.map((w) => `${w.code}:${w.issues.join(',')}`)).toEqual([
+      'native-unsupported:',
+      'dangling-reference:a/r#1',
+    ]);
+  });
 });
