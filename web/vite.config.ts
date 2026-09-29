@@ -5,6 +5,8 @@ const root = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
   root,
+  // Relative asset URLs: the UI also works when served below a sub-path.
+  base: './',
   build: {
     outDir: '../dist/web',
     emptyOutDir: true,
