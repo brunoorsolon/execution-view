@@ -1,0 +1,22 @@
+services:
+  execution-view:
+    build: .
+    image: execution-view:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      # Your config goes at /app/config.yaml (the default lookup path). Copy
+      # config.example.yaml to config.yaml first. Not needed in env-only mode.
+      - ./config.yaml:/app/config.yaml:ro
+    # Tokens and EV_* overrides. The file is optional (needs Compose >= 2.24).
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+    # Env-only mode: no config file at all. Remove the config volume above,
+    # then uncomment:
+    # environment:
+    #   EV_PROVIDER: github          # or gitea (also set EV_BASE_URL)
+    #   EV_REPOS: owner/repo,owner/other-repo
+    #   # the token comes from GITHUB_TOKEN / GITEA_TOKEN in .env
