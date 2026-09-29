@@ -3,7 +3,7 @@ services:
     build: .
     image: execution-view:latest
     ports:
-      - "8080:8080"
+      - '8080:8080'
     volumes:
       # Your config goes at /app/config.yaml (the default lookup path). Copy
       # config.example.yaml to config.yaml first. Not needed in env-only mode.
