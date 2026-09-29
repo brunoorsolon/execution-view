@@ -10,10 +10,10 @@ Produce **deterministic** views of the open issues of one or more repositories
 hosted on **GitHub** (github.com or GitHub Enterprise Server) or **Gitea**
 (Forgejo should work too, but is untested):
 
-* how the issues depend on each other (a dependency graph)
-* the order to execute them in (a linear order, plus "waves" of work that can
+- how the issues depend on each other (a dependency graph)
+- the order to execute them in (a linear order, plus "waves" of work that can
   run in parallel)
-* what is wrong with the declared dependencies (cycles, dangling references)
+- what is wrong with the declared dependencies (cycles, dangling references)
 
 **Deterministic** means that the same issue data always gives byte-identical
 plan JSON, the same order, and the same layout coordinates. Nothing depends on
@@ -22,16 +22,16 @@ locale. Every sort uses an explicit comparator with a total order.
 
 ## 2. Tech stack
 
-* Node.js 22, TypeScript (strict), ESM (`"type": "module"`, `NodeNext` module
+- Node.js 22, TypeScript (strict), ESM (`"type": "module"`, `NodeNext` module
   resolution, so relative imports use a `.js` suffix in `src/`)
-* Server: Fastify 5 and `@fastify/static`
-* Config: `yaml` + `zod`
-* CLI: `commander`
-* Web UI: Vite + vanilla TypeScript (no framework), SVG rendering
-* Tests: Vitest. Formatting: Prettier. Type checking: `tsc --noEmit`
-* HTTP client: the global `fetch`. Providers take an injectable `fetch` so
+- Server: Fastify 5 and `@fastify/static`
+- Config: `yaml` + `zod`
+- CLI: `commander`
+- Web UI: Vite + vanilla TypeScript (no framework), SVG rendering
+- Tests: Vitest. Formatting: Prettier. Type checking: `tsc --noEmit`
+- HTTP client: the global `fetch`. Providers take an injectable `fetch` so
   tests never touch the network
-* Container: multi-stage Dockerfile on `node:22-alpine`
+- Container: multi-stage Dockerfile on `node:22-alpine`
 
 ## 3. Repository layout
 
@@ -290,21 +290,24 @@ export interface IssueProvider {
 
 ## 6. Helpers (`src/core/keys.ts`, `src/core/hash.ts`)
 
-* `makeKey(repo: RepoRef, number: number): IssueKey` returns `"owner/repo#N"`, lowercased.
-* `parseKey(key: IssueKey): { repo: RepoRef; number: number }` throws on malformed input.
-* `compareKeys(a, b)`: compare `owner/repo` with plain code-unit comparison
+- `makeKey(repo: RepoRef, number: number): IssueKey` returns `"owner/repo#N"`, lowercased.
+- `parseKey(key: IssueKey): { repo: RepoRef; number: number }` throws on malformed input.
+- `compareKeys(a, b)`: compare `owner/repo` with plain code-unit comparison
   (`a < b ? -1 : a > b ? 1 : 0`, never `localeCompare`), then `number`
   numerically. This is the total order used everywhere.
-* `compareRefs(a: IssueRef, b: IssueRef)`: null owner/repo sorts first, then as above.
-* `canonicalJson(value: unknown): string` gives JSON with object keys sorted
+- `compareRefs(a: IssueRef, b: IssueRef)`: null owner/repo sorts first, then as above.
+- `canonicalJson(value: unknown): string` gives JSON with object keys sorted
   recursively (code-unit order) and no whitespace. Arrays keep their order.
   `undefined` properties are dropped. Non-finite numbers throw.
-* `contentHash(value: unknown): string` is the sha256 hex of `canonicalJson(value)` (`node:crypto`).
+- `contentHash(value: unknown): string` is the sha256 hex of `canonicalJson(value)` (`node:crypto`).
 
 ## 7. Body dependency parser (`src/core/parser.ts`)
 
 ```ts
-export interface KeywordConfig { blockedBy: string[]; blocks: string[] }
+export interface KeywordConfig {
+  blockedBy: string[];
+  blocks: string[];
+}
 export const DEFAULT_KEYWORDS: KeywordConfig = {
   blockedBy: ['depends on', 'blocked by', 'requires'],
   blocks: ['blocks', 'blocking', 'required by'],
@@ -377,11 +380,11 @@ Algorithm, where every iteration is over sorted collections:
    (and not itself in a cycle) is `blocked-by-cycle`. Emit a single
    `blocked-by-cycle` warning listing them all, if there are any.
 3. Schedulable = all other nodes. On that DAG:
-   * `remainingDepth(n) = 1 + max(remainingDepth(successors))`, or 1 when there are no successors.
-   * `wave(n) = 0` when there are no predecessors, else `1 + max(wave(predecessors))`.
-   * `order`: Kahn's algorithm. Among currently available nodes pick the
+   - `remainingDepth(n) = 1 + max(remainingDepth(successors))`, or 1 when there are no successors.
+   - `wave(n) = 0` when there are no predecessors, else `1 + max(wave(predecessors))`.
+   - `order`: Kahn's algorithm. Among currently available nodes pick the
      minimum by **(priority asc, remainingDepth desc, compareKeys asc)**.
-   * `criticalPath`: start at the minimum schedulable node by
+   - `criticalPath`: start at the minimum schedulable node by
      (remainingDepth desc, compareKeys asc). Repeatedly move to the successor
      with the maximum remainingDepth (ties: compareKeys). Stop at a node with
      no successors.
@@ -393,23 +396,29 @@ Algorithm, where every iteration is over sorted collections:
 ## 9. Layout (`src/core/layout.ts`)
 
 ```ts
-export interface LayoutOptions { nodeWidth?: number; nodeHeight?: number; hGap?: number; vGap?: number; padding?: number }
+export interface LayoutOptions {
+  nodeWidth?: number;
+  nodeHeight?: number;
+  hGap?: number;
+  vGap?: number;
+  padding?: number;
+}
 // defaults: 240, 64, 96, 24, 24
 export function computeLayout(plan: Plan, options?: LayoutOptions): Layout;
 ```
 
-* Layer = `wave`. Unschedulable nodes go in layer `plan.waves.length`.
-* Initial row order inside a layer: position in `plan.order`. Unschedulable
+- Layer = `wave`. Unschedulable nodes go in layer `plan.waves.length`.
+- Initial row order inside a layer: position in `plan.order`. Unschedulable
   nodes use compareKeys.
-* Crossing reduction: 4 iterations. Each iteration does a left-to-right sweep
+- Crossing reduction: 4 iterations. Each iteration does a left-to-right sweep
   that sorts each layer by the barycenter of predecessor rows, then a
   right-to-left sweep that sorts by the barycenter of successor rows. Nodes
   without neighbours on the relevant side keep their current row as their
   barycenter value. The sort is stable, with ties broken by current row.
-* `x = padding + layer * (nodeWidth + hGap)`, `y = padding + row * (nodeHeight + vGap)`.
+- `x = padding + layer * (nodeWidth + hGap)`, `y = padding + row * (nodeHeight + vGap)`.
   `width` and `height` are the bounding box plus padding. Every value is an
   integer (`Math.round`).
-* Edge points: `[{x: from.x + width, y: from.y + height/2}, {x: to.x, y: to.y + height/2}]`.
+- Edge points: `[{x: from.x + width, y: from.y + height/2}, {x: to.x, y: to.y + height/2}]`.
 
 ## 10. Exporters (`src/export/*`)
 
@@ -417,13 +426,13 @@ Each exporter is `(snapshot: Snapshot) => string`. The output is deterministic
 and contains no timestamps except `fetchedAt`, which JSON includes as-is and
 Markdown shows in a single header line.
 
-* `toJson`: `JSON.stringify(snapshot, null, 2)` + `"\n"`.
-* `toMarkdown`: title, summary stats, a waves table (wave, order, issue
+- `toJson`: `JSON.stringify(snapshot, null, 2)` + `"\n"`.
+- `toMarkdown`: title, summary stats, a waves table (wave, order, issue
   link, title, status, blocked by), then an unschedulable section, cycles and
   warnings.
-* `toMermaid`: `flowchart LR`. Node ids `n_<sanitized key>`, labels
+- `toMermaid`: `flowchart LR`. Node ids `n_<sanitized key>`, labels
   `"#N title"` with quotes escaped, a `classDef` per status, and edges `a --> b`.
-* `toDot`: `digraph` with `rankdir=LR`, nodes grouped by wave with `rank=same` subgraphs, and edges.
+- `toDot`: `digraph` with `rankdir=LR`, nodes grouped by wave with `rank=same` subgraphs, and edges.
 
 ## 11. Configuration (`src/config/*`)
 
@@ -432,45 +441,45 @@ YAML file. The path comes from `--config`, then `EV_CONFIG`, then
 
 ```yaml
 server:
-  host: 0.0.0.0        # default
-  port: 8080           # default
-  basicAuth:           # optional; both keys required if present
+  host: 0.0.0.0 # default
+  port: 8080 # default
+  basicAuth: # optional; both keys required if present
     username: admin
     passwordEnv: EV_BASIC_AUTH_PASSWORD
 cache:
-  ttlSeconds: 300      # default
+  ttlSeconds: 300 # default
 sources:
   - id: gh
     kind: github
-    baseUrl: https://api.github.com     # default for github. GHES: https://ghe.example.com/api/v3
-    webUrl: https://github.com          # optional. Default: github.com for api.github.com, else baseUrl minus /api/v3
-    tokenEnv: GITHUB_TOKEN              # name of the env var holding the token (recommended)
+    baseUrl: https://api.github.com # default for github. GHES: https://ghe.example.com/api/v3
+    webUrl: https://github.com # optional. Default: github.com for api.github.com, else baseUrl minus /api/v3
+    tokenEnv: GITHUB_TOKEN # name of the env var holding the token (recommended)
     # token: ghp_xxx                    # inline token (discouraged)
   - id: gt
     kind: gitea
-    baseUrl: https://gitea.example.com  # instance root. The API is at <baseUrl>/api/v1
+    baseUrl: https://gitea.example.com # instance root. The API is at <baseUrl>/api/v1
     tokenEnv: GITEA_TOKEN
   - id: demo
     kind: fixture
-    path: ./test/fixtures/demo.json     # fixture provider data file
+    path: ./test/fixtures/demo.json # fixture provider data file
 views:
   - id: platform
     title: Platform roadmap
     source: gh
     repos: [acme/api, acme/web]
     dependencies:
-      native: true        # default true
-      body: true          # default true
-      subIssues: false    # default false (github only)
-      keywords:           # default DEFAULT_KEYWORDS
+      native: true # default true
+      body: true # default true
+      subIssues: false # default false (github only)
+      keywords: # default DEFAULT_KEYWORDS
         blockedBy: [depends on, blocked by, requires]
         blocks: [blocks, blocking, required by]
     scope:
-      labels: []          # when non-empty, only issues with at least one of these labels are in scope
-      excludeLabels: []   # issues with any of these labels are out of scope
-      milestones: []      # when non-empty, only issues in one of these milestones are in scope
+      labels: [] # when non-empty, only issues with at least one of these labels are in scope
+      excludeLabels: [] # issues with any of these labels are out of scope
+      milestones: [] # when non-empty, only issues in one of these milestones are in scope
     ordering:
-      priorityLabels: []  # e.g. [P0, P1, P2]
+      priorityLabels: [] # e.g. [P0, P1, P2]
 ```
 
 Validation: unique source ids, unique view ids, and `view.source` must exist.
@@ -491,9 +500,19 @@ These env vars override values in either mode: `EV_HOST`, `EV_PORT`,
 `EV_CACHE_TTL`, `EV_BASIC_AUTH` (`user:password`).
 
 ```ts
-export interface ResolvedSource { id: string; kind: ProviderKind; baseUrl: string; webUrl: string; token: string | null; path: string | null }
+export interface ResolvedSource {
+  id: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  webUrl: string;
+  token: string | null;
+  path: string | null;
+}
 export interface ResolvedView {
-  id: string; title: string; source: string; repos: RepoRef[];
+  id: string;
+  title: string;
+  source: string;
+  repos: RepoRef[];
   dependencies: { native: boolean; body: boolean; subIssues: boolean; keywords: KeywordConfig };
   scope: { labels: string[]; excludeLabels: string[]; milestones: string[] };
   ordering: { priorityLabels: string[] };
@@ -504,7 +523,11 @@ export interface AppConfig {
   sources: ResolvedSource[];
   views: ResolvedView[];
 }
-export function loadConfig(opts?: { path?: string; env?: Record<string, string | undefined>; cwd?: string }): AppConfig;
+export function loadConfig(opts?: {
+  path?: string;
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+}): AppConfig;
 export function parseConfig(yamlText: string, env: Record<string, string | undefined>): AppConfig;
 ```
 
@@ -520,39 +543,42 @@ function is injectable so tests stay fast), `Link`-header pagination, and a
 small concurrency limiter. Error messages must never include the token.
 
 ### GitHub
-* Auth: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`.
-* List: `GET /repos/{o}/{r}/issues?state=open&per_page=100` with pagination. Skip items that have `pull_request`.
-* Native dependencies (when `native`): for each issue where
+
+- Auth: `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`.
+- List: `GET /repos/{o}/{r}/issues?state=open&per_page=100` with pagination. Skip items that have `pull_request`.
+- Native dependencies (when `native`): for each issue where
   `issue_dependencies_summary.total_blocked_by > 0`, or where that field is
   absent, call `GET /repos/{o}/{r}/issues/{n}/dependencies/blocked_by?per_page=100`
   (paginated). Each returned issue gives a `blocked-by` relation. Its owner and
   repo are parsed from `repository_url` (`.../repos/{owner}/{repo}`). On 404 for
   the first such call, mark native dependencies unsupported for this repo
   (older GHES), emit one `native-unsupported` warning, and stop calling.
-* Sub-issues (when `subIssues`): for issues with
+- Sub-issues (when `subIssues`): for issues with
   `sub_issues_summary.total > 0` (or the field absent), call
   `GET /repos/{o}/{r}/issues/{n}/sub_issues?per_page=100`. Each child gives a
   `blocked-by` relation on the parent with `source: 'sub-issue'`. Handle 404
   the same way as above.
-* getIssue: `GET /repos/{o}/{r}/issues/{n}`. 404/410 → null. Has `pull_request` → null.
-* Mapping: `url` = `html_url`, labels from `labels[].name`, assignees from
+- getIssue: `GET /repos/{o}/{r}/issues/{n}`. 404/410 → null. Has `pull_request` → null.
+- Mapping: `url` = `html_url`, labels from `labels[].name`, assignees from
   `assignees[].login`, milestone from `milestone.title`. Body null → `''`.
 
 ### Gitea (API v1)
-* Auth: `Authorization: token <token>`.
-* List: `GET /api/v1/repos/{o}/{r}/issues?state=open&type=issues&limit=50&page=N`
+
+- Auth: `Authorization: token <token>`.
+- List: `GET /api/v1/repos/{o}/{r}/issues?state=open&type=issues&limit=50&page=N`
   until a page returns fewer than `limit` items. Skip anything with `pull_request` set.
-* Native (when `native`): `GET /api/v1/repos/{o}/{r}/issues/{n}/dependencies`
+- Native (when `native`): `GET /api/v1/repos/{o}/{r}/issues/{n}/dependencies`
   (paginated with `limit`/`page`) returns the issues this issue depends on:
   `blocked-by` relations. owner/repo come from `repository.owner` and
   `repository.name`. On 404 for the first call, emit `native-unsupported` and
   stop (dependencies disabled on the repo or instance).
-* getIssue: `GET /api/v1/repos/{o}/{r}/issues/{n}`; 404 → null; `pull_request` set → null.
-* Mapping: `url` = `html_url`; labels `labels[].name`; assignees
+- getIssue: `GET /api/v1/repos/{o}/{r}/issues/{n}`; 404 → null; `pull_request` set → null.
+- Mapping: `url` = `html_url`; labels `labels[].name`; assignees
   `assignees[].login` (may be null); milestone `milestone.title`.
-* `subIssues` is ignored.
+- `subIssues` is ignored.
 
 ### Fixture
+
 Reads a JSON file: `{ "issues": FixtureIssue[] }`, where `FixtureIssue` has
 `owner, repo, number, title, state, body?, labels?, assignees?, milestone?, blockedBy?: string[]`
 (the keys of native blocked-by relations, such as `"acme/api#3"`). No
@@ -565,13 +591,17 @@ dangling reference, a cross-repo dependency, and priority labels.
 
 ```ts
 export class PlanService {
-  constructor(config: AppConfig, deps?: { providerFor?: (source: ResolvedSource) => IssueProvider; now?: () => Date });
+  constructor(
+    config: AppConfig,
+    deps?: { providerFor?: (source: ResolvedSource) => IssueProvider; now?: () => Date },
+  );
   listViews(): { id: string; title: string; source: string; kind: ProviderKind; repos: string[] }[];
   getSnapshot(viewId: string, opts?: { refresh?: boolean }): Promise<Snapshot>; // throws UnknownViewError
 }
 ```
 
 Resolution (`resolve.ts`), deterministic:
+
 1. `open` = union of `listOpenIssues` over the view's repos, processed in
    sorted repo order. Carry the fetch warnings through.
 2. For every open issue, relations = native relations (if enabled) + body
@@ -602,14 +632,14 @@ fetch is not cached.
 `buildApp(config, service, { webDir?: string }): FastifyInstance`, plus
 `index.ts` to start it.
 
-| Method | Path | Response |
-|---|---|---|
-| GET | `/healthz` | `{ status: "ok" }` (no auth) |
-| GET | `/api/views` | `service.listViews()` |
-| GET | `/api/views/:id/snapshot?refresh=1` | `Snapshot` |
-| POST | `/api/views/:id/refresh` | `Snapshot` (forced refresh) |
-| GET | `/api/views/:id/export.(json\|md\|mmd\|dot)` | text, with the proper content-type and `Content-Disposition: inline` |
-| GET | `/*` | static web UI from `webDir` (default `dist/web`), SPA fallback to `index.html` |
+| Method | Path                                         | Response                                                                       |
+| ------ | -------------------------------------------- | ------------------------------------------------------------------------------ |
+| GET    | `/healthz`                                   | `{ status: "ok" }` (no auth)                                                   |
+| GET    | `/api/views`                                 | `service.listViews()`                                                          |
+| GET    | `/api/views/:id/snapshot?refresh=1`          | `Snapshot`                                                                     |
+| POST   | `/api/views/:id/refresh`                     | `Snapshot` (forced refresh)                                                    |
+| GET    | `/api/views/:id/export.(json\|md\|mmd\|dot)` | text, with the proper content-type and `Content-Disposition: inline`           |
+| GET    | `/*`                                         | static web UI from `webDir` (default `dist/web`), SPA fallback to `index.html` |
 
 Errors: unknown view → 404 `{ error }`; a provider error → 502 `{ error }`
 (no token in the message). Optional basic auth protects everything except
@@ -617,10 +647,10 @@ Errors: unknown view → 404 `{ error }`; a provider error → 502 `{ error }`
 
 ## 15. CLI (`src/cli/index.ts`, bin `execution-view`)
 
-* `execution-view serve [--config p]` starts the server.
-* `execution-view views [--config p]` lists views.
-* `execution-view plan <viewId> [--config p] [--format json|md|mermaid|dot] [--out file]` (default format `md`, default output stdout).
-* `execution-view check [--config p]` validates the config, fetches every view,
+- `execution-view serve [--config p]` starts the server.
+- `execution-view views [--config p]` lists views.
+- `execution-view plan <viewId> [--config p] [--format json|md|mermaid|dot] [--out file]` (default format `md`, default output stdout).
+- `execution-view check [--config p]` validates the config, fetches every view,
   and prints stats and warnings per view. It exits with code 1 on a config or
   fetch error, and code 2 when any view has cycles or dangling references.
   This is how users verify the prerequisites.
@@ -628,27 +658,28 @@ Errors: unknown view → 404 `{ error }`; a provider error → 502 `{ error }`
 ## 16. Web UI (`web/`)
 
 Single page, no framework:
-* A header with a view selector, the repo list, `fetchedAt`, a short content
+
+- A header with a view selector, the repo list, `fetchedAt`, a short content
   hash, a Refresh button, and export links.
-* The **Graph** tab renders an SVG from `Layout`, with wave column headers,
+- The **Graph** tab renders an SVG from `Layout`, with wave column headers,
   status colours, external nodes with a dashed border, and bezier edges built
   from the edge points. Pan with drag, zoom with the wheel, and a "fit" button.
   Clicking a node selects it, highlights its upstream and downstream, and
   opens a side panel (title, link, labels, assignees, status, wave, order,
   blocked by, blocks).
-* The **Execution order** tab shows a table grouped by wave with order #,
+- The **Execution order** tab shows a table grouped by wave with order #,
   issue, title, status, labels, and blocked by. Critical-path rows are marked.
-* The **Problems** tab lists cycles, blocked-by-cycle nodes and warnings.
-* A text filter (title, label, or `#N`) dims non-matching nodes and rows. It
+- The **Problems** tab lists cycles, blocked-by-cycle nodes and warnings.
+- A text filter (title, label, or `#N`) dims non-matching nodes and rows. It
   never changes the order.
-* Light and dark themes via `prefers-color-scheme`. It must be usable at 1024px width.
+- Light and dark themes via `prefers-color-scheme`. It must be usable at 1024px width.
 
 ## 17. Conventions for contributors (and agents)
 
-* Branch per ticket: `ticket/<issue#>-<slug>`, created from the integration
+- Branch per ticket: `ticket/<issue#>-<slug>`, created from the integration
   branch `claude/blissful-brown-20qnzf`. PRs target that branch.
-* Do not touch `package.json`, the lockfile, tsconfig files or CI unless your
+- Do not touch `package.json`, the lockfile, tsconfig files or CI unless your
   ticket says so. If you need a new dependency, stop and report it.
-* Before pushing, run `npm run typecheck && npm test && npm run format:check`.
+- Before pushing, run `npm run typecheck && npm test && npm run format:check`.
   All must pass.
-* No network access in tests. Use fixtures and an injected `fetch`.
+- No network access in tests. Use fixtures and an injected `fetch`.
