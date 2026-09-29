@@ -42,6 +42,24 @@ npm ci && npm run build && EV_CONFIG=config.demo.yaml npm start
 
 Open <http://localhost:8080>.
 
+## The web UI
+
+The header has a view selector, the repositories, when the data was fetched, the short content hash, a **Refresh** button (forces a refetch from your tracker) and an **Export** menu (JSON, Markdown, Mermaid, DOT). Under it: three tabs, live statistics, and a filter box.
+
+- **Graph.** One column per wave, plus a red column for unschedulable issues (cycles and what they block). Node colour is the status (ready, blocked, in cycle, blocked by cycle), external issues have a dashed border, and the critical path is drawn in blue. Drag to pan, scroll to zoom, **Fit** to reset. Click an issue to highlight everything upstream and downstream and open a side panel (status, wave, order, priority, milestone, labels, assignees, prerequisites and dependents).
+- **Execution order.** A table grouped by wave, with the linear order number, critical-path stars, status, labels, assignees and what each issue is blocked by.
+- **Problems.** Cycles, issues blocked by a cycle and every warning, each with an explanation and a "show in graph" button. The tab badge counts the problems.
+- **Filter.** Type text (matches title or key), `label:P1`, `#12` or `owner/repo#12`; terms combine with AND, and non-matching issues are dimmed. Press `/` to focus the filter and `Esc` to leave it or close the side panel. The selected view, tab and filter live in the URL hash (`#/view/<id>/<tab>?q=<query>`), so you can share a link.
+- The UI follows your light or dark colour scheme.
+
+![Selecting an issue highlights its prerequisites and dependents](docs/screenshots/graph-selected.png)
+
+![Execution order, grouped by wave](docs/screenshots/order.png)
+
+![Problems: cycles, blocked issues and warnings](docs/screenshots/problems.png)
+
+![Dark theme](docs/screenshots/graph-dark.png)
+
 ## Use it on your repo
 
 Read [Before you start: prerequisites](#before-you-start-prerequisites) first: without declared dependencies the graph is empty.

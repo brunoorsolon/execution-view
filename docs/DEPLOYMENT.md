@@ -179,7 +179,7 @@ journalctl -u execution-view -f
 
 ## Reverse proxy
 
-The app serves everything at the **root path** (`/`, `/api/...`, `/healthz`) and has **no base-path option**, so it cannot live under a sub-path such as `https://example.com/ev/`. Give it a host name of its own.
+The app serves everything at the **root path** (`/`, `/api/...`, `/healthz`) and has **no base-path option**, so it cannot live under a sub-path such as `https://example.com/ev/`. Give it a host name of its own. (The web UI itself uses relative URLs, so a proxy that strips a path prefix, with the UI opened at `/ev/` including the trailing slash, may work; this is untested and not supported.)
 
 nginx:
 
