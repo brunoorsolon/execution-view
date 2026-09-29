@@ -128,10 +128,13 @@ acme/web#8  -> acme/web#9
 
 ### Other useful scenarios
 
-- **Only `acme/web` in the view** (`repos: [acme/web]`): `acme/api#2`, `#3`,
+- **Only `acme/web` in the view** (`repos: [acme/web]`): `acme/api#2`,
   `#4`, `#5`, `#6`, `#7`, `#8`, `#9`, `#11`, `#12`, `#13`, `#14` and `#15` become
   **external** nodes (they are transitive open prerequisites of web issues);
-  `acme/api#10` and `acme/api#16` are not part of the plan.
+  `acme/api#10` and `acme/api#16` are not part of the plan. `acme/api#3` is not
+  part of the plan either: it only declares `Blocks: #6` on itself, and nothing
+  in the view or in the fetched external issues references it, so it is never
+  discovered.
 - **`native: false`** (or `body: false`): the edges whose only source is
   `native` (respectively `body`) disappear. `acme/api#13` then loses its only
   dependency, so the cycle is broken and `acme/api#11` to `#14` and `acme/web#7`
