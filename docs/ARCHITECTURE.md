@@ -14,6 +14,13 @@
 >   label name (`priority === priorityLabels.length` means none). It is not part
 >   of `contentHash`. The Markdown export has a Priority column, and the web UI
 >   shows the exact name.
+> - `Snapshot` has an `orderingMode: 'priority' | 'waves'` field (the view's
+>   `ordering.mode`, default `priority`; env-only mode: `EV_ORDERING_MODE`).
+>   In `waves` mode the Kahn queue in §8 picks by **(wave asc, priority asc,
+>   remainingDepth desc, compareKeys asc)**, so the linear order runs wave by
+>   wave; `priority` mode is exactly the rule in §8. It is not hashed on its
+>   own: `plan.order` already reflects it. `PlanInput` has an optional
+>   `orderingMode` and `ResolvedView.ordering` has `mode`.
 > - `AppConfig` has an optional `warnings: string[]` (non-fatal problems found
 >   while loading: a `tokenEnv` naming an unset variable, `subIssues` on a
 >   non-GitHub source). The CLI and the server print them.

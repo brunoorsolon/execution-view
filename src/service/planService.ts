@@ -133,6 +133,7 @@ export class PlanService {
       fetchedAt: at.toISOString(),
       contentHash: contentHash({ plan, layout }),
       priorityLabels: [...view.ordering.priorityLabels],
+      orderingMode: view.ordering.mode,
       plan,
       layout,
     };

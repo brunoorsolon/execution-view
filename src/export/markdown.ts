@@ -1,4 +1,4 @@
-import type { IssueKey, PlanNode, Snapshot } from '../core/types.js';
+import type { IssueKey, OrderingMode, PlanNode, Snapshot } from '../core/types.js';
 import { isMultiRepo, issueLabel, keyLabel, nodeIndex, oneLine, replaceChars } from './shared.js';
 
 const MD_ESCAPES: Record<string, string> = {
@@ -29,6 +29,17 @@ function issueLink(node: PlanNode, multi: boolean): string {
   return node.external ? `${link} (external)` : link;
 }
 
+/** The legend sentence that explains how the # column is ordered. */
+function orderLegend(mode: OrderingMode): string {
+  if (mode === 'waves') {
+    return 'The # column runs wave by wave; within a wave, by priority and critical path.';
+  }
+  return (
+    'The # column favours priority labels and the critical path: an issue from a later wave can ' +
+    'come before an earlier-wave issue once its prerequisites are done.'
+  );
+}
+
 export function toMarkdown(snapshot: Snapshot): string {
   const { plan, priorityLabels } = snapshot;
   const multi = isMultiRepo(plan);
@@ -56,7 +67,8 @@ export function toMarkdown(snapshot: Snapshot): string {
     '## Execution order',
     '',
     'Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all ' +
-      'earlier waves are done. ★ marks the critical path.',
+      'earlier waves are done. ★ marks the critical path. ' +
+      orderLegend(snapshot.orderingMode),
   ];
 
   if (plan.waves.length === 0) {

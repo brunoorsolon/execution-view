@@ -128,6 +128,7 @@ export function makeSnapshot(externalRepo: 'acme/lib' | 'acme/api' = 'acme/lib')
     fetchedAt: '2026-01-02T03:04:05.000Z',
     contentHash: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     priorityLabels: ['P0', 'P1'],
+    orderingMode: 'priority',
     plan: {
       viewId: 'platform',
       nodes,

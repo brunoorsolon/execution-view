@@ -58,7 +58,7 @@ describe('parseConfig defaults', () => {
         repos: [{ owner: 'acme', repo: 'api' }],
         dependencies: { native: true, body: true, subIssues: false, keywords: DEFAULT_KEYWORDS },
         scope: { labels: [], excludeLabels: [], milestones: [] },
-        ordering: { priorityLabels: [] },
+        ordering: { priorityLabels: [], mode: 'priority' },
       },
     ]);
     expect(cfg.warnings).toEqual([]);
@@ -109,6 +109,20 @@ describe('parseConfig defaults', () => {
     expect(v.title).toBe('My view');
     expect(v.scope).toEqual({ labels: ['a'], excludeLabels: ['b'], milestones: ['m1'] });
     expect(v.ordering.priorityLabels).toEqual(['P0', 'P1']);
+  });
+
+  it('defaults ordering.mode to priority and accepts waves', () => {
+    expect(parseConfig(MIN, {}).views[0]!.ordering.mode).toBe('priority');
+    expect(
+      parseConfig(`${MIN}    ordering:\n      mode: priority\n`, {}).views[0]!.ordering.mode,
+    ).toBe('priority');
+    const cfg = parseConfig(`${MIN}    ordering:\n      mode: waves\n`, {});
+    expect(cfg.views[0]!.ordering).toEqual({ priorityLabels: [], mode: 'waves' });
+  });
+
+  it('rejects an invalid ordering.mode', () => {
+    const e = errorOf(() => parseConfig(`${MIN}    ordering:\n      mode: fastest\n`, {}));
+    expect(e.message).toContain('ordering.mode');
   });
 });
 
@@ -450,7 +464,7 @@ views:
           { owner: 'acme', repo: 'web' },
         ],
         dependencies: { native: true, body: true, subIssues: false },
-        ordering: { priorityLabels: [] },
+        ordering: { priorityLabels: [], mode: 'priority' },
       });
       expect(cfg.server).toEqual({ host: '0.0.0.0', port: 8080, basicAuth: null });
     });
@@ -493,6 +507,25 @@ views:
         dependencies: { subIssues: true },
       });
       expect(cfg.server.port).toBe(9090);
+    });
+
+    it('EV_ORDERING_MODE selects the ordering mode (default priority)', () => {
+      const base = { EV_PROVIDER: 'github', EV_REPOS: 'a/b' };
+      expect(loadConfig({ env: base, cwd: dir }).views[0]!.ordering.mode).toBe('priority');
+      const cfg = loadConfig({ env: { ...base, EV_ORDERING_MODE: 'waves' }, cwd: dir });
+      expect(cfg.views[0]!.ordering.mode).toBe('waves');
+      const upper = loadConfig({ env: { ...base, EV_ORDERING_MODE: 'Priority' }, cwd: dir });
+      expect(upper.views[0]!.ordering.mode).toBe('priority');
+    });
+
+    it('rejects an invalid EV_ORDERING_MODE with a readable message', () => {
+      const e = errorOf(() =>
+        loadConfig({
+          env: { EV_PROVIDER: 'github', EV_REPOS: 'a/b', EV_ORDERING_MODE: 'fastest' },
+          cwd: dir,
+        }),
+      );
+      expect(e.message).toBe('EV_ORDERING_MODE: expected "priority" or "waves" (got "fastest")');
     });
 
     it('gitea without EV_BASE_URL is an error', () => {

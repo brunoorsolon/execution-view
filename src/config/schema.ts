@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DEFAULT_KEYWORDS, type KeywordConfig } from '../core/parser.js';
-import type { ProviderKind, RepoRef } from '../core/types.js';
+import type { OrderingMode, ProviderKind, RepoRef } from '../core/types.js';
 
 export { DEFAULT_KEYWORDS };
 export type { KeywordConfig };
@@ -25,7 +25,7 @@ export interface ResolvedView {
   repos: RepoRef[];
   dependencies: { native: boolean; body: boolean; subIssues: boolean; keywords: KeywordConfig };
   scope: { labels: string[]; excludeLabels: string[]; milestones: string[] };
-  ordering: { priorityLabels: string[] };
+  ordering: { priorityLabels: string[]; mode: OrderingMode };
 }
 
 export interface AppConfig {
@@ -110,7 +110,10 @@ const viewSchema = z
       .object({ labels: stringList, excludeLabels: stringList, milestones: stringList })
       .strict()
       .optional(),
-    ordering: z.object({ priorityLabels: stringList }).strict().optional(),
+    ordering: z
+      .object({ priorityLabels: stringList, mode: z.enum(['priority', 'waves']).optional() })
+      .strict()
+      .optional(),
   })
   .strict();
 
