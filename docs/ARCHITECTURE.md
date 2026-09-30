@@ -1,5 +1,46 @@
 # execution-view: architecture and contracts
 
+> **Status.** This document was the **implementation contract** for the first
+> version. The code follows it, with the deviations listed below; where they
+> differ, the code and the user documentation win for behaviour that users
+> see. User-facing documentation: [README](../README.md),
+> [PREREQUISITES](PREREQUISITES.md), [CONFIGURATION](CONFIGURATION.md),
+> [DEPLOYMENT](DEPLOYMENT.md), [DETERMINISM](DETERMINISM.md) and [API](API.md).
+>
+> Known deviations from the text below:
+>
+> - `AppConfig` has an optional `warnings: string[]` (non-fatal problems found
+>   while loading: a `tokenEnv` naming an unset variable, `subIssues` on a
+>   non-GitHub source). The CLI and the server print them.
+> - `parseConfig(yamlText, env, options?)` takes a third argument
+>   `{ baseDir? }`: relative fixture `path` values resolve against the config
+>   file's directory (default `process.cwd()`).
+> - `server.basicAuth` needs `username` plus either `passwordEnv` or
+>   `password`, not "both keys".
+> - The Docker image does **not** set `EV_CONFIG` (an explicit path must exist,
+>   which would break env-only mode). The default lookup is `/app/config.yaml`.
+> - `dangling-reference` and `fetch-error` warnings are dropped when the issue
+>   that declares the reference is not part of the plan (out of scope), so they
+>   only describe what the user sees.
+> - Sub-issue relations are kept only when `subIssues` is true, and native
+>   relations only when `native` is true; the two toggles are independent
+>   (also when fetching). Native relations of externally looked-up issues are
+>   not fetched; their body relations are.
+> - Gitea pagination uses `X-Total-Count` when the server sends it, and
+>   otherwise stops on an empty page or a page shorter than the first one.
+> - CLI: `plan --format` also accepts `mmd` (alias of `mermaid`); `views` and
+>   `check` accept `--json`; `check` accepts several view ids. It exits `2`
+>   only for `cycle` and `dangling-reference`; other warnings do not change the
+>   exit code.
+> - HTTP: all `/api/` responses carry `Cache-Control: no-store`; the snapshot
+>   endpoint honours `If-None-Match` with the content hash as `ETag`
+>   (`304`); exports have no `ETag`.
+> - Markdown and DOT exports number waves from 1; `PlanNode.wave` in JSON is
+>   0-based.
+> - The `native-unsupported` hint printed by `check` for Gitea (Settings,
+>   Advanced) and the message of the Gitea provider (Settings, Issues) name
+>   different places for the dependencies setting.
+
 This document is the source of truth for the implementation. Every ticket refers
 to it. If a ticket and this document disagree, this document wins. Change it
 only in a dedicated PR.
