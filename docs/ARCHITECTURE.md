@@ -35,6 +35,10 @@
 > - HTTP: all `/api/` responses carry `Cache-Control: no-store`; the snapshot
 >   endpoint honours `If-None-Match` with the content hash as `ETag`
 >   (`304`); exports have no `ETag`.
+> - Static UI: files in `webDir` are resolved per request (no restart needed
+>   after a rebuild, and a `webDir` created after startup is served). `index.html`
+>   (also via the SPA fallback) is `Cache-Control: no-cache`; files under
+>   `assets/` are `public, max-age=31536000, immutable`; other files `no-cache`.
 > - Markdown and DOT exports number waves from 1; `PlanNode.wave` in JSON is
 >   0-based.
 > - The `native-unsupported` hint printed by `check` for Gitea and the message
