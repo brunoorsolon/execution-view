@@ -209,6 +209,26 @@ function resolveBasicAuth(
   return { username: raw.username, password };
 }
 
+function resolveWebhooks(
+  raw: RawConfig['webhooks'],
+  env: Env,
+  warnings: string[],
+): { secret: string } | null {
+  const override = envValue(env, 'EV_WEBHOOK_SECRET');
+  if (override !== undefined) return { secret: override };
+  if (raw === undefined) return null;
+  const fromEnv = raw.secretEnv !== undefined ? envValue(env, raw.secretEnv) : undefined;
+  const inline = raw.secret !== undefined && raw.secret.trim() !== '' ? raw.secret : undefined;
+  const secret = fromEnv ?? inline;
+  if (secret !== undefined) return { secret };
+  warnings.push(
+    raw.secretEnv !== undefined
+      ? `webhooks: environment variable ${raw.secretEnv} is not set and no secret is given; webhooks are disabled`
+      : 'webhooks: no secret is given; webhooks are disabled',
+  );
+  return null;
+}
+
 /** Validate an already-parsed raw config object and resolve it into an AppConfig. */
 function resolveConfig(input: unknown, env: Env, baseDir: string): AppConfig {
   const parsed = rawConfigSchema.safeParse(input);
@@ -261,6 +281,7 @@ function resolveConfig(input: unknown, env: Env, baseDir: string): AppConfig {
   return {
     server: { host, port, basicAuth: resolveBasicAuth(raw.server?.basicAuth, env) },
     cache: { ttlSeconds },
+    webhooks: resolveWebhooks(raw.webhooks, env, warnings),
     sources,
     views,
     warnings,

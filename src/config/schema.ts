@@ -31,6 +31,8 @@ export interface ResolvedView {
 export interface AppConfig {
   server: { host: string; port: number; basicAuth: { username: string; password: string } | null };
   cache: { ttlSeconds: number };
+  /** The webhook endpoints are enabled when a secret is configured; null otherwise. */
+  webhooks: { secret: string } | null;
   sources: ResolvedSource[];
   views: ResolvedView[];
   /** Non-fatal problems found while loading (for example a tokenEnv naming an unset variable). */
@@ -122,6 +124,13 @@ const basicAuthSchema = z
   })
   .strict();
 
+const webhooksSchema = z
+  .object({
+    secret: z.string().optional(),
+    secretEnv: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const rawConfigSchema = z
   .object({
     server: z
@@ -136,6 +145,7 @@ export const rawConfigSchema = z
       .object({ ttlSeconds: z.number().int().min(0).optional() })
       .strict()
       .optional(),
+    webhooks: webhooksSchema.optional(),
     sources: z.array(sourceSchema).min(1, 'at least one source is required'),
     views: z.array(viewSchema).min(1, 'at least one view is required'),
   })
