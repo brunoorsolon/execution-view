@@ -1,0 +1,12 @@
+sources:
+  - id: demo
+    kind: fixture
+    path: ./test/fixtures/demo.json
+    webUrl: https://fixture.local
+views:
+  - id: demo
+    title: Acme demo roadmap
+    source: demo
+    repos: [acme/api, acme/web]
+    ordering:
+      priorityLabels: [P0, P1, P2]

@@ -1,0 +1,279 @@
+{
+  "_comment": "Acme demo roadmap for the fixture provider (repos acme/api and acme/web). 25 issues, 2 closed, 23 open. It shows: 7 waves with parallel branches; every body dependency form (Depends on, Blocked by list item, Blocks, task-list requires, '## Depends on' section, cross-repo acme/api#N, URL ref) plus native blockedBy; closed dependencies (satisfied, never block); a dangling reference (acme/api#99); a 3-issue cycle (acme/api#11, #12, #13) with downstream issues (acme/api#14, acme/web#7) that are blocked-by-cycle; prose, code-block, inline-code and blockquote mentions that must NOT count; P0/P1/P2 priority labels, milestones and assignees. See test/fixtures/README.md for the expected results.",
+  "issues": [
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 1,
+      "title": "Bootstrap repository and CI pipeline",
+      "state": "closed",
+      "body": "Set up the monorepo layout, linting and the CI pipeline.\n\nDone and released.",
+      "labels": ["infra"],
+      "assignees": ["alice"],
+      "milestone": "v0.1 Foundations"
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 2,
+      "title": "Design database schema",
+      "state": "open",
+      "body": "Define the core tables: users, projects, memberships, api_keys.\n\nDepends on #1",
+      "labels": ["P0", "db", "backend"],
+      "assignees": ["bob"],
+      "milestone": "v0.1 Foundations"
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 3,
+      "title": "Set up migration tooling and seed data",
+      "state": "open",
+      "body": "Add a migration runner and reproducible seed data for local development.\n\n**Blocks:** #6",
+      "labels": ["P1", "db", "infra"],
+      "assignees": [],
+      "milestone": "v0.1 Foundations"
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 4,
+      "title": "Implement authentication with JWT",
+      "state": "open",
+      "body": "Login, token refresh and password reset.\n\nDepends on #2",
+      "labels": ["P0", "auth", "backend"],
+      "assignees": ["alice"],
+      "milestone": "v0.1 Foundations"
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 5,
+      "title": "Users and memberships endpoints",
+      "state": "open",
+      "body": "CRUD endpoints for users and project memberships.\n\n- Blocked by: #2, #4",
+      "labels": ["P1", "backend"],
+      "assignees": ["bob"],
+      "milestone": "v0.2 Core API"
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 6,
+      "title": "Projects endpoints",
+      "state": "open",
+      "body": "CRUD endpoints for projects, with pagination and filtering.\n\nPrerequisites:\n\n- [ ] requires #5",
+      "labels": ["P1", "backend"],
+      "assignees": ["carol"],
+      "milestone": "v0.2 Core API",
+      "blockedBy": ["acme/api#2"]
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 7,
+      "title": "Rate limiting and API keys",
+      "state": "open",
+      "body": "Per-key rate limits and key management.\n\n## Depends on\n\n- #4\n- #5\n\n## Notes\n\nA token bucket is enough for now.",
+      "labels": ["P2", "auth", "backend"],
+      "assignees": [],
+      "milestone": "v0.2 Core API"
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 8,
+      "title": "Publish OpenAPI documentation",
+      "state": "open",
+      "body": "Generate and host the public API reference.\n\nDepends on #6, #7",
+      "labels": ["P2", "docs"],
+      "assignees": ["carol"],
+      "milestone": "v1.0 Launch"
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 9,
+      "title": "Webhook notifications",
+      "state": "open",
+      "body": "Notify subscribers when projects change.\n\nDepends on #6",
+      "labels": ["P2", "backend"],
+      "assignees": ["dave"],
+      "milestone": "v1.0 Launch",
+      "blockedBy": ["acme/api#6"]
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 10,
+      "title": "Full-text search endpoint",
+      "state": "open",
+      "body": "Search across projects and users.\n\nDepends on #2, #99",
+      "labels": ["P2", "backend", "enhancement"],
+      "assignees": [],
+      "milestone": null
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 11,
+      "title": "Background job queue",
+      "state": "open",
+      "body": "Run long tasks outside the request cycle.\n\nDepends on #12",
+      "labels": ["P1", "backend"],
+      "assignees": ["dave"]
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 12,
+      "title": "Job retry and dead-letter policy",
+      "state": "open",
+      "body": "Retry with backoff, then park failed jobs.\n\n- Blocked by: #13",
+      "labels": ["P2", "backend"],
+      "assignees": []
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 13,
+      "title": "Job dashboard and metrics",
+      "state": "open",
+      "body": "Expose queue depth and failure rates.\n\nThe queue is the source of truth for the numbers.",
+      "labels": ["P1", "backend", "observability"],
+      "assignees": ["dave"],
+      "blockedBy": ["acme/api#11"]
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 14,
+      "title": "Nightly report export",
+      "state": "open",
+      "body": "Export usage reports every night.\n\nDepends on #12, #2",
+      "labels": ["P2", "backend"],
+      "assignees": []
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 15,
+      "title": "Production deployment pipeline",
+      "state": "open",
+      "body": "Container image, Helm chart and staged rollout.\n\nDepends on #8, #9",
+      "labels": ["P0", "infra"],
+      "assignees": ["alice", "bob"],
+      "milestone": "v1.0 Launch"
+    },
+    {
+      "owner": "acme",
+      "repo": "api",
+      "number": 16,
+      "title": "Audit logging",
+      "state": "open",
+      "body": "Record security-relevant actions.\n\nThis probably depends on #3 but we are not sure.\n\nExample of the syntax we use in this repo:\n\n```\nDepends on #15\n- Blocked by: #14\n```\n\nInline example: `Depends on #13`.\n\n> Depends on #12\n\nDepends on #4",
+      "labels": ["tech-debt"],
+      "assignees": []
+    },
+    {
+      "owner": "acme",
+      "repo": "web",
+      "number": 1,
+      "title": "Choose UI framework and design tokens",
+      "state": "closed",
+      "body": "Decision recorded in the ADR.",
+      "labels": ["frontend"],
+      "assignees": ["erin"],
+      "milestone": "v0.1 Foundations"
+    },
+    {
+      "owner": "acme",
+      "repo": "web",
+      "number": 2,
+      "title": "App shell and routing",
+      "state": "open",
+      "body": "Layout, navigation and client-side routes.",
+      "labels": ["P0", "frontend"],
+      "assignees": ["erin"],
+      "milestone": "v0.1 Foundations",
+      "blockedBy": ["acme/web#1"]
+    },
+    {
+      "owner": "acme",
+      "repo": "web",
+      "number": 3,
+      "title": "Login page",
+      "state": "open",
+      "body": "Sign-in form wired to the auth API.\n\nDepends on acme/api#4, #2",
+      "labels": ["P0", "auth", "frontend"],
+      "assignees": ["erin"],
+      "milestone": "v0.2 Core API"
+    },
+    {
+      "owner": "acme",
+      "repo": "web",
+      "number": 4,
+      "title": "Projects list page",
+      "state": "open",
+      "body": "Table of projects with search and pagination.\n\n- Blocked by: acme/api#6, #3",
+      "labels": ["P1", "frontend"],
+      "assignees": ["frank"],
+      "milestone": "v0.2 Core API"
+    },
+    {
+      "owner": "acme",
+      "repo": "web",
+      "number": 5,
+      "title": "Shared component library",
+      "state": "open",
+      "body": "Buttons, inputs, tables and dialogs.\n\n**Blocks:** #3, #4",
+      "labels": ["P2", "frontend", "design"],
+      "assignees": [],
+      "milestone": "v0.1 Foundations"
+    },
+    {
+      "owner": "acme",
+      "repo": "web",
+      "number": 6,
+      "title": "Project detail page",
+      "state": "open",
+      "body": "Overview, members and activity feed.\n\nDepends on https://fixture.local/acme/api/issues/6, #5",
+      "labels": ["p1", "frontend"],
+      "assignees": ["frank"],
+      "milestone": "v0.2 Core API"
+    },
+    {
+      "owner": "acme",
+      "repo": "web",
+      "number": 7,
+      "title": "Reports page",
+      "state": "open",
+      "body": "Download the nightly usage report.\n\nDepends on acme/api#14",
+      "labels": ["P1", "frontend"],
+      "assignees": []
+    },
+    {
+      "owner": "acme",
+      "repo": "web",
+      "number": 8,
+      "title": "End-to-end test suite",
+      "state": "open",
+      "body": "Cover login, project list and project detail.\n\nDepends on #4, #6",
+      "labels": ["P1", "frontend", "testing"],
+      "assignees": ["frank"],
+      "milestone": "v1.0 Launch",
+      "blockedBy": ["acme/web#3"]
+    },
+    {
+      "owner": "acme",
+      "repo": "web",
+      "number": 9,
+      "title": "Production deployment to CDN",
+      "state": "open",
+      "body": "Build, upload and cache-bust the web bundle.\n\nDepends on #8, acme/api#15",
+      "labels": ["P0", "infra", "frontend"],
+      "assignees": ["erin", "alice"],
+      "milestone": "v1.0 Launch"
+    }
+  ]
+}
