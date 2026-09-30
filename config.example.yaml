@@ -1,0 +1,83 @@
+# execution-view example configuration.
+#
+# Copy this file to config.yaml (the default location), or point to another
+# file with `--config <path>` or the EV_CONFIG environment variable. Without a
+# config file, the app falls back to env-only mode (EV_PROVIDER, EV_REPOS, ...).
+#
+# Environment overrides that apply on top of this file:
+#   EV_HOST, EV_PORT (1-65535), EV_CACHE_TTL (seconds, >= 0),
+#   EV_BASIC_AUTH (user:password)
+
+server:
+  host: 0.0.0.0 # default: 0.0.0.0
+  port: 8080 # default: 8080
+  # Optional HTTP basic auth. A password is required, from one of:
+  #   passwordEnv: name of the env var holding it (recommended; wins when set)
+  #   password:    inline value (discouraged)
+  # EV_BASIC_AUTH=user:password overrides this whole block.
+  basicAuth:
+    username: admin
+    passwordEnv: EV_BASIC_AUTH_PASSWORD
+    # password: change-me
+
+cache:
+  ttlSeconds: 300 # default: 300. 0 disables caching.
+
+# Sources: where issues come from. ids are unique and match ^[a-z0-9][a-z0-9-_]*$
+sources:
+  # GitHub.com
+  - id: gh
+    kind: github
+    baseUrl: https://api.github.com # default for github
+    # webUrl: https://github.com # optional; derived from baseUrl when omitted
+    tokenEnv: GITHUB_TOKEN # name of the env var holding the token (recommended)
+    # token: ghp_xxx # inline token (discouraged). tokenEnv wins when its variable is set.
+    # A missing token variable is not an error: access is anonymous (public repos only).
+
+  # GitHub Enterprise Server (uncomment and adapt)
+  # - id: ghes
+  #   kind: github
+  #   baseUrl: https://ghe.example.com/api/v3 # webUrl becomes https://ghe.example.com
+  #   tokenEnv: GHES_TOKEN
+
+  # Gitea (Forgejo should work too, but is untested)
+  - id: gt
+    kind: gitea
+    baseUrl: https://gitea.example.com # required. Instance root; the API is at <baseUrl>/api/v1
+    # webUrl: https://gitea.example.com # optional; defaults to baseUrl
+    tokenEnv: GITEA_TOKEN
+
+  # Fixture: reads issues from a local JSON file (demos and tests)
+  - id: demo
+    kind: fixture
+    path: ./test/fixtures/demo.json # required; relative to this file's directory
+
+# Views: a set of repositories of one source, planned together.
+views:
+  - id: platform # unique; ^[a-z0-9][a-z0-9-_]*$
+    title: Platform roadmap # default: the id
+    source: gh # must be one of the source ids above
+    repos: [acme/api, acme/web] # at least one owner/repo; lowercased, deduplicated, sorted
+    dependencies:
+      native: true # use the provider's native issue relations. default: true
+      body: true # parse "Depends on #12" style lines in issue bodies. default: true
+      subIssues: false # treat sub-issues as dependencies (github only). default: false
+      keywords: # matched at the start of a body line, case-insensitive
+        # Each list is optional; a missing list uses its default shown here.
+        blockedBy: [depends on, blocked by, requires]
+        blocks: [blocks, blocking, required by]
+    scope:
+      labels: [] # when non-empty, only issues with at least one of these labels are in scope
+      excludeLabels: [] # issues with any of these labels are out of scope
+      milestones: [] # when non-empty, only issues in one of these milestones are in scope
+    ordering:
+      priorityLabels: [] # highest priority first, e.g. [P0, P1, P2]
+
+  - id: self-hosted
+    source: gt
+    repos: [team/app]
+
+  - id: demo
+    title: Demo data
+    source: demo
+    repos: [demo/app]
