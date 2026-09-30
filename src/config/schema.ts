@@ -1,16 +1,9 @@
 import { z } from 'zod';
+import { DEFAULT_KEYWORDS, type KeywordConfig } from '../core/parser.js';
 import type { ProviderKind, RepoRef } from '../core/types.js';
 
-// TODO(#2): import from core/parser once merged
-export interface KeywordConfig {
-  blockedBy: string[];
-  blocks: string[];
-}
-// TODO(#2): import from core/parser once merged
-export const DEFAULT_KEYWORDS: KeywordConfig = {
-  blockedBy: ['depends on', 'blocked by', 'requires'],
-  blocks: ['blocks', 'blocking', 'required by'],
-};
+export { DEFAULT_KEYWORDS };
+export type { KeywordConfig };
 
 // ---------------------------------------------------------------------------
 // Resolved (output) types, as specified in docs/ARCHITECTURE.md section 11.
