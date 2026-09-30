@@ -37,9 +37,9 @@
 >   (`304`); exports have no `ETag`.
 > - Markdown and DOT exports number waves from 1; `PlanNode.wave` in JSON is
 >   0-based.
-> - The `native-unsupported` hint printed by `check` for Gitea (Settings,
->   Advanced) and the message of the Gitea provider (Settings, Issues) name
->   different places for the dependencies setting.
+> - The `native-unsupported` hint printed by `check` for Gitea and the message
+>   of the Gitea provider use the same hedged wording for the dependencies
+>   setting (repository settings, or `DEFAULT_ENABLE_DEPENDENCIES` in `app.ini`).
 
 This document is the source of truth for the implementation. Every ticket refers
 to it. If a ticket and this document disagree, this document wins. Change it
