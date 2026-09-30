@@ -69,6 +69,8 @@ Open an issue, find the **Relationships** area of the sidebar, and use **Mark as
 
 ### Gitea
 
+Forgejo uses the same API and is supported with `kind: gitea` (env-only mode: `EV_PROVIDER=gitea`). CI tests the app against live Gitea 1.25 and Forgejo 11 instances (`scripts/forge-integration.sh`); other versions are expected to work but are not tested.
+
 Open an issue and use the **Dependencies** section of the sidebar: add the issue that **this issue depends on**. **(may vary by version)**
 
 For this to work, dependencies must be enabled:
