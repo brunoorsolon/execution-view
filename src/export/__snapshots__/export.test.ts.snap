@@ -1,0 +1,225 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`toDot > matches the snapshot (multi-repo) 1`] = `
+"digraph "execution-view" {
+  rankdir=LR;
+  node [shape=box, style="rounded,filled"];
+  subgraph "wave_1" {
+    rank=same;
+    "acme/lib#7" [label="acme/lib#7 Upstream library release", fillcolor="#d1fae5", style="rounded,filled,dashed", URL="https://github.com/acme/lib/issues/7"];
+    "acme/api#1" [label="acme/api#1 Set up schema", fillcolor="#d1fae5", URL="https://github.com/acme/api/issues/1"];
+  }
+  subgraph "wave_2" {
+    rank=same;
+    "acme/api#2" [label="acme/api#2 Fix \\"login\\" | SSO [wip] #42 <b>", fillcolor="#fef3c7", URL="https://github.com/acme/api/issues/2"];
+    "acme/api#3" [label="acme/api#3 Write docs", fillcolor="#fef3c7", URL="https://github.com/acme/api/issues/3"];
+  }
+  subgraph "unschedulable" {
+    rank=same;
+    "acme/api#10" [label="acme/api#10 Cycle A", fillcolor="#fecaca", URL="https://github.com/acme/api/issues/10"];
+    "acme/api#11" [label="acme/api#11 Cycle B", fillcolor="#fecaca", URL="https://github.com/acme/api/issues/11"];
+    "acme/api#12" [label="acme/api#12 Behind the cycle", fillcolor="#fed7aa", URL="https://github.com/acme/api/issues/12"];
+  }
+  "acme/api#1" -> "acme/api#2";
+  "acme/api#1" -> "acme/api#3";
+  "acme/api#10" -> "acme/api#11";
+  "acme/api#11" -> "acme/api#10";
+  "acme/api#11" -> "acme/api#12";
+  "acme/lib#7" -> "acme/api#3";
+}
+"
+`;
+
+exports[`toDot > matches the snapshot (single repo) 1`] = `
+"digraph "execution-view" {
+  rankdir=LR;
+  node [shape=box, style="rounded,filled"];
+  subgraph "wave_1" {
+    rank=same;
+    "acme/api#99" [label="#99 Upstream library release", fillcolor="#d1fae5", style="rounded,filled,dashed", URL="https://github.com/acme/api/issues/99"];
+    "acme/api#1" [label="#1 Set up schema", fillcolor="#d1fae5", URL="https://github.com/acme/api/issues/1"];
+  }
+  subgraph "wave_2" {
+    rank=same;
+    "acme/api#2" [label="#2 Fix \\"login\\" | SSO [wip] #42 <b>", fillcolor="#fef3c7", URL="https://github.com/acme/api/issues/2"];
+    "acme/api#3" [label="#3 Write docs", fillcolor="#fef3c7", URL="https://github.com/acme/api/issues/3"];
+  }
+  subgraph "unschedulable" {
+    rank=same;
+    "acme/api#10" [label="#10 Cycle A", fillcolor="#fecaca", URL="https://github.com/acme/api/issues/10"];
+    "acme/api#11" [label="#11 Cycle B", fillcolor="#fecaca", URL="https://github.com/acme/api/issues/11"];
+    "acme/api#12" [label="#12 Behind the cycle", fillcolor="#fed7aa", URL="https://github.com/acme/api/issues/12"];
+  }
+  "acme/api#1" -> "acme/api#2";
+  "acme/api#1" -> "acme/api#3";
+  "acme/api#10" -> "acme/api#11";
+  "acme/api#11" -> "acme/api#10";
+  "acme/api#11" -> "acme/api#12";
+  "acme/api#99" -> "acme/api#3";
+}
+"
+`;
+
+exports[`toMarkdown > matches the snapshot (multi-repo) 1`] = `
+"# Platform roadmap
+
+View \`platform\` · fetched 2026-01-02T03:04:05.000Z · hash \`0123456789ab\`
+
+7 issues · 2 ready · 2 blocked · 3 unschedulable · 1 external · 6 dependencies · 2 waves
+
+## Execution order
+
+Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all earlier waves are done. ★ marks the critical path.
+
+### Wave 1
+
+| # | Issue | Title | Status | Blocked by |
+| --- | --- | --- | --- | --- |
+| 1 | [acme/lib#7](https://github.com/acme/lib/issues/7) (external) | Upstream library release | ready |  |
+| 2 ★ | [acme/api#1](https://github.com/acme/api/issues/1) | Set up schema | ready |  |
+
+### Wave 2
+
+| # | Issue | Title | Status | Blocked by |
+| --- | --- | --- | --- | --- |
+| 3 ★ | [acme/api#2](https://github.com/acme/api/issues/2) | Fix "login" \\| SSO \\[wip\\] #42 &lt;b&gt; | blocked | acme/api#1 |
+| 4 | [acme/api#3](https://github.com/acme/api/issues/3) | Write docs | blocked | acme/api#1, acme/lib#7 |
+
+## Unschedulable
+
+These issues cannot be ordered because they are in a dependency cycle or depend on one.
+
+| Issue | Title | Status | Blocked by |
+| --- | --- | --- | --- |
+| [acme/api#10](https://github.com/acme/api/issues/10) | Cycle A | in-cycle | acme/api#11 |
+| [acme/api#11](https://github.com/acme/api/issues/11) | Cycle B | in-cycle | acme/api#10 |
+| [acme/api#12](https://github.com/acme/api/issues/12) | Behind the cycle | blocked-by-cycle | acme/api#11 |
+
+## Cycles
+
+- Cycle 1: acme/api#10, acme/api#11
+
+## Warnings
+
+- **blocked-by-cycle**: 1 issue is blocked by a cycle: acme/api#12
+- **cycle**: Dependency cycle between acme/api#10 and acme/api#11
+- **dangling-reference**: acme/api#2 references acme/api#404 | which does not exist
+"
+`;
+
+exports[`toMarkdown > matches the snapshot (single repo) 1`] = `
+"# Platform roadmap
+
+View \`platform\` · fetched 2026-01-02T03:04:05.000Z · hash \`0123456789ab\`
+
+7 issues · 2 ready · 2 blocked · 3 unschedulable · 1 external · 6 dependencies · 2 waves
+
+## Execution order
+
+Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all earlier waves are done. ★ marks the critical path.
+
+### Wave 1
+
+| # | Issue | Title | Status | Blocked by |
+| --- | --- | --- | --- | --- |
+| 1 | [#99](https://github.com/acme/api/issues/99) (external) | Upstream library release | ready |  |
+| 2 ★ | [#1](https://github.com/acme/api/issues/1) | Set up schema | ready |  |
+
+### Wave 2
+
+| # | Issue | Title | Status | Blocked by |
+| --- | --- | --- | --- | --- |
+| 3 ★ | [#2](https://github.com/acme/api/issues/2) | Fix "login" \\| SSO \\[wip\\] #42 &lt;b&gt; | blocked | #1 |
+| 4 | [#3](https://github.com/acme/api/issues/3) | Write docs | blocked | #1, #99 |
+
+## Unschedulable
+
+These issues cannot be ordered because they are in a dependency cycle or depend on one.
+
+| Issue | Title | Status | Blocked by |
+| --- | --- | --- | --- |
+| [#10](https://github.com/acme/api/issues/10) | Cycle A | in-cycle | #11 |
+| [#11](https://github.com/acme/api/issues/11) | Cycle B | in-cycle | #10 |
+| [#12](https://github.com/acme/api/issues/12) | Behind the cycle | blocked-by-cycle | #11 |
+
+## Cycles
+
+- Cycle 1: #10, #11
+
+## Warnings
+
+- **blocked-by-cycle**: 1 issue is blocked by a cycle: acme/api#12
+- **cycle**: Dependency cycle between acme/api#10 and acme/api#11
+- **dangling-reference**: acme/api#2 references acme/api#404 | which does not exist
+"
+`;
+
+exports[`toMermaid > matches the snapshot (multi-repo) 1`] = `
+"flowchart LR
+  n_acme_lib_7["acme/lib#35;7 Upstream library release"]
+  n_acme_api_1["acme/api#35;1 Set up schema"]
+  n_acme_api_2["acme/api#35;2 Fix #quot;login#quot; #124; SSO #91;wip#93; #35;42 #lt;b#gt;"]
+  n_acme_api_3["acme/api#35;3 Write docs"]
+  n_acme_api_10["acme/api#35;10 Cycle A"]
+  n_acme_api_11["acme/api#35;11 Cycle B"]
+  n_acme_api_12["acme/api#35;12 Behind the cycle"]
+  classDef ready fill:#d1fae5,stroke:#059669,color:#064e3b
+  classDef blocked fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef inCycle fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef blockedByCycle fill:#ffedd5,stroke:#ea580c,color:#7c2d12
+  classDef external stroke-dasharray:5 5
+  class n_acme_api_1,n_acme_lib_7 ready
+  class n_acme_api_2,n_acme_api_3 blocked
+  class n_acme_api_10,n_acme_api_11 inCycle
+  class n_acme_api_12 blockedByCycle
+  class n_acme_lib_7 external
+  click n_acme_lib_7 href "https://github.com/acme/lib/issues/7" _blank
+  click n_acme_api_1 href "https://github.com/acme/api/issues/1" _blank
+  click n_acme_api_2 href "https://github.com/acme/api/issues/2" _blank
+  click n_acme_api_3 href "https://github.com/acme/api/issues/3" _blank
+  click n_acme_api_10 href "https://github.com/acme/api/issues/10" _blank
+  click n_acme_api_11 href "https://github.com/acme/api/issues/11" _blank
+  click n_acme_api_12 href "https://github.com/acme/api/issues/12" _blank
+  n_acme_api_1 --> n_acme_api_2
+  n_acme_api_1 --> n_acme_api_3
+  n_acme_api_10 --> n_acme_api_11
+  n_acme_api_11 --> n_acme_api_10
+  n_acme_api_11 --> n_acme_api_12
+  n_acme_lib_7 --> n_acme_api_3
+"
+`;
+
+exports[`toMermaid > matches the snapshot (single repo) 1`] = `
+"flowchart LR
+  n_acme_api_99["#35;99 Upstream library release"]
+  n_acme_api_1["#35;1 Set up schema"]
+  n_acme_api_2["#35;2 Fix #quot;login#quot; #124; SSO #91;wip#93; #35;42 #lt;b#gt;"]
+  n_acme_api_3["#35;3 Write docs"]
+  n_acme_api_10["#35;10 Cycle A"]
+  n_acme_api_11["#35;11 Cycle B"]
+  n_acme_api_12["#35;12 Behind the cycle"]
+  classDef ready fill:#d1fae5,stroke:#059669,color:#064e3b
+  classDef blocked fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef inCycle fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef blockedByCycle fill:#ffedd5,stroke:#ea580c,color:#7c2d12
+  classDef external stroke-dasharray:5 5
+  class n_acme_api_1,n_acme_api_99 ready
+  class n_acme_api_2,n_acme_api_3 blocked
+  class n_acme_api_10,n_acme_api_11 inCycle
+  class n_acme_api_12 blockedByCycle
+  class n_acme_api_99 external
+  click n_acme_api_99 href "https://github.com/acme/api/issues/99" _blank
+  click n_acme_api_1 href "https://github.com/acme/api/issues/1" _blank
+  click n_acme_api_2 href "https://github.com/acme/api/issues/2" _blank
+  click n_acme_api_3 href "https://github.com/acme/api/issues/3" _blank
+  click n_acme_api_10 href "https://github.com/acme/api/issues/10" _blank
+  click n_acme_api_11 href "https://github.com/acme/api/issues/11" _blank
+  click n_acme_api_12 href "https://github.com/acme/api/issues/12" _blank
+  n_acme_api_1 --> n_acme_api_2
+  n_acme_api_1 --> n_acme_api_3
+  n_acme_api_10 --> n_acme_api_11
+  n_acme_api_11 --> n_acme_api_10
+  n_acme_api_11 --> n_acme_api_12
+  n_acme_api_99 --> n_acme_api_3
+"
+`;
