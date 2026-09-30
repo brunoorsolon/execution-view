@@ -81,11 +81,15 @@ case "$md" in
   *) fail "export.md does not start with '# ': ${md:0:80}" ;;
 esac
 
-# "/" is either the built web UI or the "UI not built" page; both are HTML.
+# "/" must be the built web UI: HTML naming the app and loading a built asset.
 curl -sS -D "$TMP_DIR/root.headers" -o "$TMP_DIR/root.body" "$BASE/" || fail "GET / failed"
 grep -qi '^content-type: *text/html' "$TMP_DIR/root.headers" || fail "GET / is not text/html: $(cat "$TMP_DIR/root.headers")"
-[ -s "$TMP_DIR/root.body" ] || fail "GET / returned an empty body"
-echo "ok: GET / returns HTML"
+grep -q 'execution-view' "$TMP_DIR/root.body" || fail "GET / HTML does not contain 'execution-view'"
+asset="$(grep -o '<script[^>]*src="[^"]*assets/[^"]*"' "$TMP_DIR/root.body" | head -n1 | sed 's/.*src="\([^"]*\)".*/\1/')"
+[ -n "$asset" ] || fail "GET / HTML has no <script> referencing a built asset"
+asset="/${asset#./}"
+curl -fsS -o /dev/null "$BASE$asset" || fail "built asset $asset is not served"
+echo "ok: GET / serves the web UI (execution-view, script $asset)"
 
 echo "==> env-only mode (no config file)"
 docker run -d --name "$ENV_NAME" -p 127.0.0.1::8080 \
