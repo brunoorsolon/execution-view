@@ -30,7 +30,7 @@ function issueLink(node: PlanNode, multi: boolean): string {
 }
 
 export function toMarkdown(snapshot: Snapshot): string {
-  const { plan } = snapshot;
+  const { plan, priorityLabels } = snapshot;
   const multi = isMultiRepo(plan);
   const nodes = nodeIndex(plan);
   const position = new Map<IssueKey, number>();
@@ -41,6 +41,8 @@ export function toMarkdown(snapshot: Snapshot): string {
     node.blockedBy.length === 0
       ? ''
       : escapeMarkdown(node.blockedBy.map((k) => keyLabel(k, nodes, multi)).join(', '));
+
+  const priority = (node: PlanNode): string => escapeMarkdown(priorityLabels[node.priority] ?? '');
 
   const s = plan.stats;
   const out: string[] = [
@@ -66,15 +68,15 @@ export function toMarkdown(snapshot: Snapshot): string {
       '',
       `### Wave ${i + 1}`,
       '',
-      '| # | Issue | Title | Status | Blocked by |',
-      '| --- | --- | --- | --- | --- |',
+      '| # | Issue | Title | Priority | Status | Blocked by |',
+      '| --- | --- | --- | --- | --- | --- |',
     );
     for (const key of wave) {
       const node = nodes.get(key);
       if (!node) continue;
       const pos = `${position.get(key) ?? ''}${critical.has(key) ? ' ★' : ''}`.trim();
       out.push(
-        `| ${pos} | ${issueLink(node, multi)} | ${escapeMarkdown(node.title)} | ${node.status} | ${blockedBy(node)} |`,
+        `| ${pos} | ${issueLink(node, multi)} | ${escapeMarkdown(node.title)} | ${priority(node)} | ${node.status} | ${blockedBy(node)} |`,
       );
     }
   });
@@ -89,12 +91,12 @@ export function toMarkdown(snapshot: Snapshot): string {
       '',
       'These issues cannot be ordered because they are in a dependency cycle or depend on one.',
       '',
-      '| Issue | Title | Status | Blocked by |',
-      '| --- | --- | --- | --- |',
+      '| Issue | Title | Priority | Status | Blocked by |',
+      '| --- | --- | --- | --- | --- |',
     );
     for (const node of unschedulable) {
       out.push(
-        `| ${issueLink(node, multi)} | ${escapeMarkdown(node.title)} | ${node.status} | ${blockedBy(node)} |`,
+        `| ${issueLink(node, multi)} | ${escapeMarkdown(node.title)} | ${priority(node)} | ${node.status} | ${blockedBy(node)} |`,
       );
     }
   }

@@ -9,6 +9,11 @@
 >
 > Known deviations from the text below:
 >
+> - `Snapshot` has a `priorityLabels: string[]` field: the view's configured
+>   priority labels in rank order, so `PlanNode.priority` can be mapped to a
+>   label name (`priority === priorityLabels.length` means none). It is not part
+>   of `contentHash`. The Markdown export has a Priority column, and the web UI
+>   shows the exact name.
 > - `AppConfig` has an optional `warnings: string[]` (non-fatal problems found
 >   while loading: a `tokenEnv` naming an unset variable, `subIssues` on a
 >   non-GitHub source). The CLI and the server print them.

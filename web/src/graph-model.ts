@@ -207,49 +207,6 @@ export function cyclePath(
 }
 
 // ---------------------------------------------------------------------------
-// Priority labels
-// ---------------------------------------------------------------------------
-
-const PRIORITY_LIKE = /^(p\d+|prio(rity)?\b.*)$/i;
-
-/**
- * The snapshot only carries the numeric priority index, not the configured
- * labels. Recover a display label per index: the label (case-insensitive)
- * shared by every node with that index. The highest index is usually the
- * "no priority label" bucket, so it is only trusted when the shared label
- * looks like a priority (`P1`, `priority: high`).
- */
-export function derivePriorityLabels(nodes: readonly PlanNode[]): Map<number, string> {
-  const groups = new Map<number, PlanNode[]>();
-  for (const n of nodes) {
-    const g = groups.get(n.priority);
-    if (g) g.push(n);
-    else groups.set(n.priority, [n]);
-  }
-  const maxPriority = Math.max(-1, ...groups.keys());
-  const result = new Map<number, string>();
-  for (const [priority, group] of groups) {
-    let common: Map<string, string> | null = null;
-    for (const n of group) {
-      const own = new Map(n.labels.map((l) => [l.toLowerCase(), l] as const));
-      if (common === null) common = own;
-      else {
-        const next = new Map<string, string>();
-        for (const [lower, original] of common) if (own.has(lower)) next.set(lower, original);
-        common = next;
-      }
-    }
-    const candidates = [...(common?.values() ?? [])].sort();
-    let label = candidates[0];
-    if (candidates.length > 1) label = candidates.find((l) => PRIORITY_LIKE.test(l)) ?? label;
-    if (label === undefined) continue;
-    if (priority === maxPriority && !PRIORITY_LIKE.test(label)) continue;
-    result.set(priority, label);
-  }
-  return result;
-}
-
-// ---------------------------------------------------------------------------
 // Pan / zoom math
 // ---------------------------------------------------------------------------
 

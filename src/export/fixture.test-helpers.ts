@@ -13,6 +13,8 @@ interface NodeSpec {
   order: number | null;
   blockedBy?: string[];
   blocks?: string[];
+  /** Index in the snapshot's priorityLabels; default 2 (no priority label). */
+  priority?: number;
 }
 
 function node(spec: NodeSpec): PlanNode {
@@ -32,7 +34,7 @@ function node(spec: NodeSpec): PlanNode {
     order: spec.order,
     blockedBy: spec.blockedBy ?? [],
     blocks: spec.blocks ?? [],
-    priority: 0,
+    priority: spec.priority ?? 2,
     remainingDepth: spec.wave === null ? 0 : 1,
   };
 }
@@ -52,6 +54,7 @@ export function makeSnapshot(externalRepo: 'acme/lib' | 'acme/api' = 'acme/lib')
       repo: 'acme/api',
       number: 1,
       title: 'Set up schema',
+      priority: 0,
       status: 'ready',
       wave: 0,
       order: 1,
@@ -61,6 +64,7 @@ export function makeSnapshot(externalRepo: 'acme/lib' | 'acme/api' = 'acme/lib')
       repo: 'acme/api',
       number: 2,
       title: TRICKY_TITLE,
+      priority: 1,
       status: 'blocked',
       wave: 1,
       order: 2,
@@ -79,6 +83,7 @@ export function makeSnapshot(externalRepo: 'acme/lib' | 'acme/api' = 'acme/lib')
       repo: 'acme/api',
       number: 10,
       title: 'Cycle A',
+      priority: 1,
       status: 'in-cycle',
       wave: null,
       order: null,
@@ -122,6 +127,7 @@ export function makeSnapshot(externalRepo: 'acme/lib' | 'acme/api' = 'acme/lib')
     title: 'Platform roadmap',
     fetchedAt: '2026-01-02T03:04:05.000Z',
     contentHash: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    priorityLabels: ['P0', 'P1'],
     plan: {
       viewId: 'platform',
       nodes,
