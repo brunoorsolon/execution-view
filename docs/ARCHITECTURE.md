@@ -712,7 +712,11 @@ Single page, no framework:
   from the edge points. Pan with drag, zoom with the wheel, and a "fit" button.
   Clicking a node selects it, highlights its upstream and downstream, and
   opens a side panel (title, link, labels, assignees, status, wave, order,
-  blocked by, blocks).
+  blocked by, blocks). Below 75% zoom the cards switch to a compact level of
+  detail (status stripe, key and one line of title, counter-scaled to about
+  12px on screen; see `web/src/lod.ts`). A hover tooltip (after about 150ms)
+  shows the full details at any zoom, and the wave headers are counter-scaled
+  so they stay readable.
 - The **Execution order** tab shows a table grouped by wave with order #,
   issue, title, status, labels, and blocked by. Critical-path rows are marked.
 - The **Problems** tab lists cycles, blocked-by-cycle nodes and warnings.

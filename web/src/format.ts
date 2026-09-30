@@ -38,6 +38,11 @@ export function displayKey(key: IssueKey, multiRepo: boolean): string {
   return multiRepo ? key : `#${keyNumber(key)}`;
 }
 
+/** Compact form for small cards: `#N`, or `repo#N` (no owner) for multi-repo views. */
+export function shortKey(key: IssueKey, multiRepo: boolean): string {
+  return multiRepo ? key.slice(key.indexOf('/') + 1) : `#${keyNumber(key)}`;
+}
+
 export function plural(n: number, singular: string, pluralForm = `${singular}s`): string {
   return `${n} ${n === 1 ? singular : pluralForm}`;
 }

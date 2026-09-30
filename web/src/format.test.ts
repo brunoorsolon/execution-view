@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { displayKey, keyNumber, plural, relativeTime, shortHash, statusLabel } from './format.js';
+import {
+  displayKey,
+  keyNumber,
+  plural,
+  relativeTime,
+  shortHash,
+  shortKey,
+  statusLabel,
+} from './format.js';
 
 const NOW = Date.parse('2026-01-10T12:00:00Z');
 const ago = (ms: number): string => new Date(NOW - ms).toISOString();
@@ -29,6 +37,10 @@ describe('keys and labels', () => {
     expect(displayKey('acme/api#12', false)).toBe('#12');
     expect(displayKey('acme/api#12', true)).toBe('acme/api#12');
     expect(keyNumber('acme/api#12')).toBe('12');
+  });
+  it('drops the owner in short keys', () => {
+    expect(shortKey('acme/api#12', false)).toBe('#12');
+    expect(shortKey('acme/api#12', true)).toBe('api#12');
   });
   it('shortens hashes', () => {
     expect(shortHash('0123456789abcdef')).toBe('01234567');
