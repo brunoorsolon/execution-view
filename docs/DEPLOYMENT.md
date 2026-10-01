@@ -11,6 +11,7 @@ Contents:
 - [systemd](#systemd)
 - [Reverse proxy](#reverse-proxy)
 - [Basic auth](#basic-auth)
+- [Webhooks](#webhooks)
 - [Health check](#health-check)
 - [Resource needs](#resource-needs)
 - [Security notes](#security-notes)
@@ -212,6 +213,7 @@ ev.example.com {
 Notes:
 
 - A cold refresh of a large view makes many requests to the tracker and can take a while: allow a generous read timeout (the nginx example uses 120 s).
+- Static files are resolved on every request, so after `npm run build` (or replacing `dist/web`) the new UI is served without restarting the app; a `dist/web` created after startup is picked up too. `index.html` is sent with `Cache-Control: no-cache` (also for the deep-link fallback), files under `assets/` (hashed names) with `Cache-Control: public, max-age=31536000, immutable`, other static files with `no-cache`, and `/api/*` with `no-store`. A proxy that caches should keep honouring these headers.
 - Bind the app to loopback (`EV_HOST=127.0.0.1`, or publish `127.0.0.1:8080:8080` from Docker) so that only the proxy can reach it.
 - The proxy is a good place for authentication and TLS; see the next section.
 
@@ -229,6 +231,44 @@ server:
 or with the environment variable `EV_BASIC_AUTH=user:password`, which overrides the config block. Prefer `passwordEnv` (or an env file) over an inline `password`.
 
 Basic auth sends the password with every request in a **reversible encoding, not encrypted**. Only use it over **HTTPS**, i.e. behind a reverse proxy with TLS. For anything beyond a small team, prefer your proxy's own authentication (SSO, VPN, IP allow-list) in front of the app, with or without app-level basic auth. Password comparison is done in constant time.
+
+## Webhooks
+
+By default a view is refetched when its cache entry expires (`cache.ttlSeconds`, 300 s) or when someone presses Refresh. With webhooks, GitHub, Gitea or Forgejo tells the app when an issue changes, and the app drops the cached snapshot of the views that include that repository; the next page load or API call refetches. The app does not refetch by itself.
+
+The UI labels below may vary between versions of GitHub, Gitea and Forgejo.
+
+**1. Choose a secret** and give it to the app. Use a long random string, for example `openssl rand -hex 32`:
+
+```sh
+EV_WEBHOOK_SECRET=<the secret>
+```
+
+or, in the config file, `webhooks.secretEnv: EV_WEBHOOK_SECRET` (the name of an environment variable; recommended) or an inline `webhooks.secret` (see [CONFIGURATION.md](CONFIGURATION.md#webhooks)). Without a secret, the webhook endpoints do not exist.
+
+**2. Add a webhook to each repository** of your views, pointing at your public URL (the tracker must be able to reach it; see the reverse proxy notes below):
+
+| Tracker          | Payload URL                                  |
+| ---------------- | -------------------------------------------- |
+| GitHub           | `https://ev.example.com/api/webhooks/github` |
+| Gitea or Forgejo | `https://ev.example.com/api/webhooks/gitea`  |
+
+GitHub: repository **Settings → Webhooks → Add webhook**. Set the payload URL, content type `application/json`, and the secret. Under events choose **Let me select individual events** and tick **Issues**, plus **Issue dependencies** and **Sub-issues** when they are offered (they carry dependency and sub-issue changes). Keep the webhook **Active**. GitHub sends a `ping` when you save it; it should show a green tick (`200`).
+
+Gitea or Forgejo: repository **Settings → Webhooks → Add webhook**, then choose **Gitea** (on Forgejo: **Forgejo**). Set the target URL, HTTP method `POST`, content type `application/json`, and the secret. Trigger on issue events (for example **Custom events** with the issue events selected: issue opened, edited, closed, labeled, assigned, milestoned, and so on; a dependency change is an issue edit on the tracker side, so include whatever issue events are offered). Gitea and Forgejo sign deliveries with `X-Gitea-Signature` / `X-Forgejo-Signature` (and `X-Hub-Signature-256`); any of them is accepted. The **Test delivery** button (if your version has one) sends a sample event; any correctly signed delivery is accepted, and it invalidates the views of the repository unless it is a `ping`.
+
+Only JSON is accepted. Organization-level or system-level webhooks also work if they send repository events, since only `repository.full_name` is read.
+
+**3. Check it:** in the tracker's webhook page, look at the recent deliveries (`202` with an `invalidated` list of view ids is the expected answer for an issue event; `401` means the secret does not match; `404` means the app has no secret configured). The app logs each accepted delivery at info level (event, repository, invalidated views), and never logs the secret or the signature.
+
+Reverse proxy notes:
+
+- The proxy must forward the request **body unchanged** (no re-encoding, compression or rewriting). The signature is computed over the exact bytes the tracker sent, so any change makes the delivery fail with `401`. Forward the `X-Hub-Signature-256`, `X-Gitea-Signature`, `X-Forgejo-Signature` and `X-GitHub-Event`/`X-Gitea-Event`/`X-Forgejo-Event` headers (proxies do this by default).
+- Webhook requests are **not** subject to the app's basic auth (the signature is their authentication), so the tracker does not need credentials. If your proxy adds its own authentication in front of the app, let `/api/webhooks/*` through it.
+- The body limit is 1 MiB (`413` above it); keep any proxy limit at least that large (nginx: `client_max_body_size`, default 1 MB).
+- The tracker must reach the app over the network: for a self-hosted app on a private network this means a tracker on the same network, or a publicly reachable URL restricted to the tracker's IP addresses.
+
+The cache TTL still applies as a safety net: a missed or failed delivery only delays an update until the TTL expires (or Refresh is pressed). You can raise `cache.ttlSeconds` once webhooks work reliably, to reduce tracker API usage.
 
 ## Health check
 
@@ -252,6 +292,7 @@ Small. There is no database and no persistent state: the process keeps one snaps
 - **What the app exposes:** issue titles, labels, assignees, milestones and URLs of the configured repositories (bodies are not exposed). Anyone who can reach the service can read those, including titles from **private** repositories your token can see. Use basic auth and/or the proxy's authentication, and TLS.
 - The process runs as a non-root user in the Docker image and listens on all interfaces by default (`0.0.0.0`): restrict `EV_HOST` or the published port when you do not want that.
 - Basic auth over plain HTTP is not confidential (see above).
+- **Webhooks** are authenticated only by the HMAC signature (constant-time comparison); use a long random secret and keep it like a token. Anyone who has it can make the app drop its caches (the worst effect is extra tracker requests), nothing more.
 - `EV_BASIC_AUTH` and `-e TOKEN=value` are visible to anyone who can run `docker inspect` or read the process environment; prefer files and secrets on shared hosts.
 
 ## Upgrading

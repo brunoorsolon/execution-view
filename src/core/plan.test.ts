@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalJson } from './hash.js';
 import { buildPlan, type PlanInput } from './plan.js';
-import type { DependencyEdge, DependencySource, Issue, IssueKey, Plan } from './types.js';
+import type {
+  DependencyEdge,
+  DependencySource,
+  Issue,
+  IssueKey,
+  OrderingMode,
+  Plan,
+} from './types.js';
 
 function issue(key: IssueKey, extra: Partial<Issue> = {}): Issue {
   const m = /^(.+)\/(.+)#(\d+)$/.exec(key)!;
@@ -482,6 +489,73 @@ function shuffle<T>(items: readonly T[], rand: () => number): T[] {
   return out;
 }
 
+const MODES: OrderingMode[] = ['priority', 'waves'];
+
+describe('buildPlan ordering mode', () => {
+  // 1 -> 2 is a chain (waves 0 and 1); 4 is independent (wave 0). 1 and 2 carry P0, 4 has none.
+  const interleaving = (): PlanInput => {
+    const base = input([K(1), K(2), K(4)], [edge(K(1), K(2))], { priorityLabels: ['P0'] });
+    base.issues[0] = issue(K(1), { labels: ['P0'] });
+    base.issues[1] = issue(K(2), { labels: ['P0'] });
+    return base;
+  };
+
+  it("defaults to 'priority' and is identical to the explicit mode", () => {
+    const base = interleaving();
+    expect(canonicalJson(buildPlan(base))).toBe(
+      canonicalJson(buildPlan({ ...base, orderingMode: 'priority' })),
+    );
+  });
+
+  it('priority mode can put a later-wave issue before an earlier-wave one', () => {
+    const plan = buildPlan({ ...interleaving(), orderingMode: 'priority' });
+    expect(plan.order).toEqual([K(1), K(2), K(4)]);
+    expect(node(plan, K(2)).wave).toBe(1);
+    expect(node(plan, K(4)).wave).toBe(0);
+  });
+
+  it('waves mode finishes a wave before starting the next', () => {
+    const plan = buildPlan({ ...interleaving(), orderingMode: 'waves' });
+    expect(plan.order).toEqual([K(1), K(4), K(2)]);
+    expect(plan.waves).toEqual([[K(1), K(4)], [K(2)]]);
+  });
+
+  it('waves mode: order is non-decreasing in wave; within a wave by priority, depth, key', () => {
+    const rand = mulberry32(2024);
+    const keys: IssueKey[] = [];
+    for (let i = 1; i <= 80; i++) keys.push(`o/r#${i}`);
+    const edges: DependencyEdge[] = [];
+    for (let n = 0; n < 110; n++) {
+      const a = Math.floor(rand() * keys.length);
+      const b = Math.floor(rand() * keys.length);
+      if (a === b) continue;
+      edges.push(edge(keys[Math.min(a, b)]!, keys[Math.max(a, b)]!));
+    }
+    const labelPool = ['P0', 'P1', 'P2'];
+    const base = input(keys, edges, { priorityLabels: labelPool });
+    base.issues = keys.map((k) => issue(k, { labels: labelPool.filter(() => rand() < 0.2) }));
+    const plan = buildPlan({ ...base, orderingMode: 'waves' });
+    expect(plan.order).toHaveLength(80);
+    const byKey = new Map(plan.nodes.map((n) => [n.key, n]));
+    for (let i = 1; i < plan.order.length; i++) {
+      const a = byKey.get(plan.order[i - 1]!)!;
+      const b = byKey.get(plan.order[i]!)!;
+      expect(a.wave!).toBeLessThanOrEqual(b.wave!);
+      if (a.wave === b.wave) {
+        const ka = [a.priority, -a.remainingDepth];
+        const kb = [b.priority, -b.remainingDepth];
+        const c = ka[0]! - kb[0]! || ka[1]! - kb[1]!;
+        expect(c < 0 || (c === 0 && a.number < b.number)).toBe(true);
+      }
+    }
+    // The waves list and the order agree: concatenating the waves gives the order.
+    expect(plan.waves.flat()).toEqual(plan.order);
+    // Dependencies are respected.
+    const pos = new Map(plan.order.map((k, i) => [k, i]));
+    for (const e of plan.edges) expect(pos.get(e.from)!).toBeLessThan(pos.get(e.to)!);
+  });
+});
+
 describe('buildPlan determinism', () => {
   it('produces identical output for shuffled inputs', () => {
     const rand = mulberry32(12345);
@@ -510,25 +584,28 @@ describe('buildPlan determinism', () => {
     ];
     const externalKeys = ['a/x#3', 'b/a#4', 'a/y#9'];
 
-    const make = (r: () => number): PlanInput => ({
-      viewId: 'v',
-      issues: shuffle(issues, r),
-      externalKeys: shuffle(externalKeys, r),
-      edges: shuffle(edges, r),
-      warnings: shuffle(warnings, r),
-      priorityLabels: ['P0', 'P1', 'P2'],
-    });
+    for (const orderingMode of MODES) {
+      const make = (r: () => number): PlanInput => ({
+        viewId: 'v',
+        issues: shuffle(issues, r),
+        externalKeys: shuffle(externalKeys, r),
+        edges: shuffle(edges, r),
+        warnings: shuffle(warnings, r),
+        priorityLabels: ['P0', 'P1', 'P2'],
+        orderingMode,
+      });
 
-    const reference = buildPlan(make(mulberry32(1)));
-    // Sanity: the random graph actually exercises cycles, waves and warnings.
-    expect(reference.cycles.length).toBeGreaterThan(0);
-    expect(reference.order.length).toBeGreaterThan(0);
-    const expected = canonicalJson(reference);
+      const reference = buildPlan(make(mulberry32(1)));
+      // Sanity: the random graph actually exercises cycles, waves and warnings.
+      expect(reference.cycles.length).toBeGreaterThan(0);
+      expect(reference.order.length).toBeGreaterThan(0);
+      const expected = canonicalJson(reference);
 
-    const shuffler = mulberry32(999);
-    for (let run = 0; run < 50; run++) {
-      const plan = buildPlan(make(shuffler));
-      expect(canonicalJson(plan)).toBe(expected);
+      const shuffler = mulberry32(999);
+      for (let run = 0; run < 50; run++) {
+        const plan = buildPlan(make(shuffler));
+        expect(canonicalJson(plan)).toBe(expected);
+      }
     }
   });
 
@@ -543,20 +620,23 @@ describe('buildPlan determinism', () => {
       if (a === b) continue;
       edges.push(edge(keys[Math.min(a, b)]!, keys[Math.max(a, b)]!));
     }
-    const make = (r: () => number): PlanInput => ({
-      viewId: 'v',
-      issues: shuffle(keys, r).map((k) => issue(k)),
-      externalKeys: [],
-      edges: shuffle(edges, r),
-      warnings: [],
-      priorityLabels: [],
-    });
-    const expected = canonicalJson(buildPlan(make(mulberry32(5))));
-    const shuffler = mulberry32(6);
-    for (let run = 0; run < 50; run++) {
-      expect(canonicalJson(buildPlan(make(shuffler)))).toBe(expected);
+    for (const orderingMode of MODES) {
+      const make = (r: () => number): PlanInput => ({
+        viewId: 'v',
+        issues: shuffle(keys, r).map((k) => issue(k)),
+        externalKeys: [],
+        edges: shuffle(edges, r),
+        warnings: [],
+        priorityLabels: [],
+        orderingMode,
+      });
+      const expected = canonicalJson(buildPlan(make(mulberry32(5))));
+      const shuffler = mulberry32(6);
+      for (let run = 0; run < 50; run++) {
+        expect(canonicalJson(buildPlan(make(shuffler)))).toBe(expected);
+      }
+      expect(buildPlan(make(mulberry32(5))).cycles).toEqual([]);
     }
-    expect(buildPlan(make(mulberry32(5))).cycles).toEqual([]);
   });
 });
 

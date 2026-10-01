@@ -114,6 +114,19 @@ describe('toMarkdown', () => {
     expect(row('[acme/api#10](')).toContain(' | Cycle A | P1 | in-cycle | ');
   });
 
+  it('explains the ordering mode in the legend under "Execution order"', () => {
+    const legend = (snapshot: typeof multi): string => {
+      const lines = toMarkdown(snapshot).split('\n');
+      return lines[lines.indexOf('## Execution order') + 2]!;
+    };
+    expect(legend({ ...multi, orderingMode: 'priority' })).toContain(
+      'The # column favours priority labels and the critical path: an issue from a later wave can come before an earlier-wave issue',
+    );
+    expect(legend({ ...multi, orderingMode: 'waves' })).toContain(
+      'The # column runs wave by wave; within a wave, by priority and critical path.',
+    );
+  });
+
   it('uses #N links when the plan has a single repo', () => {
     const out = toMarkdown(single);
     expect(out).toContain('[#1](https://github.com/acme/api/issues/1)');

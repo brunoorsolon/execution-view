@@ -6,7 +6,7 @@
 #
 # Environment overrides that apply on top of this file:
 #   EV_HOST, EV_PORT (1-65535), EV_CACHE_TTL (seconds, >= 0),
-#   EV_BASIC_AUTH (user:password)
+#   EV_BASIC_AUTH (user:password), EV_WEBHOOK_SECRET
 
 server:
   host: 0.0.0.0 # default: 0.0.0.0
@@ -22,6 +22,16 @@ server:
 
 cache:
   ttlSeconds: 300 # default: 300. 0 disables caching.
+
+# Optional webhooks: GitHub/Gitea/Forgejo issue events invalidate the cached views of the repository
+# (POST /api/webhooks/github and /api/webhooks/gitea). Disabled without a secret. One of:
+#   secretEnv: name of the env var holding the secret (recommended; wins when set)
+#   secret:    inline value (discouraged)
+# EV_WEBHOOK_SECRET overrides this block. A secretEnv naming an unset variable only warns.
+# The cache TTL above still applies as a safety net. See docs/DEPLOYMENT.md#webhooks.
+# webhooks:
+#   secretEnv: EV_WEBHOOK_SECRET
+#   # secret: change-me
 
 # Sources: where issues come from. ids are unique and match ^[a-z0-9][a-z0-9-_]*$
 sources:
@@ -64,7 +74,7 @@ views:
       subIssues: false # treat sub-issues as dependencies (github only). default: false
       keywords: # matched at the start of a body line, case-insensitive
         # Each list is optional; a missing list uses its default shown here.
-        blockedBy: [depends on, blocked by, requires]
+        blockedBy: [depends on, blocked by, requires, dependencies]
         blocks: [blocks, blocking, required by]
     scope:
       labels: [] # when non-empty, only issues with at least one of these labels are in scope
@@ -72,6 +82,7 @@ views:
       milestones: [] # when non-empty, only issues in one of these milestones are in scope
     ordering:
       priorityLabels: [] # highest priority first, e.g. [P0, P1, P2]
+      mode: priority # priority (default): order by priority and critical path; waves: order wave by wave
 
   - id: self-hosted
     source: gt

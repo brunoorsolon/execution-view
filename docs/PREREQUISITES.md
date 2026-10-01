@@ -69,6 +69,8 @@ Open an issue, find the **Relationships** area of the sidebar, and use **Mark as
 
 ### Gitea
 
+Forgejo uses the same API and is supported with `kind: gitea` (env-only mode: `EV_PROVIDER=gitea`). CI tests the app against live Gitea 1.25 and Forgejo 11 instances (`scripts/forge-integration.sh`); other versions are expected to work but are not tested.
+
 Open an issue and use the **Dependencies** section of the sidebar: add the issue that **this issue depends on**. **(may vary by version)**
 
 For this to work, dependencies must be enabled:
@@ -99,10 +101,10 @@ The keyword must end at a word boundary (`Blocksmith #3` does not match `Blocks`
 
 Default keywords:
 
-| Direction                      | Keywords                               |
-| ------------------------------ | -------------------------------------- |
-| "this issue is blocked by ..." | `depends on`, `blocked by`, `requires` |
-| "this issue blocks ..."        | `blocks`, `blocking`, `required by`    |
+| Direction                      | Keywords                                               |
+| ------------------------------ | ------------------------------------------------------ |
+| "this issue is blocked by ..." | `depends on`, `blocked by`, `requires`, `dependencies` |
+| "this issue blocks ..."        | `blocks`, `blocking`, `required by`                    |
 
 You can change them in the config (see [Custom keywords](#custom-keywords)).
 
@@ -152,7 +154,9 @@ Assume default keywords and a source on `github.com`.
 | `Depends on` then `#3` on the next line                | **Not accepted**                      | The reference must be on the keyword's line                                                                  |
 | `Depends on` then `- #3` on the next line              | **Not accepted**                      | Same. Use a `## Depends on` heading if you want a list                                                       |
 | `## Depends on` then `#3` (no list marker)             | **Not accepted**                      | Section items must be list items                                                                             |
-| `## Dependencies` then `- #3`                          | **Not accepted** by default           | "Dependencies" is not a default keyword. Add it (see below) or use `## Depends on`                           |
+| `## Dependencies` then `- #3`                          | Accepted                              | "Dependencies" is a default keyword. Section form, like `## Depends on`                                      |
+| `Dependencies: #3`, `- Dependencies: #3`               | Accepted                              | Keyword line form                                                                                            |
+| `## Dependency` then `- #3`, `Dependenciesfoo #3`      | **Not accepted**                      | Only the plural `Dependencies` is a default keyword, and it must end at a word boundary                      |
 | `- Depends on #3` then `- and #4`                      | Only #3 accepted                      | The second line has no keyword                                                                               |
 | Inside a ``` fence: `Depends on #3`                    | **Not accepted**                      | Fenced code is ignored                                                                                       |
 | `` `Depends on #3` `` or ``Depends on `#3` ``          | **Not accepted**                      | Inline code is ignored (also when it wraps only the reference)                                               |
@@ -172,7 +176,7 @@ Also good to know: a reference that is accepted by the parser but points at a **
 
 Keywords are set per view under `dependencies.keywords`. A list you provide **replaces** the default list for that direction (it does not extend it), so repeat the defaults you still want. A missing list keeps its default; an empty list (`[]`) disables that direction.
 
-`## Dependencies` is not a heading keyword by default. To accept it (and lines like `Dependencies: #3`):
+For example, to also accept `needs` (as in `## Needs` or `Needs: #3`):
 
 ```yaml
 views:
@@ -181,10 +185,10 @@ views:
     repos: [acme/api]
     dependencies:
       keywords:
-        blockedBy: [depends on, blocked by, requires, dependencies]
+        blockedBy: [depends on, blocked by, requires, dependencies, needs]
 ```
 
-A heading is recognised whenever its text equals one of the configured keywords, so `## Dependencies` followed by list items then works as a section (verified with the parser). Keywords are matched case-insensitively, longest first, and multi-word keywords match across any whitespace.
+A heading is recognised whenever its text equals one of the configured keywords, so `## Needs` followed by list items then works as a section. Keywords are matched case-insensitively, longest first, and multi-word keywords match across any whitespace.
 
 ### Recommended issue template
 
@@ -213,7 +217,7 @@ Describe the work.
 <!-- Issues that cannot start before this one is done. Leave empty if none. -->
 ```
 
-A short alternative that needs no headings:
+`## Dependencies` works in a template as well as `## Depends on`. A short alternative that needs no headings:
 
 ```md
 Depends on: #12, owner/repo#7
@@ -308,7 +312,7 @@ Example: `scope: { labels: [release-1.0] }` shows the release's issues and, dash
 Before you run against a real repository:
 
 - [ ] Dependencies are declared **natively** and/or as **body lines** on the issue (not in comments), using the syntax of section 4.
-- [ ] Body lines start with a keyword (`Depends on`, `Blocked by`, `Requires`, `Blocks`, ...) and keep the references on the same line, or use a `## Depends on` heading with list items.
+- [ ] Body lines start with a keyword (`Depends on`, `Blocked by`, `Requires`, `Dependencies`, `Blocks`, ...) and keep the references on the same line, or use a `## Depends on` (or `## Dependencies`) heading with list items.
 - [ ] For native dependencies: the feature exists on your platform version, and on Gitea it is enabled for the repository (and cross-repository dependencies are allowed if you use them).
 - [ ] The token is **read-only**, is stored in an environment variable, and can read **every repository** involved, including repositories that are only referenced.
 - [ ] Referenced issues are **issues, not pull requests**.

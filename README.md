@@ -12,7 +12,7 @@ execution-view is a small self-hosted app that reads the **open issues** of your
 - **Cycle and dangling-reference detection**: circular dependencies and references to issues that do not exist or are not accessible are reported, not hidden.
 - **Deterministic output and content hash**: no dependence on API response order, clocks or locale. The hash doubles as an `ETag`. See [docs/DETERMINISM.md](docs/DETERMINISM.md).
 - **Exports** to JSON, Markdown, Mermaid and Graphviz DOT.
-- **GitHub, GitHub Enterprise Server and Gitea** (Forgejo should work too, but is untested).
+- **GitHub, GitHub Enterprise Server and Gitea** (Forgejo works through the Gitea provider). The Gitea provider is tested in CI against live instances: Gitea 1.25 and Forgejo 11 (see `scripts/forge-integration.sh`).
 - **Docker** image and `docker-compose.yml`; also runs on plain Node.js 22.
 - Read-only: it only issues `GET` requests to your tracker.
 

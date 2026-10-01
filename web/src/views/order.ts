@@ -2,6 +2,7 @@ import type { IssueKey, PlanNode, Snapshot } from '../../../src/core/types.js';
 import { clear, h, icon, ICONS, type Child } from '../dom.js';
 import { displayKey, plural, statusLabel } from '../format.js';
 import { cyclePath } from '../graph-model.js';
+import { orderingExplanation } from '../ordering.js';
 import type { SnapshotIndex } from '../state.js';
 import {
   filteredOut,
@@ -18,7 +19,8 @@ const MAX_LABELS = 3;
 export function createOrderView(ctx: ViewCtx): View {
   const root = h('div', { class: 'order-pane' });
   const scroller = h('div', { class: 'table-scroll' });
-  root.append(scroller);
+  const note = h('p', { class: 'order-note' });
+  root.append(note, scroller);
 
   let builtFor: Snapshot | null = null;
   let rows = new Map<IssueKey, HTMLTableRowElement>();
@@ -144,6 +146,7 @@ export function createOrderView(ctx: ViewCtx): View {
 
   function build(snapshot: Snapshot, index: SnapshotIndex): void {
     clear(scroller);
+    note.textContent = orderingExplanation(snapshot.orderingMode);
     rows = new Map();
     const { plan } = snapshot;
     const tbody = h('tbody');

@@ -35,7 +35,7 @@ const HOSTS: ParseOptions = { webHosts: ['github.com'] };
 describe('DEFAULT_KEYWORDS', () => {
   it('matches the contract', () => {
     expect(DEFAULT_KEYWORDS).toEqual({
-      blockedBy: ['depends on', 'blocked by', 'requires'],
+      blockedBy: ['depends on', 'blocked by', 'requires', 'dependencies'],
       blocks: ['blocks', 'blocking', 'required by'],
     });
   });
@@ -670,6 +670,60 @@ describe('CRLF and other line endings', () => {
       name: 'mixed line endings',
       body: 'Depends on #1\rBlocks #2\nRequires #3\r\n',
       expected: ['b:#1', 'b:#3', 'k:#2'],
+    },
+  ]);
+});
+
+describe('default keyword: dependencies', () => {
+  run([
+    {
+      name: '## Dependencies section with list items',
+      body: '## Dependencies\n- #1\n- [ ] o/r#2\n',
+      expected: ['b:#1', 'b:o/r#2'],
+    },
+    {
+      name: '## Dependencies with trailing colon',
+      body: '## Dependencies:\n- #1',
+      expected: ['b:#1'],
+    },
+    {
+      name: '## Dependencies with bold and colon',
+      body: '## **Dependencies:**\n- #1',
+      expected: ['b:#1'],
+    },
+    { name: 'heading is case-insensitive', body: '### DEPENDENCIES\n- #1', expected: ['b:#1'] },
+    { name: 'line form', body: 'Dependencies: #3', expected: ['b:#3'] },
+    {
+      name: 'list item line form',
+      body: '- Dependencies: #3, o/r#4',
+      expected: ['b:#3', 'b:o/r#4'],
+    },
+    { name: 'line form is case-insensitive', body: 'dEpEnDeNcIeS #3', expected: ['b:#3'] },
+    { name: 'bold line form', body: '**Dependencies:** #3', expected: ['b:#3'] },
+    { name: 'word boundary: dependenciesfoo', body: 'Dependenciesfoo #3', expected: [] },
+    { name: 'word boundary: dependencies_x', body: 'Dependencies_x #3', expected: [] },
+    {
+      name: 'heading must equal the keyword: dependenciesfoo',
+      body: '## Dependenciesfoo\n- #1',
+      expected: [],
+    },
+    { name: 'the singular is not a default keyword', body: 'Dependency: #3', expected: [] },
+    {
+      name: 'the singular heading is not a default keyword',
+      body: '## Dependency\n- #1',
+      expected: [],
+    },
+    { name: 'mid-sentence prose is ignored', body: 'See dependencies: #3', expected: [] },
+    {
+      name: 'a section ends at the next heading',
+      body: '## Dependencies\n- #1\n## Notes\n- #2',
+      expected: ['b:#1'],
+    },
+    {
+      name: 'custom keywords replace the default, including dependencies',
+      body: '## Dependencies\n- #1\nDependencies: #2',
+      expected: [],
+      options: { keywords: { blockedBy: ['needs'], blocks: [] } },
     },
   ]);
 });

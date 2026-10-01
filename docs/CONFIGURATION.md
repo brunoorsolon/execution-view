@@ -29,7 +29,7 @@ Rules:
 
 ## Config file reference
 
-The schema is **strict**: an unknown key is an error, and all errors are reported together. Top level keys: `server`, `cache`, `sources` (required), `views` (required).
+The schema is **strict**: an unknown key is an error, and all errors are reported together. Top level keys: `server`, `cache`, `webhooks`, `sources` (required), `views` (required).
 
 ### `server`
 
@@ -48,6 +48,17 @@ The schema is **strict**: an unknown key is an error, and all errors are reporte
 | ------------------ | ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `cache.ttlSeconds` | integer, 0 or more | `300`   | How long a view's snapshot is served from memory. `0` disables caching (every request refetches). Overridden by `EV_CACHE_TTL`. |
 
+### `webhooks`
+
+Optional. Enables the webhook endpoints (`POST /api/webhooks/github` and `POST /api/webhooks/gitea`), which drop the cached snapshot of the views of a repository when the tracker reports an issue event. Without a secret the endpoints do not exist (`404`). Setup steps: [DEPLOYMENT.md](DEPLOYMENT.md#webhooks).
+
+| Key                  | Type   | Default | Description                                                                                                                                                                                       |
+| -------------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `webhooks.secretEnv` | string | none    | Name of the environment variable that holds the shared secret (recommended). Wins over `secret` when the variable is set and not blank. A variable that is not set gives a warning, not an error. |
+| `webhooks.secret`    | string | none    | Inline secret (discouraged). Used when `secretEnv` is absent or its variable is unset.                                                                                                            |
+
+When neither yields a secret, startup prints a warning and webhooks stay disabled. `EV_WEBHOOK_SECRET` overrides the whole block (and also works without a config file).
+
 ### `sources`
 
 A list (at least one) of places where issues come from.
@@ -55,7 +66,7 @@ A list (at least one) of places where issues come from.
 | Key                  | Type                            | Default                                                         | Description                                                                                                                                                                                   |
 | -------------------- | ------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `sources[].id`       | string, `^[a-z0-9][a-z0-9-_]*$` | required                                                        | Unique identifier, referenced by `views[].source`.                                                                                                                                            |
-| `sources[].kind`     | `github`, `gitea` or `fixture`  | required                                                        | The provider. Forgejo should work with `gitea` but is untested.                                                                                                                               |
+| `sources[].kind`     | `github`, `gitea` or `fixture`  | required                                                        | The provider. Forgejo works with `gitea` (tested in CI against Forgejo 11 and Gitea 1.25).                                                                                                    |
 | `sources[].baseUrl`  | URL (`http://` or `https://`)   | `https://api.github.com` for `github`; **required** for `gitea` | API root. GitHub Enterprise Server: `https://<host>/api/v3`. Gitea: the instance root; the API is at `<baseUrl>/api/v1`. Trailing slashes are removed. Ignored for `fixture`.                 |
 | `sources[].webUrl`   | URL                             | derived (see below)                                             | Browser root, used to recognise full issue URLs in issue bodies (only URLs on this host are references). Trailing slashes are removed.                                                        |
 | `sources[].tokenEnv` | string                          | none                                                            | Name of the environment variable that holds the API token (recommended). A variable that is unset or blank is **not an error**: a warning is printed and the next fallback is used.           |
@@ -68,23 +79,24 @@ Derived `webUrl`: for `github`, `https://github.com` when `baseUrl` is `https://
 
 A list (at least one). A view is a set of repositories of one source that are planned together: one graph, one order.
 
-| Key                                       | Type                            | Default                              | Description                                                                                                                                                                    |
-| ----------------------------------------- | ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `views[].id`                              | string, `^[a-z0-9][a-z0-9-_]*$` | required                             | Unique identifier; used in URLs (`/api/views/<id>/...`) and CLI arguments.                                                                                                     |
-| `views[].title`                           | string (not empty)              | the `id`                             | Display title.                                                                                                                                                                 |
-| `views[].source`                          | string                          | required                             | The `id` of one of the `sources`.                                                                                                                                              |
-| `views[].repos`                           | list of `owner/repo`            | required (at least one)              | Repositories to read (`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`). Lowercased, deduplicated and sorted.                                                                               |
-| `views[].dependencies.native`             | boolean                         | `true`                               | Use the platform's native relations (GitHub issue dependencies, Gitea dependencies).                                                                                           |
-| `views[].dependencies.body`               | boolean                         | `true`                               | Parse dependency lines in issue bodies.                                                                                                                                        |
-| `views[].dependencies.subIssues`          | boolean                         | `false`                              | GitHub only: a parent issue is blocked by each of its sub-issues. On other sources it is ignored, with a config warning. Independent of `native`.                              |
-| `views[].dependencies.keywords.blockedBy` | list of strings                 | `[depends on, blocked by, requires]` | Keywords meaning "this issue is blocked by ...". Replaces the default list. Case-insensitive, whitespace-flexible.                                                             |
-| `views[].dependencies.keywords.blocks`    | list of strings                 | `[blocks, blocking, required by]`    | Keywords meaning "this issue blocks ...". Replaces the default list. `[]` disables this direction.                                                                             |
-| `views[].scope.labels`                    | list of strings                 | `[]`                                 | When non-empty, only issues with at least one of these labels are in scope.                                                                                                    |
-| `views[].scope.excludeLabels`             | list of strings                 | `[]`                                 | Issues with any of these labels are out of scope.                                                                                                                              |
-| `views[].scope.milestones`                | list of strings                 | `[]`                                 | When non-empty, only issues in one of these milestones (by title) are in scope.                                                                                                |
-| `views[].ordering.priorityLabels`         | list of strings                 | `[]`                                 | Labels from highest to lowest priority, for example `[P0, P1, P2]`. Breaks ties in the linear order; it never lets an issue jump ahead of its prerequisites. Case-insensitive. |
+| Key                                       | Type                            | Default                                            | Description                                                                                                                                                                                                                                    |
+| ----------------------------------------- | ------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `views[].id`                              | string, `^[a-z0-9][a-z0-9-_]*$` | required                                           | Unique identifier; used in URLs (`/api/views/<id>/...`) and CLI arguments.                                                                                                                                                                     |
+| `views[].title`                           | string (not empty)              | the `id`                                           | Display title.                                                                                                                                                                                                                                 |
+| `views[].source`                          | string                          | required                                           | The `id` of one of the `sources`.                                                                                                                                                                                                              |
+| `views[].repos`                           | list of `owner/repo`            | required (at least one)                            | Repositories to read (`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`). Lowercased, deduplicated and sorted.                                                                                                                                               |
+| `views[].dependencies.native`             | boolean                         | `true`                                             | Use the platform's native relations (GitHub issue dependencies, Gitea dependencies).                                                                                                                                                           |
+| `views[].dependencies.body`               | boolean                         | `true`                                             | Parse dependency lines in issue bodies.                                                                                                                                                                                                        |
+| `views[].dependencies.subIssues`          | boolean                         | `false`                                            | GitHub only: a parent issue is blocked by each of its sub-issues. On other sources it is ignored, with a config warning. Independent of `native`.                                                                                              |
+| `views[].dependencies.keywords.blockedBy` | list of strings                 | `[depends on, blocked by, requires, dependencies]` | Keywords meaning "this issue is blocked by ...". Replaces the default list. Case-insensitive, whitespace-flexible.                                                                                                                             |
+| `views[].dependencies.keywords.blocks`    | list of strings                 | `[blocks, blocking, required by]`                  | Keywords meaning "this issue blocks ...". Replaces the default list. `[]` disables this direction.                                                                                                                                             |
+| `views[].scope.labels`                    | list of strings                 | `[]`                                               | When non-empty, only issues with at least one of these labels are in scope.                                                                                                                                                                    |
+| `views[].scope.excludeLabels`             | list of strings                 | `[]`                                               | Issues with any of these labels are out of scope.                                                                                                                                                                                              |
+| `views[].scope.milestones`                | list of strings                 | `[]`                                               | When non-empty, only issues in one of these milestones (by title) are in scope.                                                                                                                                                                |
+| `views[].ordering.priorityLabels`         | list of strings                 | `[]`                                               | Labels from highest to lowest priority, for example `[P0, P1, P2]`. Breaks ties in the linear order; it never lets an issue jump ahead of its prerequisites. Case-insensitive.                                                                 |
+| `views[].ordering.mode`                   | `priority` or `waves`           | `priority`                                         | How the linear order (the `#` numbers) is built. `priority`: by priority, then critical path, which can number an issue of a later wave before one of an earlier wave. `waves`: wave by wave, and within a wave by priority and critical path. |
 
-Scope filters combine with AND, are case-insensitive, and only choose the roots of the plan: out-of-scope prerequisites still appear, as external nodes. See [PREREQUISITES.md](PREREQUISITES.md#9-scope-filters). Keyword semantics are in [PREREQUISITES.md](PREREQUISITES.md#custom-keywords). The exact ordering rules for `priorityLabels` are in [DETERMINISM.md](DETERMINISM.md).
+Scope filters combine with AND, are case-insensitive, and only choose the roots of the plan: out-of-scope prerequisites still appear, as external nodes. See [PREREQUISITES.md](PREREQUISITES.md#9-scope-filters). Keyword semantics are in [PREREQUISITES.md](PREREQUISITES.md#custom-keywords). The exact ordering rules for `priorityLabels` and `mode`, with a worked example, are in [DETERMINISM.md](DETERMINISM.md).
 
 ## Environment variables
 
@@ -92,14 +104,15 @@ Empty or blank values are treated as unset.
 
 ### Overrides (apply on top of a config file, and in env-only mode)
 
-| Variable        | Effect                                                                                                                 |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `EV_HOST`       | Overrides `server.host`.                                                                                               |
-| `EV_PORT`       | Overrides `server.port` (integer 1-65535, otherwise startup fails).                                                    |
-| `EV_CACHE_TTL`  | Overrides `cache.ttlSeconds` (integer of 0 or more).                                                                   |
-| `EV_BASIC_AUTH` | `user:password`. Overrides the whole `server.basicAuth` block. Split at the first colon; both parts must be non-empty. |
-| `EV_CONFIG`     | Path of the config file (see the lookup order above).                                                                  |
-| `NO_COLOR`      | When set, the CLI prints no ANSI colours (colours are only used on a terminal anyway).                                 |
+| Variable            | Effect                                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `EV_HOST`           | Overrides `server.host`.                                                                                               |
+| `EV_PORT`           | Overrides `server.port` (integer 1-65535, otherwise startup fails).                                                    |
+| `EV_CACHE_TTL`      | Overrides `cache.ttlSeconds` (integer of 0 or more).                                                                   |
+| `EV_BASIC_AUTH`     | `user:password`. Overrides the whole `server.basicAuth` block. Split at the first colon; both parts must be non-empty. |
+| `EV_WEBHOOK_SECRET` | The webhook secret. Overrides the whole `webhooks` block and enables the webhook endpoints (also in env-only mode).    |
+| `EV_CONFIG`         | Path of the config file (see the lookup order above).                                                                  |
+| `NO_COLOR`          | When set, the CLI prints no ANSI colours (colours are only used on a terminal anyway).                                 |
 
 Docker image defaults: `EV_HOST=0.0.0.0`, `EV_PORT=8080`.
 
@@ -117,6 +130,7 @@ Used when no config file is found and `EV_PROVIDER` is set. It builds one source
 | `EV_VIEW_TITLE`      | no          | View title (default: the id).                                                                                                                    |
 | `EV_PRIORITY_LABELS` | no          | Comma-separated priority labels, highest first.                                                                                                  |
 | `EV_SUB_ISSUES`      | no          | `true` or `false`: sets `dependencies.subIssues`.                                                                                                |
+| `EV_ORDERING_MODE`   | no          | `priority` (default) or `waves`: sets `ordering.mode`. Anything else is a configuration error.                                                   |
 
 Env-only mode cannot express: several views or sources, scope filters, custom keywords, `native: false`, `body: false`, a `webUrl`. Use a config file for those.
 
@@ -180,7 +194,7 @@ views:
     dependencies:
       subIssues: false
       keywords:
-        blockedBy: [depends on, blocked by, requires, dependencies]
+        blockedBy: [depends on, blocked by, requires, needs]
     scope:
       labels: [release-1.0]
       excludeLabels: [wontfix, icebox]
@@ -248,6 +262,25 @@ views:
 ```
 
 Or, without a file: `EV_BASIC_AUTH=admin:change-me`. Use TLS in front of the app: see [DEPLOYMENT.md](DEPLOYMENT.md#basic-auth).
+
+### Webhooks
+
+```yaml
+webhooks:
+  secretEnv: EV_WEBHOOK_SECRET
+
+sources:
+  - id: gh
+    kind: github
+    tokenEnv: GITHUB_TOKEN
+
+views:
+  - id: app
+    source: gh
+    repos: [acme/app]
+```
+
+Or, without a file: `EV_WEBHOOK_SECRET=<a long random string>`. See [DEPLOYMENT.md](DEPLOYMENT.md#webhooks) for the tracker side.
 
 ### Env-only, GitHub
 

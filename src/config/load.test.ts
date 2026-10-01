@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ConfigError, DEFAULT_KEYWORDS, loadConfig, parseConfig } from './load.js';
+import { ConfigError, DEFAULT_KEYWORDS, configFromEnv, loadConfig, parseConfig } from './load.js';
 
 const MIN = `
 sources:
@@ -40,6 +40,7 @@ describe('parseConfig defaults', () => {
     const cfg = parseConfig(MIN, {});
     expect(cfg.server).toEqual({ host: '0.0.0.0', port: 8080, basicAuth: null });
     expect(cfg.cache).toEqual({ ttlSeconds: 300 });
+    expect(cfg.webhooks).toBeNull();
     expect(cfg.sources).toEqual([
       {
         id: 'gh',
@@ -58,7 +59,7 @@ describe('parseConfig defaults', () => {
         repos: [{ owner: 'acme', repo: 'api' }],
         dependencies: { native: true, body: true, subIssues: false, keywords: DEFAULT_KEYWORDS },
         scope: { labels: [], excludeLabels: [], milestones: [] },
-        ordering: { priorityLabels: [] },
+        ordering: { priorityLabels: [], mode: 'priority' },
       },
     ]);
     expect(cfg.warnings).toEqual([]);
@@ -109,6 +110,20 @@ describe('parseConfig defaults', () => {
     expect(v.title).toBe('My view');
     expect(v.scope).toEqual({ labels: ['a'], excludeLabels: ['b'], milestones: ['m1'] });
     expect(v.ordering.priorityLabels).toEqual(['P0', 'P1']);
+  });
+
+  it('defaults ordering.mode to priority and accepts waves', () => {
+    expect(parseConfig(MIN, {}).views[0]!.ordering.mode).toBe('priority');
+    expect(
+      parseConfig(`${MIN}    ordering:\n      mode: priority\n`, {}).views[0]!.ordering.mode,
+    ).toBe('priority');
+    const cfg = parseConfig(`${MIN}    ordering:\n      mode: waves\n`, {});
+    expect(cfg.views[0]!.ordering).toEqual({ priorityLabels: [], mode: 'waves' });
+  });
+
+  it('rejects an invalid ordering.mode', () => {
+    const e = errorOf(() => parseConfig(`${MIN}    ordering:\n      mode: fastest\n`, {}));
+    expect(e.message).toContain('ordering.mode');
   });
 });
 
@@ -327,6 +342,71 @@ describe('basicAuth', () => {
   });
 });
 
+describe('webhooks', () => {
+  const hooks = (lines: string) => MIN.replace('sources:', `webhooks:\n${lines}\nsources:`);
+
+  it('is disabled by default', () => {
+    const cfg = parseConfig(MIN, {});
+    expect(cfg.webhooks).toBeNull();
+    expect(cfg.warnings).toEqual([]);
+  });
+
+  it('via secretEnv', () => {
+    const cfg = parseConfig(hooks('  secretEnv: HOOK'), { HOOK: 'from-env' });
+    expect(cfg.webhooks).toEqual({ secret: 'from-env' });
+    expect(cfg.warnings).toEqual([]);
+  });
+
+  it('via inline secret', () => {
+    const cfg = parseConfig(hooks('  secret: inline'), {});
+    expect(cfg.webhooks).toEqual({ secret: 'inline' });
+  });
+
+  it('secretEnv wins over the inline secret when its variable is set', () => {
+    const text = hooks('  secretEnv: HOOK\n  secret: inline');
+    expect(parseConfig(text, { HOOK: 'from-env' }).webhooks).toEqual({ secret: 'from-env' });
+    const fallback = parseConfig(text, {});
+    expect(fallback.webhooks).toEqual({ secret: 'inline' });
+    expect(fallback.warnings).toEqual([]);
+  });
+
+  it('a missing env var warns and disables webhooks', () => {
+    const cfg = parseConfig(hooks('  secretEnv: HOOK'), { HOOK: '  ' });
+    expect(cfg.webhooks).toBeNull();
+    expect(cfg.warnings).toHaveLength(1);
+    expect(cfg.warnings![0]).toContain('HOOK');
+    expect(cfg.warnings![0]).toContain('webhooks are disabled');
+  });
+
+  it('a block without any secret warns and disables webhooks', () => {
+    const cfg = parseConfig(hooks('  secret: ""'), {});
+    expect(cfg.webhooks).toBeNull();
+    expect(cfg.warnings![0]).toContain('no secret');
+  });
+
+  it('EV_WEBHOOK_SECRET overrides the file, and enables webhooks without a block', () => {
+    const cfg = parseConfig(hooks('  secret: inline'), { EV_WEBHOOK_SECRET: 'override' });
+    expect(cfg.webhooks).toEqual({ secret: 'override' });
+    expect(parseConfig(MIN, { EV_WEBHOOK_SECRET: 'only-env' }).webhooks).toEqual({
+      secret: 'only-env',
+    });
+  });
+
+  it('EV_WEBHOOK_SECRET also works in env-only mode', () => {
+    const cfg = configFromEnv({
+      EV_PROVIDER: 'github',
+      EV_REPOS: 'a/b',
+      EV_WEBHOOK_SECRET: 's',
+    });
+    expect(cfg.webhooks).toEqual({ secret: 's' });
+    expect(configFromEnv({ EV_PROVIDER: 'github', EV_REPOS: 'a/b' }).webhooks).toBeNull();
+  });
+
+  it('rejects unknown keys', () => {
+    expect(errorOf(() => parseConfig(hooks('  bogus: 1'), {})).message).toContain('bogus');
+  });
+});
+
 describe('EV_* overrides', () => {
   it('EV_HOST, EV_PORT and EV_CACHE_TTL override the file', () => {
     const yaml = `server: { host: 1.2.3.4, port: 9000 }\ncache: { ttlSeconds: 10 }\n${MIN}`;
@@ -450,7 +530,7 @@ views:
           { owner: 'acme', repo: 'web' },
         ],
         dependencies: { native: true, body: true, subIssues: false },
-        ordering: { priorityLabels: [] },
+        ordering: { priorityLabels: [], mode: 'priority' },
       });
       expect(cfg.server).toEqual({ host: '0.0.0.0', port: 8080, basicAuth: null });
     });
@@ -493,6 +573,25 @@ views:
         dependencies: { subIssues: true },
       });
       expect(cfg.server.port).toBe(9090);
+    });
+
+    it('EV_ORDERING_MODE selects the ordering mode (default priority)', () => {
+      const base = { EV_PROVIDER: 'github', EV_REPOS: 'a/b' };
+      expect(loadConfig({ env: base, cwd: dir }).views[0]!.ordering.mode).toBe('priority');
+      const cfg = loadConfig({ env: { ...base, EV_ORDERING_MODE: 'waves' }, cwd: dir });
+      expect(cfg.views[0]!.ordering.mode).toBe('waves');
+      const upper = loadConfig({ env: { ...base, EV_ORDERING_MODE: 'Priority' }, cwd: dir });
+      expect(upper.views[0]!.ordering.mode).toBe('priority');
+    });
+
+    it('rejects an invalid EV_ORDERING_MODE with a readable message', () => {
+      const e = errorOf(() =>
+        loadConfig({
+          env: { EV_PROVIDER: 'github', EV_REPOS: 'a/b', EV_ORDERING_MODE: 'fastest' },
+          cwd: dir,
+        }),
+      );
+      expect(e.message).toBe('EV_ORDERING_MODE: expected "priority" or "waves" (got "fastest")');
     });
 
     it('gitea without EV_BASE_URL is an error', () => {

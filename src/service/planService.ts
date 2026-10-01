@@ -63,6 +63,15 @@ export class PlanService {
     }));
   }
 
+  /** Ids (sorted) of the views whose repos include `fullName` (`owner/repo`, any case). */
+  viewsForRepo(fullName: string): string[] {
+    const wanted = fullName.toLowerCase();
+    return this.config.views
+      .filter((v) => v.repos.some((r) => `${r.owner}/${r.repo}`.toLowerCase() === wanted))
+      .map((v) => v.id)
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  }
+
   async getSnapshot(viewId: string, opts: { refresh?: boolean } = {}): Promise<Snapshot> {
     const view = this.views.get(viewId);
     if (view === undefined) throw new UnknownViewError(viewId);
@@ -133,6 +142,7 @@ export class PlanService {
       fetchedAt: at.toISOString(),
       contentHash: contentHash({ plan, layout }),
       priorityLabels: [...view.ordering.priorityLabels],
+      orderingMode: view.ordering.mode,
       plan,
       layout,
     };
