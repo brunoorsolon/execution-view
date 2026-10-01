@@ -9,6 +9,11 @@
 >
 > Known deviations from the text below:
 >
+> - `Snapshot` has a `priorityLabels: string[]` field: the view's configured
+>   priority labels in rank order, so `PlanNode.priority` can be mapped to a
+>   label name (`priority === priorityLabels.length` means none). It is not part
+>   of `contentHash`. The Markdown export has a Priority column, and the web UI
+>   shows the exact name.
 > - `dependencies` is a default blocked-by keyword (the contract listed only
 >   `depends on`, `blocked by` and `requires`), so a `## Dependencies` heading
 >   and `Dependencies: #3` lines work without configuration. The singular

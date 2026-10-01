@@ -93,7 +93,8 @@ describe('toMarkdown', () => {
     expect(lines).toContain('## Unschedulable');
     expect(lines).toContain('## Cycles');
     expect(lines).toContain('## Warnings');
-    expect(lines).toContain('| # | Issue | Title | Status | Blocked by |');
+    expect(lines).toContain('| # | Issue | Title | Priority | Status | Blocked by |');
+    expect(lines).toContain('| Issue | Title | Priority | Status | Blocked by |');
   });
 
   it('numbers positions 1-based and stars the critical path', () => {
@@ -102,6 +103,15 @@ describe('toMarkdown', () => {
     expect(out).toContain('| 2 ★ | [acme/api#1](https://github.com/acme/api/issues/1) |');
     expect(out).toContain('| 3 ★ | [acme/api#2](https://github.com/acme/api/issues/2) |');
     expect(out).toContain('| 4 | [acme/api#3](https://github.com/acme/api/issues/3) |');
+  });
+
+  it('shows the priority label name, or an empty cell without one', () => {
+    const out = toMarkdown(multi);
+    const row = (needle: string): string =>
+      out.split('\n').find((l) => l.includes(needle) && l.startsWith('|')) ?? '';
+    expect(row('[acme/api#1](')).toContain(' | Set up schema | P0 | ready | ');
+    expect(row('[acme/api#3](')).toContain(' | Write docs |  | blocked | ');
+    expect(row('[acme/api#10](')).toContain(' | Cycle A | P1 | in-cycle | ');
   });
 
   it('uses #N links when the plan has a single repo', () => {
@@ -125,8 +135,8 @@ describe('toMarkdown', () => {
     const row = out.split('\n').find((l) => l.includes('acme/api#2') && l.startsWith('| 3'));
     expect(row).toBeDefined();
     expect(row).toContain('Fix "login" \\| SSO \\[wip\\] #42 &lt;b&gt;');
-    // Exactly 5 unescaped column separators plus the closing one.
-    expect(row!.replace(/\\\|/g, '').match(/\|/g)).toHaveLength(6);
+    // Exactly 6 unescaped column separators plus the closing one.
+    expect(row!.replace(/\\\|/g, '').match(/\|/g)).toHaveLength(7);
     expect(escapeMarkdown('a|b\nc\r\nd')).toBe('a\\|b c d');
     expect(escapeMarkdown('a\\b `c` *d* _e_')).toBe('a\\\\b \\`c\\` \\*d\\* \\_e\\_');
   });

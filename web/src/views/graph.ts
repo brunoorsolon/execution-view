@@ -1,6 +1,7 @@
 import type { IssueKey, LayoutNode, PlanNode, Snapshot } from '../../../src/core/types.js';
 import { clear, h, icon, ICONS, svg } from '../dom.js';
 import { displayKey } from '../format.js';
+import { priorityName } from '../priority.js';
 import {
   edgePath,
   computeHighlight,
@@ -288,7 +289,7 @@ export function createGraphView(ctx: ViewCtx): View {
     for (const ln of layout.nodes) {
       const node = index.nodes.get(ln.key);
       if (node === undefined) continue;
-      const g = buildNode(ln, node, index, fonts);
+      const g = buildNode(ln, node, snapshot, index, fonts);
       nodeEls.set(ln.key, g);
       nodesG.append(g);
     }
@@ -299,7 +300,13 @@ export function createGraphView(ctx: ViewCtx): View {
     return { snapshot, index, nodeEls, edgeEls, baseEdges, hlEdges, contentW, contentH };
   }
 
-  function buildNode(ln: LayoutNode, n: PlanNode, index: SnapshotIndex, fonts: Fonts): SVGGElement {
+  function buildNode(
+    ln: LayoutNode,
+    n: PlanNode,
+    snapshot: Snapshot,
+    index: SnapshotIndex,
+    fonts: Fonts,
+  ): SVGGElement {
     const w = ln.width;
     const hgt = ln.height;
     const keyFont = `600 12px ${fonts.mono}`;
@@ -313,10 +320,10 @@ export function createGraphView(ctx: ViewCtx): View {
     const keyW = measureText(keyText, keyFont);
 
     // Label chips: priority label first, max 2 + "+k", only what fits next to the key.
-    const prio = index.priorityLabels.get(n.priority);
+    const prio = priorityName(snapshot, n)?.toLowerCase() ?? null;
     const labels = [...n.labels].sort((a, b) => {
-      const pa = a === prio ? 0 : 1;
-      const pb = b === prio ? 0 : 1;
+      const pa = a.toLowerCase() === prio ? 0 : 1;
+      const pb = b.toLowerCase() === prio ? 0 : 1;
       return pa - pb || (a < b ? -1 : a > b ? 1 : 0);
     });
     const avail = w - padL - padR - keyW - 10;

@@ -161,23 +161,23 @@ Waves are numbered from 1. Issues in the same wave can be worked on in parallel 
 
 ### Wave 1
 
-| # | Issue | Title | Status | Blocked by |
-| --- | --- | --- | --- | --- |
-| 1 | [#4](https://fixture.local/acme/app/issues/4) | Docs | ready |  |
-| 2 ★ | [#1](https://fixture.local/acme/app/issues/1) | Schema | ready |  |
+| # | Issue | Title | Priority | Status | Blocked by |
+| --- | --- | --- | --- | --- | --- |
+| 1 | [#4](https://fixture.local/acme/app/issues/4) | Docs | P0 | ready |  |
+| 2 ★ | [#1](https://fixture.local/acme/app/issues/1) | Schema | P1 | ready |  |
 
 ### Wave 2
 
-| # | Issue | Title | Status | Blocked by |
-| --- | --- | --- | --- | --- |
-| 3 ★ | [#2](https://fixture.local/acme/app/issues/2) | API | blocked | #1 |
-| 4 | [#3](https://fixture.local/acme/app/issues/3) | UI | blocked | #1 |
+| # | Issue | Title | Priority | Status | Blocked by |
+| --- | --- | --- | --- | --- | --- |
+| 3 ★ | [#2](https://fixture.local/acme/app/issues/2) | API |  | blocked | #1 |
+| 4 | [#3](https://fixture.local/acme/app/issues/3) | UI |  | blocked | #1 |
 
 ### Wave 3
 
-| # | Issue | Title | Status | Blocked by |
-| --- | --- | --- | --- | --- |
-| 5 ★ | [#5](https://fixture.local/acme/app/issues/5) | Release | blocked | #2, #3, #4 |
+| # | Issue | Title | Priority | Status | Blocked by |
+| --- | --- | --- | --- | --- | --- |
+| 5 ★ | [#5](https://fixture.local/acme/app/issues/5) | Release |  | blocked | #2, #3, #4 |
 ```
 
 The "#" column is the position in the linear order (1-based in Markdown; `order` is 0-based in JSON). The full content hash of this plan is `f2de135ce1a7e8813731aa832a4957cd544ba9f10483aba53509ae53cc6bbf6c`, and the layout is:
