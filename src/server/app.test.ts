@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -520,5 +521,275 @@ describe('static UI', () => {
     expect(res.body).toContain('href="/api/views"');
     const other = await app.inject({ url: '/deep', headers: { accept: 'text/html' } });
     expect(other.statusCode).toBe(404);
+  });
+});
+
+describe('webhooks', () => {
+  const SECRET = 'wh-secret';
+  const payload = (repo: string | null = 'acme/api', extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      action: 'edited',
+      ...(repo === null ? {} : { repository: { full_name: repo } }),
+      ...extra,
+    });
+  const hmac = (body: string | Buffer, secret = SECRET) =>
+    createHmac('sha256', secret).update(body).digest('hex');
+  const hooked = (mutate?: (c: AppConfig) => void) =>
+    setup({
+      config: demoConfig((c) => {
+        c.webhooks = { secret: SECRET };
+        mutate?.(c);
+      }),
+    });
+  const post = (
+    app: FastifyInstance,
+    url: string,
+    body: string | Buffer,
+    headers: Record<string, string>,
+  ) =>
+    app.inject({
+      method: 'POST',
+      url,
+      payload: body,
+      headers: { 'content-type': 'application/json', ...headers },
+    });
+
+  it('a valid GitHub signature invalidates the view, so the next snapshot refetches', async () => {
+    const { app, providers } = hooked();
+    expect((await app.inject('/api/views/demo/snapshot')).statusCode).toBe(200);
+    const provider = providers[0] as FakeProvider;
+    const calls = provider.list;
+    await app.inject('/api/views/demo/snapshot');
+    expect(provider.list).toBe(calls); // cached
+
+    const body = payload();
+    const res = await post(app, '/api/webhooks/github', body, {
+      'x-github-event': 'issues',
+      'x-hub-signature-256': `sha256=${hmac(body)}`,
+    });
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ invalidated: ['demo'] });
+    expect(res.headers['cache-control']).toBe('no-store');
+
+    await app.inject('/api/views/demo/snapshot');
+    expect(provider.list).toBeGreaterThan(calls);
+  });
+
+  it('matches the repository case-insensitively and accepts a Buffer body', async () => {
+    const { app } = hooked();
+    const body = Buffer.from(payload('Acme/Web'));
+    const res = await post(app, '/api/webhooks/github', body, {
+      'x-github-event': 'issues',
+      'x-hub-signature-256': `sha256=${hmac(body)}`,
+    });
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ invalidated: ['demo'] });
+  });
+
+  it('the gitea route accepts X-Gitea-Signature', async () => {
+    const { app } = hooked();
+    const body = payload();
+    const res = await post(app, '/api/webhooks/gitea', body, {
+      'x-gitea-event': 'issues',
+      'x-gitea-signature': hmac(body),
+    });
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ invalidated: ['demo'] });
+  });
+
+  it('the gitea route accepts X-Forgejo-Signature', async () => {
+    const { app } = hooked();
+    const body = payload();
+    const res = await post(app, '/api/webhooks/gitea', body, {
+      'x-forgejo-event': 'issues',
+      'x-forgejo-signature': hmac(body),
+    });
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ invalidated: ['demo'] });
+  });
+
+  it('the gitea route accepts X-Hub-Signature-256', async () => {
+    const { app } = hooked();
+    const body = payload();
+    const res = await post(app, '/api/webhooks/gitea', body, {
+      'x-hub-signature-256': `sha256=${hmac(body)}`,
+    });
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ invalidated: ['demo'] });
+  });
+
+  it('rejects a wrong, missing, malformed or differently-formatted signature with 401', async () => {
+    const { app, providers } = hooked();
+    const body = payload();
+    const good = hmac(body);
+    const cases: Array<[string, Record<string, string>]> = [
+      ['/api/webhooks/github', { 'x-hub-signature-256': `sha256=${hmac(body, 'other')}` }],
+      ['/api/webhooks/github', {}],
+      ['/api/webhooks/github', { 'x-hub-signature-256': `sha256=${good.slice(0, 62)}` }],
+      ['/api/webhooks/github', { 'x-hub-signature-256': 'sha256=zz' }],
+      ['/api/webhooks/github', { 'x-hub-signature-256': good }], // prefix required
+      ['/api/webhooks/github', { 'x-gitea-signature': good }], // wrong header for this route
+      ['/api/webhooks/gitea', {}],
+      ['/api/webhooks/gitea', { 'x-gitea-signature': hmac(body, 'other') }],
+      ['/api/webhooks/gitea', { 'x-gitea-signature': `sha256=${good}` }], // plain hex only
+      ['/api/webhooks/gitea', { 'x-forgejo-signature': '' }],
+    ];
+    for (const [url, headers] of cases) {
+      const res = await post(app, url, body, headers);
+      expect(res.statusCode, `${url} ${JSON.stringify(headers)}`).toBe(401);
+      expect(res.json()).toEqual({ error: 'Invalid signature' });
+    }
+    expect(providers).toHaveLength(0);
+  });
+
+  it('rejects a signature computed over a different body', async () => {
+    const { app } = hooked();
+    const signed = payload('acme/api');
+    const res = await post(app, '/api/webhooks/github', payload('acme/web'), {
+      'x-hub-signature-256': `sha256=${hmac(signed)}`,
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('verifies the raw bytes, not a re-serialised body', async () => {
+    const { app } = hooked();
+    const body = '{ "repository":   {"full_name":"acme/api"} }';
+    const res = await post(app, '/api/webhooks/github', body, {
+      'x-hub-signature-256': `sha256=${hmac(body)}`,
+    });
+    expect(res.statusCode).toBe(202);
+    const reformatted = await post(app, '/api/webhooks/github', JSON.stringify(JSON.parse(body)), {
+      'x-hub-signature-256': `sha256=${hmac(body)}`,
+    });
+    expect(reformatted.statusCode).toBe(401);
+  });
+
+  it('does not exist without a secret', async () => {
+    const { app } = setup();
+    const body = payload();
+    for (const url of ['/api/webhooks/github', '/api/webhooks/gitea']) {
+      const res = await post(app, url, body, {
+        'x-hub-signature-256': `sha256=${hmac(body)}`,
+        'x-gitea-signature': hmac(body),
+      });
+      expect(res.statusCode, url).toBe(404);
+      expect(res.json()).toEqual({ error: 'Not found' });
+    }
+  });
+
+  it('is exempt from basic auth; everything else still needs credentials', async () => {
+    const { app } = hooked((c) => {
+      c.server.basicAuth = { username: 'admin', password: 's3cret' };
+    });
+    const body = payload();
+    const ok = await post(app, '/api/webhooks/github', body, {
+      'x-hub-signature-256': `sha256=${hmac(body)}`,
+    });
+    expect(ok.statusCode).toBe(202);
+    const okGitea = await post(app, '/api/webhooks/gitea', body, {
+      'x-gitea-signature': hmac(body),
+    });
+    expect(okGitea.statusCode).toBe(202);
+    const bad = await post(app, '/api/webhooks/github', body, {});
+    expect(bad.statusCode).toBe(401);
+    expect(bad.json()).toEqual({ error: 'Invalid signature' });
+    expect(bad.headers['www-authenticate']).toBeUndefined();
+
+    // nothing else is exempt: other methods and paths, including look-alikes
+    for (const [method, url] of [
+      ['GET', '/api/webhooks/github'],
+      ['GET', '/api/webhooks/gitea'],
+      ['GET', '/api/views'],
+      ['POST', '/api/views/demo/refresh'],
+      ['POST', '/api/webhooks/github/'],
+      ['POST', '/api/webhooks/other'],
+      ['POST', '/api/webhooks'],
+    ] as const) {
+      const res = await app.inject({ method, url });
+      expect(res.statusCode, `${method} ${url}`).toBe(401);
+      expect(res.headers['www-authenticate']).toContain('Basic');
+    }
+  });
+
+  it('stays behind basic auth when webhooks are not configured', async () => {
+    const { app } = setup({
+      config: demoConfig((c) => {
+        c.server.basicAuth = { username: 'admin', password: 's3cret' };
+      }),
+    });
+    const res = await post(app, '/api/webhooks/github', payload(), {});
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['www-authenticate']).toContain('Basic');
+  });
+
+  it('rejects a body over 1 MB with 413', async () => {
+    const { app } = hooked();
+    const body = payload('acme/api', { padding: 'x'.repeat(1_048_576) });
+    const res = await post(app, '/api/webhooks/github', body, {
+      'x-hub-signature-256': `sha256=${hmac(body)}`,
+    });
+    expect(res.statusCode).toBe(413);
+  });
+
+  it('answers a GitHub ping with 200 and does not invalidate', async () => {
+    const { app, providers } = hooked();
+    await app.inject('/api/views/demo/snapshot');
+    const provider = providers[0] as FakeProvider;
+    const calls = provider.list;
+    const body = JSON.stringify({ zen: 'Keep it logically awesome.', hook_id: 1 });
+    const res = await post(app, '/api/webhooks/github', body, {
+      'x-github-event': 'ping',
+      'x-hub-signature-256': `sha256=${hmac(body)}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+    await app.inject('/api/views/demo/snapshot');
+    expect(provider.list).toBe(calls);
+    // an unsigned ping is still rejected
+    const unsigned = await post(app, '/api/webhooks/github', body, { 'x-github-event': 'ping' });
+    expect(unsigned.statusCode).toBe(401);
+  });
+
+  it('answers 202 with no views for an unknown repo or a payload without a repository', async () => {
+    const { app } = hooked();
+    for (const body of [
+      payload('nobody/nothing'),
+      payload(null),
+      JSON.stringify([1, 2]),
+      JSON.stringify({ repository: { full_name: 7 } }),
+    ]) {
+      const res = await post(app, '/api/webhooks/github', body, {
+        'x-hub-signature-256': `sha256=${hmac(body)}`,
+      });
+      expect(res.statusCode, body).toBe(202);
+      expect(res.json()).toEqual({ invalidated: [] });
+    }
+  });
+
+  it('rejects a signed body that is not JSON with 400, and other content types with 415', async () => {
+    const { app } = hooked();
+    const body = 'not json';
+    const res = await post(app, '/api/webhooks/github', body, {
+      'x-hub-signature-256': `sha256=${hmac(body)}`,
+    });
+    expect(res.statusCode).toBe(400);
+    const form = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/github',
+      payload: 'payload=%7B%7D',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    expect(form.statusCode).toBe(415);
+  });
+
+  it('does not change how the other routes parse JSON', async () => {
+    const { app } = hooked();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/views/demo/refresh',
+      payload: '{"a":1}',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.statusCode).toBe(200);
   });
 });

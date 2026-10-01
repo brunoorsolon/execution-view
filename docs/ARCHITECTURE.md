@@ -9,6 +9,10 @@
 >
 > Known deviations from the text below:
 >
+> - The Gitea provider is tested in CI against live instances, not only mocked
+>   HTTP: Gitea 1.25 and Forgejo 11 (`scripts/forge-integration.sh`, the
+>   `forge-integration` job). Forgejo is supported through the `gitea` kind
+>   with no provider changes.
 > - `Snapshot` has a `priorityLabels: string[]` field: the view's configured
 >   priority labels in rank order, so `PlanNode.priority` can be mapped to a
 >   label name (`priority === priorityLabels.length` means none). It is not part
@@ -55,6 +59,16 @@
 >   after a rebuild, and a `webDir` created after startup is served). `index.html`
 >   (also via the SPA fallback) is `Cache-Control: no-cache`; files under
 >   `assets/` are `public, max-age=31536000, immutable`; other files `no-cache`.
+> - Webhooks: an optional top-level `webhooks: { secret?, secretEnv? }` config
+>   (resolved to `AppConfig.webhooks: { secret } | null`; `EV_WEBHOOK_SECRET`
+>   overrides it, also in env-only mode; a `secretEnv` naming an unset variable
+>   is a warning) enables `POST /api/webhooks/github` and
+>   `POST /api/webhooks/gitea` (`src/server/webhooks.ts`). They verify an
+>   HMAC-SHA256 signature over the raw body (`X-Hub-Signature-256`,
+>   `X-Gitea-Signature`, `X-Forgejo-Signature`), are exempt from basic auth,
+>   accept JSON only (1 MiB), and call `PlanService.invalidate` for each view
+>   returned by `PlanService.viewsForRepo(repository.full_name)`. Without a
+>   secret the routes do not exist (`404`). The cache TTL remains a safety net.
 > - Markdown and DOT exports number waves from 1; `PlanNode.wave` in JSON is
 >   0-based.
 > - The `native-unsupported` hint printed by `check` for Gitea and the message
@@ -69,7 +83,7 @@ only in a dedicated PR.
 
 Produce **deterministic** views of the open issues of one or more repositories
 hosted on **GitHub** (github.com or GitHub Enterprise Server) or **Gitea**
-(Forgejo should work too, but is untested):
+(Forgejo works through the Gitea provider):
 
 - how the issues depend on each other (a dependency graph)
 - the order to execute them in (a linear order, plus "waves" of work that can

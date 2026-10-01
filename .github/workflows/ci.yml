@@ -25,3 +25,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash scripts/smoke-test.sh
+
+  forge-integration:
+    runs-on: ubuntu-latest
+    needs: ci
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - gitea/gitea:1.25
+          - codeberg.org/forgejo/forgejo:11
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: bash scripts/forge-integration.sh ${{ matrix.image }}

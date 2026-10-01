@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ConfigError, DEFAULT_KEYWORDS, loadConfig, parseConfig } from './load.js';
+import { ConfigError, DEFAULT_KEYWORDS, configFromEnv, loadConfig, parseConfig } from './load.js';
 
 const MIN = `
 sources:
@@ -40,6 +40,7 @@ describe('parseConfig defaults', () => {
     const cfg = parseConfig(MIN, {});
     expect(cfg.server).toEqual({ host: '0.0.0.0', port: 8080, basicAuth: null });
     expect(cfg.cache).toEqual({ ttlSeconds: 300 });
+    expect(cfg.webhooks).toBeNull();
     expect(cfg.sources).toEqual([
       {
         id: 'gh',
@@ -338,6 +339,71 @@ describe('basicAuth', () => {
     expect(errorOf(() => parseConfig(MIN, { EV_BASIC_AUTH: 'nocolon' })).message).toContain(
       'EV_BASIC_AUTH',
     );
+  });
+});
+
+describe('webhooks', () => {
+  const hooks = (lines: string) => MIN.replace('sources:', `webhooks:\n${lines}\nsources:`);
+
+  it('is disabled by default', () => {
+    const cfg = parseConfig(MIN, {});
+    expect(cfg.webhooks).toBeNull();
+    expect(cfg.warnings).toEqual([]);
+  });
+
+  it('via secretEnv', () => {
+    const cfg = parseConfig(hooks('  secretEnv: HOOK'), { HOOK: 'from-env' });
+    expect(cfg.webhooks).toEqual({ secret: 'from-env' });
+    expect(cfg.warnings).toEqual([]);
+  });
+
+  it('via inline secret', () => {
+    const cfg = parseConfig(hooks('  secret: inline'), {});
+    expect(cfg.webhooks).toEqual({ secret: 'inline' });
+  });
+
+  it('secretEnv wins over the inline secret when its variable is set', () => {
+    const text = hooks('  secretEnv: HOOK\n  secret: inline');
+    expect(parseConfig(text, { HOOK: 'from-env' }).webhooks).toEqual({ secret: 'from-env' });
+    const fallback = parseConfig(text, {});
+    expect(fallback.webhooks).toEqual({ secret: 'inline' });
+    expect(fallback.warnings).toEqual([]);
+  });
+
+  it('a missing env var warns and disables webhooks', () => {
+    const cfg = parseConfig(hooks('  secretEnv: HOOK'), { HOOK: '  ' });
+    expect(cfg.webhooks).toBeNull();
+    expect(cfg.warnings).toHaveLength(1);
+    expect(cfg.warnings![0]).toContain('HOOK');
+    expect(cfg.warnings![0]).toContain('webhooks are disabled');
+  });
+
+  it('a block without any secret warns and disables webhooks', () => {
+    const cfg = parseConfig(hooks('  secret: ""'), {});
+    expect(cfg.webhooks).toBeNull();
+    expect(cfg.warnings![0]).toContain('no secret');
+  });
+
+  it('EV_WEBHOOK_SECRET overrides the file, and enables webhooks without a block', () => {
+    const cfg = parseConfig(hooks('  secret: inline'), { EV_WEBHOOK_SECRET: 'override' });
+    expect(cfg.webhooks).toEqual({ secret: 'override' });
+    expect(parseConfig(MIN, { EV_WEBHOOK_SECRET: 'only-env' }).webhooks).toEqual({
+      secret: 'only-env',
+    });
+  });
+
+  it('EV_WEBHOOK_SECRET also works in env-only mode', () => {
+    const cfg = configFromEnv({
+      EV_PROVIDER: 'github',
+      EV_REPOS: 'a/b',
+      EV_WEBHOOK_SECRET: 's',
+    });
+    expect(cfg.webhooks).toEqual({ secret: 's' });
+    expect(configFromEnv({ EV_PROVIDER: 'github', EV_REPOS: 'a/b' }).webhooks).toBeNull();
+  });
+
+  it('rejects unknown keys', () => {
+    expect(errorOf(() => parseConfig(hooks('  bogus: 1'), {})).message).toContain('bogus');
   });
 });
 
