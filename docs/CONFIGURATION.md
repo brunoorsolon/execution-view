@@ -29,7 +29,7 @@ Rules:
 
 ## Config file reference
 
-The schema is **strict**: an unknown key is an error, and all errors are reported together. Top level keys: `server`, `cache`, `sources` (required), `views` (required).
+The schema is **strict**: an unknown key is an error, and all errors are reported together. Top level keys: `server`, `cache`, `webhooks`, `sources` (required), `views` (required).
 
 ### `server`
 
@@ -47,6 +47,17 @@ The schema is **strict**: an unknown key is an error, and all errors are reporte
 | Key                | Type               | Default | Description                                                                                                                     |
 | ------------------ | ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `cache.ttlSeconds` | integer, 0 or more | `300`   | How long a view's snapshot is served from memory. `0` disables caching (every request refetches). Overridden by `EV_CACHE_TTL`. |
+
+### `webhooks`
+
+Optional. Enables the webhook endpoints (`POST /api/webhooks/github` and `POST /api/webhooks/gitea`), which drop the cached snapshot of the views of a repository when the tracker reports an issue event. Without a secret the endpoints do not exist (`404`). Setup steps: [DEPLOYMENT.md](DEPLOYMENT.md#webhooks).
+
+| Key                  | Type   | Default | Description                                                                                                                                                                                       |
+| -------------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `webhooks.secretEnv` | string | none    | Name of the environment variable that holds the shared secret (recommended). Wins over `secret` when the variable is set and not blank. A variable that is not set gives a warning, not an error. |
+| `webhooks.secret`    | string | none    | Inline secret (discouraged). Used when `secretEnv` is absent or its variable is unset.                                                                                                            |
+
+When neither yields a secret, startup prints a warning and webhooks stay disabled. `EV_WEBHOOK_SECRET` overrides the whole block (and also works without a config file).
 
 ### `sources`
 
@@ -92,14 +103,15 @@ Empty or blank values are treated as unset.
 
 ### Overrides (apply on top of a config file, and in env-only mode)
 
-| Variable        | Effect                                                                                                                 |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `EV_HOST`       | Overrides `server.host`.                                                                                               |
-| `EV_PORT`       | Overrides `server.port` (integer 1-65535, otherwise startup fails).                                                    |
-| `EV_CACHE_TTL`  | Overrides `cache.ttlSeconds` (integer of 0 or more).                                                                   |
-| `EV_BASIC_AUTH` | `user:password`. Overrides the whole `server.basicAuth` block. Split at the first colon; both parts must be non-empty. |
-| `EV_CONFIG`     | Path of the config file (see the lookup order above).                                                                  |
-| `NO_COLOR`      | When set, the CLI prints no ANSI colours (colours are only used on a terminal anyway).                                 |
+| Variable            | Effect                                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `EV_HOST`           | Overrides `server.host`.                                                                                               |
+| `EV_PORT`           | Overrides `server.port` (integer 1-65535, otherwise startup fails).                                                    |
+| `EV_CACHE_TTL`      | Overrides `cache.ttlSeconds` (integer of 0 or more).                                                                   |
+| `EV_BASIC_AUTH`     | `user:password`. Overrides the whole `server.basicAuth` block. Split at the first colon; both parts must be non-empty. |
+| `EV_WEBHOOK_SECRET` | The webhook secret. Overrides the whole `webhooks` block and enables the webhook endpoints (also in env-only mode).    |
+| `EV_CONFIG`         | Path of the config file (see the lookup order above).                                                                  |
+| `NO_COLOR`          | When set, the CLI prints no ANSI colours (colours are only used on a terminal anyway).                                 |
 
 Docker image defaults: `EV_HOST=0.0.0.0`, `EV_PORT=8080`.
 
@@ -248,6 +260,25 @@ views:
 ```
 
 Or, without a file: `EV_BASIC_AUTH=admin:change-me`. Use TLS in front of the app: see [DEPLOYMENT.md](DEPLOYMENT.md#basic-auth).
+
+### Webhooks
+
+```yaml
+webhooks:
+  secretEnv: EV_WEBHOOK_SECRET
+
+sources:
+  - id: gh
+    kind: github
+    tokenEnv: GITHUB_TOKEN
+
+views:
+  - id: app
+    source: gh
+    repos: [acme/app]
+```
+
+Or, without a file: `EV_WEBHOOK_SECRET=<a long random string>`. See [DEPLOYMENT.md](DEPLOYMENT.md#webhooks) for the tracker side.
 
 ### Env-only, GitHub
 

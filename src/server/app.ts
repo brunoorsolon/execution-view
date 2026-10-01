@@ -9,6 +9,7 @@ import type { AppConfig } from '../config/schema.js';
 import type { Snapshot } from '../core/types.js';
 import { exporters, type ExportFormat } from '../export/index.js';
 import { UnknownViewError, type PlanService } from '../service/planService.js';
+import { registerWebhooks, WEBHOOK_PATHS } from './webhooks.js';
 
 export interface BuildAppOptions {
   /** Directory with the built web UI. Default: `../web` next to this compiled file. */
@@ -135,10 +136,16 @@ export function buildApp(
     return out;
   };
 
-  // --- auth (everything except /healthz) ---
+  // --- auth (everything except /healthz and, when enabled, the POST webhook endpoints, which
+  // authenticate with a signature instead) ---
+  const webhooks = config.webhooks;
   if (basicAuth !== null) {
     app.addHook('onRequest', async (request, reply) => {
-      if (pathnameOf(request.url) === '/healthz') return;
+      const pathname = pathnameOf(request.url);
+      if (pathname === '/healthz') return;
+      if (webhooks !== null && request.method === 'POST' && WEBHOOK_PATHS.includes(pathname)) {
+        return;
+      }
       if (checkBasicAuth(request.headers.authorization, basicAuth)) return;
       return reply
         .code(401)
@@ -220,6 +227,9 @@ export function buildApp(
         .send(exporter.render(snapshot));
     },
   );
+
+  // --- webhooks (only with a configured secret; otherwise the routes do not exist) ---
+  if (webhooks !== null) registerWebhooks(app, webhooks.secret, service);
 
   // --- static UI ---
   // Files are resolved per request (wildcard), so a rebuilt `dist/web` with new hashed asset names

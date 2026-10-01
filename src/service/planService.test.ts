@@ -327,6 +327,22 @@ describe('PlanService: cache', () => {
     expect(await service.getSnapshot('demo')).toBe(b);
   });
 
+  it('viewsForRepo lists the matching view ids, sorted, ignoring case', () => {
+    const config = demoConfig();
+    const demo = config.views[0]!;
+    config.views.push(
+      { ...demo, id: 'zeta', repos: [{ owner: 'acme', repo: 'web' }] },
+      { ...demo, id: 'alpha', repos: [{ owner: 'acme', repo: 'web' }] },
+      { ...demo, id: 'other', repos: [{ owner: 'x', repo: 'y' }] },
+    );
+    const service = new PlanService(config);
+    expect(service.viewsForRepo('acme/api')).toEqual(['demo']);
+    expect(service.viewsForRepo('Acme/Web')).toEqual(['alpha', 'demo', 'zeta']);
+    expect(service.viewsForRepo('x/y')).toEqual(['other']);
+    expect(service.viewsForRepo('acme/none')).toEqual([]);
+    expect(service.viewsForRepo('')).toEqual([]);
+  });
+
   it('invalidate drops the cache for one view or all views', async () => {
     const { service, providers } = demoService(300);
     const a = await service.getSnapshot('demo');
