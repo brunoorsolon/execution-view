@@ -1,6 +1,6 @@
 import type { IssueKey, LayoutNode, PlanNode, Snapshot } from '../../../src/core/types.js';
-import { clear, h, icon, ICONS, svg } from '../dom.js';
-import { displayKey } from '../format.js';
+import { append, clear, h, icon, ICONS, svg } from '../dom.js';
+import { displayKey, shortKey, statusLabel } from '../format.js';
 import { priorityName } from '../priority.js';
 import {
   edgePath,
@@ -16,17 +16,37 @@ import {
   type Highlight,
   type Transform,
 } from '../graph-model.js';
+import {
+  BUCKET_COUNT,
+  bucketTextScale,
+  compactBaselines,
+  compactFonts,
+  headerFontSize,
+  lodFor,
+  tooltipPosition,
+  type Lod,
+} from '../lod.js';
 import type { AppState } from '../state.js';
 import { effectiveViewId, type SnapshotIndex } from '../state.js';
 import { measureText, readFonts, truncateToWidth, type Fonts } from './measure.js';
 import { createSidePanel } from './side-panel.js';
-import { filteredOut, filterFor, getIndex, type View, type ViewCtx } from './shared.js';
+import {
+  filteredOut,
+  filterFor,
+  getIndex,
+  labelChip,
+  statusPill,
+  type View,
+  type ViewCtx,
+} from './shared.js';
 
 /** Vertical space above the layout for the wave column headers. */
 const HEADER_H = 36;
 const DRAG_THRESHOLD = 4;
 /** Width taken by the floating side panel (incl. margin), excluded from "visible" area. */
 const PANEL_W = 344;
+/** Hover time before the node tooltip appears. */
+const TOOLTIP_DELAY_MS = 150;
 
 interface Built {
   snapshot: Snapshot;
@@ -90,7 +110,8 @@ export function createGraphView(ctx: ViewCtx): View {
     legendItem('swatch critical', 'Critical path'),
   );
   const side = createSidePanel(ctx);
-  pane.append(svgEl, legend, controls, side.el);
+  const tooltip = h('div', { class: 'graph-tooltip', role: 'tooltip', hidden: true });
+  pane.append(svgEl, legend, controls, tooltip, side.el);
 
   let built: Built | null = null;
   let transform: Transform = IDENTITY;
@@ -107,6 +128,108 @@ export function createGraphView(ctx: ViewCtx): View {
   function applyTransform(): void {
     viewport.setAttribute('transform', transformAttr(transform));
     zoomLabel.textContent = `${Math.round(transform.k * 100)}%`;
+    applyLod();
+    positionTooltip();
+  }
+
+  /**
+   * Level of detail: only classes and one CSS variable change while zooming
+   * (and only when the mode, the compact bucket or the header size changes),
+   * the SVG is never rebuilt.
+   */
+  let lod: Lod | null = null;
+  let headFont = 0;
+  function applyLod(): void {
+    const next = lodFor(transform.k);
+    if (lod === null || next.mode !== lod.mode || next.bucket !== lod.bucket) {
+      svgEl.classList.toggle('lod-compact', next.mode === 'compact');
+      for (let b = 0; b < BUCKET_COUNT; b++) svgEl.classList.toggle(`lod-b${b}`, next.bucket === b);
+      lod = next;
+    }
+    const head = headerFontSize(transform.k);
+    if (head !== headFont) {
+      headFont = head;
+      svgEl.style.setProperty('--head-fs', `${head}px`);
+    }
+  }
+
+  // ------------------------------------------------------------------ tooltip
+
+  let tooltipKey: IssueKey | null = null;
+  let tooltipTimer: number | undefined;
+
+  function hideTooltip(): void {
+    window.clearTimeout(tooltipTimer);
+    tooltipTimer = undefined;
+    tooltipKey = null;
+    tooltip.hidden = true;
+  }
+
+  function scheduleTooltip(key: IssueKey): void {
+    window.clearTimeout(tooltipTimer);
+    if (pointer?.panning) return;
+    tooltipTimer = window.setTimeout(() => showTooltip(key), TOOLTIP_DELAY_MS);
+  }
+
+  function showTooltip(key: IssueKey): void {
+    const snapshot = built?.snapshot;
+    const node = built?.index.nodes.get(key);
+    if (built === null || snapshot === undefined || node === undefined || pointer?.panning) return;
+    const prio = priorityName(snapshot, node);
+    clear(tooltip);
+    append(tooltip, [
+      h(
+        'div',
+        { class: 'tip-head' },
+        h('span', { class: 'tip-key' }, displayKey(node.key, true)),
+        node.external ? h('span', { class: 'tag tag-external' }, 'external') : null,
+      ),
+      h('div', { class: 'tip-title' }, node.title),
+      h(
+        'div',
+        { class: 'tip-facts' },
+        statusPill(statusLabel(node.status), node.status),
+        h('span', null, node.wave === null ? 'Unschedulable' : `Wave ${node.wave + 1}`),
+        prio !== null ? h('span', null, `Priority: ${prio}`) : null,
+      ),
+      node.labels.length > 0
+        ? h('div', { class: 'chips' }, ...node.labels.map((l) => labelChip(l)))
+        : null,
+      node.assignees.length > 0 || node.milestone !== null
+        ? h(
+            'div',
+            { class: 'tip-meta' },
+            [node.assignees.map((a) => `@${a}`).join(' '), node.milestone ?? '']
+              .filter((t) => t !== '')
+              .join('  ·  '),
+          )
+        : null,
+    ]);
+    tooltipKey = key;
+    tooltip.hidden = false;
+    positionTooltip();
+  }
+
+  /** Places the tooltip next to its node (not the mouse), inside the pane. */
+  function positionTooltip(): void {
+    if (tooltipKey === null || built === null) return;
+    const ln = built.index.layout.get(tooltipKey);
+    if (ln === undefined) return;
+    const k = transform.k;
+    const anchor = {
+      x: transform.x + ln.x * k,
+      y: transform.y + (ln.y + HEADER_H) * k,
+      width: ln.width * k,
+      height: ln.height * k,
+    };
+    const pos = tooltipPosition(
+      anchor,
+      { width: tooltip.offsetWidth, height: tooltip.offsetHeight },
+      size(),
+    );
+    tooltip.style.left = `${Math.round(pos.x)}px`;
+    tooltip.style.top = `${Math.round(pos.y)}px`;
+    tooltip.dataset.side = pos.side;
   }
 
   function size(): { width: number; height: number } {
@@ -178,6 +301,7 @@ export function createGraphView(ctx: ViewCtx): View {
         return;
       pointer.panning = true;
       dragged = true;
+      hideTooltip();
       svgEl.setPointerCapture(e.pointerId);
       svgEl.classList.add('panning');
     }
@@ -193,6 +317,7 @@ export function createGraphView(ctx: ViewCtx): View {
     pointer = null;
     svgEl.classList.remove('panning');
   };
+  svgEl.addEventListener('pointerleave', hideTooltip);
   svgEl.addEventListener('pointerup', endPointer);
   svgEl.addEventListener('pointercancel', endPointer);
 
@@ -231,6 +356,7 @@ export function createGraphView(ctx: ViewCtx): View {
   // ------------------------------------------------------------------- build
 
   function build(snapshot: Snapshot, index: SnapshotIndex): Built {
+    hideTooltip();
     clear(viewport);
     const fonts = readFonts();
     const { layout, plan } = snapshot;
@@ -259,7 +385,7 @@ export function createGraphView(ctx: ViewCtx): View {
           'text',
           { class: `col-head${unsched ? ' col-unsched' : ''}`, x: x, y: 23 },
           svg('tspan', { class: 'col-title' }, unsched ? 'Unschedulable' : `Wave ${layer + 1}`),
-          svg('tspan', { class: 'col-count', dx: 6 }, String(count)),
+          svg('tspan', { class: 'col-count', dx: '0.45em' }, String(count)),
         ),
       );
     }
@@ -348,7 +474,6 @@ export function createGraphView(ctx: ViewCtx): View {
       'data-key': n.key,
       'aria-label': `${n.key} ${n.title}`,
     });
-    g.append(svg('title', null, `${n.key}${n.external ? ' (external)' : ''}\n${n.title}`));
     g.append(svg('rect', { class: 'card', width: w, height: hgt, rx: 7 }));
     const r = 7;
     g.append(
@@ -357,7 +482,10 @@ export function createGraphView(ctx: ViewCtx): View {
         d: `M${r} 0H4V${hgt}H${r}A${r} ${r} 0 0 1 0 ${hgt - r}V${r}A${r} ${r} 0 0 1 ${r} 0Z`,
       }),
     );
-    g.append(svg('text', { class: 'node-key', x: padL, y: 22 }, keyText));
+    // Detailed content. It is hidden (display: none) by `.lod-compact` on the root.
+    const detail = svg('g', { class: 'lod-detail' });
+    g.append(detail);
+    detail.append(svg('text', { class: 'node-key', x: padL, y: 22 }, keyText));
 
     let cx = w - padR;
     for (let i = chipTexts.length - 1; i >= 0; i--) {
@@ -366,7 +494,7 @@ export function createGraphView(ctx: ViewCtx): View {
       cx -= cw;
       const isMore =
         text.startsWith('+') && i === chipTexts.length - 1 && labels.length > shown.length;
-      g.append(
+      detail.append(
         svg(
           'g',
           { class: `chip-g${isMore ? ' chip-more' : ''}`, transform: `translate(${cx} 9)` },
@@ -377,7 +505,7 @@ export function createGraphView(ctx: ViewCtx): View {
       cx -= 4;
     }
 
-    g.append(
+    detail.append(
       svg(
         'text',
         { class: 'node-title', x: padL, y: 41 },
@@ -392,7 +520,7 @@ export function createGraphView(ctx: ViewCtx): View {
       .filter((s) => s !== '')
       .join('  ·  ');
     if (meta !== '') {
-      g.append(
+      detail.append(
         svg(
           'text',
           { class: 'node-meta', x: padL, y: 56 },
@@ -401,6 +529,37 @@ export function createGraphView(ctx: ViewCtx): View {
       );
     }
 
+    // Compact content: the key and one line of title per zoom bucket, each with
+    // a font size that keeps the text legible at that bucket's zoom. The bucket
+    // shown is picked by a class on the root.
+    for (let b = 0; b < BUCKET_COUNT; b++) {
+      const fs = compactFonts(bucketTextScale(b), hgt);
+      const y = compactBaselines(fs, hgt);
+      const maxW = w - padL - padR;
+      g.append(
+        svg(
+          'g',
+          { class: `lod-c lod-b${b}` },
+          svg(
+            'text',
+            { class: 'c-key', x: padL, y: y.key, 'font-size': fs.key },
+            truncateToWidth(
+              shortKey(n.key, index.multiRepo),
+              maxW,
+              `600 ${fs.key}px ${fonts.mono}`,
+            ),
+          ),
+          svg(
+            'text',
+            { class: 'c-title', x: padL, y: y.title, 'font-size': fs.title },
+            truncateToWidth(n.title, maxW, `500 ${fs.title}px ${fonts.sans}`),
+          ),
+        ),
+      );
+    }
+
+    g.addEventListener('mouseenter', () => scheduleTooltip(n.key));
+    g.addEventListener('mouseleave', hideTooltip);
     g.addEventListener('click', (e) => {
       e.stopPropagation();
       if (dragged) {
