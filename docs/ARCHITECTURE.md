@@ -21,6 +21,10 @@
 >   wave; `priority` mode is exactly the rule in §8. It is not hashed on its
 >   own: `plan.order` already reflects it. `PlanInput` has an optional
 >   `orderingMode` and `ResolvedView.ordering` has `mode`.
+> - `dependencies` is a default blocked-by keyword (the contract listed only
+>   `depends on`, `blocked by` and `requires`), so a `## Dependencies` heading
+>   and `Dependencies: #3` lines work without configuration. The singular
+>   `Dependency` is not a default keyword.
 > - `AppConfig` has an optional `warnings: string[]` (non-fatal problems found
 >   while loading: a `tokenEnv` naming an unset variable, `subIssues` on a
 >   non-GitHub source). The CLI and the server print them.
@@ -47,6 +51,10 @@
 > - HTTP: all `/api/` responses carry `Cache-Control: no-store`; the snapshot
 >   endpoint honours `If-None-Match` with the content hash as `ETag`
 >   (`304`); exports have no `ETag`.
+> - Static UI: files in `webDir` are resolved per request (no restart needed
+>   after a rebuild, and a `webDir` created after startup is served). `index.html`
+>   (also via the SPA fallback) is `Cache-Control: no-cache`; files under
+>   `assets/` are `public, max-age=31536000, immutable`; other files `no-cache`.
 > - Markdown and DOT exports number waves from 1; `PlanNode.wave` in JSON is
 >   0-based.
 > - The `native-unsupported` hint printed by `check` for Gitea and the message
@@ -362,7 +370,7 @@ export interface KeywordConfig {
   blocks: string[];
 }
 export const DEFAULT_KEYWORDS: KeywordConfig = {
-  blockedBy: ['depends on', 'blocked by', 'requires'],
+  blockedBy: ['depends on', 'blocked by', 'requires', 'dependencies'],
   blocks: ['blocks', 'blocking', 'required by'],
 };
 export interface ParseOptions {
@@ -525,7 +533,7 @@ views:
       body: true # default true
       subIssues: false # default false (github only)
       keywords: # default DEFAULT_KEYWORDS
-        blockedBy: [depends on, blocked by, requires]
+        blockedBy: [depends on, blocked by, requires, dependencies]
         blocks: [blocks, blocking, required by]
     scope:
       labels: [] # when non-empty, only issues with at least one of these labels are in scope
