@@ -570,7 +570,8 @@ select {
 }
 .col-head {
   fill: var(--text-muted);
-  font-size: 12px;
+  /* Counter-scaled by the graph view so the headers stay readable when zoomed out. */
+  font-size: var(--head-fs, 12px);
 }
 .col-title {
   font-weight: 650;
@@ -687,6 +688,30 @@ select {
   fill: var(--text-muted);
   font: 11px var(--font-sans);
 }
+/* Level of detail: the root gets .lod-compact (and one .lod-bN) below the zoom threshold. */
+.lod-c {
+  display: none;
+}
+/* The font size of the compact texts is the font-size attribute (one per zoom bucket). */
+.c-key {
+  fill: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.c-title {
+  fill: var(--text);
+  font-family: var(--font-sans);
+  font-weight: 500;
+}
+.graph-svg.lod-compact .node .lod-detail {
+  display: none;
+}
+.graph-svg.lod-compact.lod-b0 .node .lod-c.lod-b0,
+.graph-svg.lod-compact.lod-b1 .node .lod-c.lod-b1,
+.graph-svg.lod-compact.lod-b2 .node .lod-c.lod-b2,
+.graph-svg.lod-compact.lod-b3 .node .lod-c.lod-b3 {
+  display: inline;
+}
 .chip-g rect {
   fill: var(--chip-bg);
 }
@@ -699,6 +724,51 @@ select {
   stroke: var(--border-strong);
 }
 
+.graph-tooltip {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: max-content;
+  max-width: min(320px, calc(100% - 16px));
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+  pointer-events: none;
+}
+.graph-tooltip[hidden] {
+  display: none;
+}
+.tip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tip-key {
+  font: 600 12px var(--font-mono);
+}
+.tip-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.tip-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--text-muted);
+}
+.tip-meta {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
 .graph-controls {
   position: absolute;
   right: 16px;
@@ -959,10 +1029,21 @@ select {
 /* --------------------------------------------------------------- order table */
 
 .order-pane {
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
 }
+.order-note {
+  flex: none;
+  margin: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .table-scroll {
-  height: 100%;
+  flex: 1 1 0;
+  min-height: 0;
   overflow: auto;
 }
 .order-table {

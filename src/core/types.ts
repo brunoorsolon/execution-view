@@ -168,6 +168,12 @@ export interface Layout {
   edges: LayoutEdge[];
 }
 
+/**
+ * How the linear order is built. `priority`: by (priority, remainingDepth, key), which can
+ * interleave waves. `waves`: wave by wave, and within a wave by the same three criteria.
+ */
+export type OrderingMode = 'priority' | 'waves';
+
 export interface Snapshot {
   viewId: string;
   title: string;
@@ -175,6 +181,19 @@ export interface Snapshot {
   fetchedAt: string;
   /** sha256 hex of canonicalJson({ plan, layout }). */
   contentHash: string;
+  /**
+   * The view's configured priority labels, in rank order (index 0 is the most
+   * urgent). `PlanNode.priority` indexes into this list;
+   * `PlanNode.priority === priorityLabels.length` means no priority label.
+   * Not part of the content hash: a change here already changes the hash through
+   * the `priority` values.
+   */
+  priorityLabels: string[];
+  /**
+   * The view's ordering mode. Not part of the content hash: `plan.order` already reflects it,
+   * so a change of mode changes the hash through the order.
+   */
+  orderingMode: OrderingMode;
   plan: Plan;
   layout: Layout;
 }

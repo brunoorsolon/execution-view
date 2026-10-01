@@ -6,12 +6,7 @@ import type {
   Snapshot,
 } from '../../src/core/types.js';
 import type { ViewSummary } from './api.js';
-import {
-  buildAdjacency,
-  criticalPathEdges,
-  derivePriorityLabels,
-  type Adjacency,
-} from './graph-model.js';
+import { buildAdjacency, criticalPathEdges, type Adjacency } from './graph-model.js';
 import { DEFAULT_ROUTE, type Route, type Tab } from './route.js';
 
 // ---------------------------------------------------------------------------
@@ -27,7 +22,6 @@ export interface SnapshotIndex {
   criticalNodes: Set<IssueKey>;
   criticalEdges: Set<string>;
   unschedulable: Set<IssueKey>;
-  priorityLabels: Map<number, string>;
 }
 
 export function indexSnapshot(
@@ -45,7 +39,6 @@ export function indexSnapshot(
     criticalNodes: new Set(plan.criticalPath),
     criticalEdges: criticalPathEdges(plan.criticalPath),
     unschedulable: new Set(plan.unschedulable),
-    priorityLabels: derivePriorityLabels(plan.nodes),
   };
 }
 

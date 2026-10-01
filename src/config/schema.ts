@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DEFAULT_KEYWORDS, type KeywordConfig } from '../core/parser.js';
-import type { ProviderKind, RepoRef } from '../core/types.js';
+import type { OrderingMode, ProviderKind, RepoRef } from '../core/types.js';
 
 export { DEFAULT_KEYWORDS };
 export type { KeywordConfig };
@@ -25,12 +25,14 @@ export interface ResolvedView {
   repos: RepoRef[];
   dependencies: { native: boolean; body: boolean; subIssues: boolean; keywords: KeywordConfig };
   scope: { labels: string[]; excludeLabels: string[]; milestones: string[] };
-  ordering: { priorityLabels: string[] };
+  ordering: { priorityLabels: string[]; mode: OrderingMode };
 }
 
 export interface AppConfig {
   server: { host: string; port: number; basicAuth: { username: string; password: string } | null };
   cache: { ttlSeconds: number };
+  /** The webhook endpoints are enabled when a secret is configured; null otherwise. */
+  webhooks: { secret: string } | null;
   sources: ResolvedSource[];
   views: ResolvedView[];
   /** Non-fatal problems found while loading (for example a tokenEnv naming an unset variable). */
@@ -110,7 +112,10 @@ const viewSchema = z
       .object({ labels: stringList, excludeLabels: stringList, milestones: stringList })
       .strict()
       .optional(),
-    ordering: z.object({ priorityLabels: stringList }).strict().optional(),
+    ordering: z
+      .object({ priorityLabels: stringList, mode: z.enum(['priority', 'waves']).optional() })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -119,6 +124,13 @@ const basicAuthSchema = z
     username: z.string().min(1),
     password: z.string().min(1).optional(),
     passwordEnv: z.string().min(1).optional(),
+  })
+  .strict();
+
+const webhooksSchema = z
+  .object({
+    secret: z.string().optional(),
+    secretEnv: z.string().min(1).optional(),
   })
   .strict();
 
@@ -136,6 +148,7 @@ export const rawConfigSchema = z
       .object({ ttlSeconds: z.number().int().min(0).optional() })
       .strict()
       .optional(),
+    webhooks: webhooksSchema.optional(),
     sources: z.array(sourceSchema).min(1, 'at least one source is required'),
     views: z.array(viewSchema).min(1, 'at least one view is required'),
   })

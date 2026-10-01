@@ -1,6 +1,7 @@
 import type { IssueKey, PlanNode } from '../../../src/core/types.js';
 import { clear, h, icon, ICONS } from '../dom.js';
 import { displayKey, plural, statusLabel } from '../format.js';
+import { priorityName } from '../priority.js';
 import type { AppState, SnapshotIndex } from '../state.js';
 import { getIndex, labelChip, safeUrl, statusPill, type View, type ViewCtx } from './shared.js';
 
@@ -44,7 +45,7 @@ export function createSidePanel(ctx: ViewCtx): View {
     const total = state.snapshot?.plan.order.length ?? 0;
     const wave = n.wave === null ? 'Unschedulable' : `Wave ${n.wave + 1}`;
     const order = n.order === null ? 'not scheduled' : `#${n.order + 1} of ${total}`;
-    const prio = index.priorityLabels.get(n.priority);
+    const prio = state.snapshot === null ? null : priorityName(state.snapshot, n);
     const onCritical = index.criticalNodes.has(n.key);
 
     el.append(

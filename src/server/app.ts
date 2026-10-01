@@ -9,6 +9,7 @@ import type { AppConfig } from '../config/schema.js';
 import type { Snapshot } from '../core/types.js';
 import { exporters, type ExportFormat } from '../export/index.js';
 import { UnknownViewError, type PlanService } from '../service/planService.js';
+import { registerWebhooks, WEBHOOK_PATHS } from './webhooks.js';
 
 export interface BuildAppOptions {
   /** Directory with the built web UI. Default: `../web` next to this compiled file. */
@@ -60,6 +61,15 @@ function isDirectory(p: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Cache policy for a static file: hashed build output under `assets/` never changes, everything
+ * else (`index.html`, which references those hashed names, and any other file) is revalidated.
+ */
+function staticCacheControl(webDir: string, filePath: string): string {
+  const relative = path.relative(webDir, filePath).split(path.sep).join('/');
+  return relative.startsWith('assets/') ? 'public, max-age=31536000, immutable' : 'no-cache';
 }
 
 function isTruthyFlag(value: unknown): boolean {
@@ -126,10 +136,16 @@ export function buildApp(
     return out;
   };
 
-  // --- auth (everything except /healthz) ---
+  // --- auth (everything except /healthz and, when enabled, the POST webhook endpoints, which
+  // authenticate with a signature instead) ---
+  const webhooks = config.webhooks;
   if (basicAuth !== null) {
     app.addHook('onRequest', async (request, reply) => {
-      if (pathnameOf(request.url) === '/healthz') return;
+      const pathname = pathnameOf(request.url);
+      if (pathname === '/healthz') return;
+      if (webhooks !== null && request.method === 'POST' && WEBHOOK_PATHS.includes(pathname)) {
+        return;
+      }
       if (checkBasicAuth(request.headers.authorization, basicAuth)) return;
       return reply
         .code(401)
@@ -212,23 +228,38 @@ export function buildApp(
     },
   );
 
+  // --- webhooks (only with a configured secret; otherwise the routes do not exist) ---
+  if (webhooks !== null) registerWebhooks(app, webhooks.secret, service);
+
   // --- static UI ---
-  if (hasWebDir) {
-    void app.register(fastifyStatic, { root: webDir, wildcard: false });
-  } else {
-    app.log.warn(`Web UI directory not found: ${webDir}. Serving the API only.`);
-    app.get('/', async (_request, reply) =>
-      reply.type('text/html; charset=utf-8').send(UI_NOT_BUILT_HTML),
-    );
+  // Files are resolved per request (wildcard), so a rebuilt `dist/web` with new hashed asset names
+  // is served without a restart, and so is a `dist/web` created after startup. `/api/*` and
+  // `/healthz` are more specific routes and take precedence over the wildcard.
+  if (!hasWebDir) {
+    app.log.warn(`Web UI directory not found: ${webDir}. Serving the API only until it exists.`);
   }
+  void app.register(fastifyStatic, {
+    root: webDir,
+    wildcard: true,
+    index: false,
+    suppressWarning: true,
+    setHeaders: (reply, filePath) => {
+      reply.header('Cache-Control', staticCacheControl(webDir, filePath));
+    },
+  });
+
+  app.get('/', async (_request, reply) => {
+    if (isDirectory(webDir)) return reply.sendFile('index.html');
+    return reply.type('text/html; charset=utf-8').send(UI_NOT_BUILT_HTML);
+  });
 
   app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
     const accept = request.headers.accept ?? '';
     if (
-      hasWebDir &&
       request.method === 'GET' &&
       !pathnameOf(request.url).startsWith('/api/') &&
-      accept.includes('text/html')
+      accept.includes('text/html') &&
+      isDirectory(webDir)
     ) {
       return reply.sendFile('index.html');
     }

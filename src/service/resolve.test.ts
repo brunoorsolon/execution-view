@@ -105,7 +105,7 @@ function view(over: Partial<ResolvedView> = {}, deps: Partial<ResolvedView['depe
       ...deps,
     },
     scope: { labels: [], excludeLabels: [], milestones: [] },
-    ordering: { priorityLabels: ['P0'] },
+    ordering: { priorityLabels: ['P0'], mode: 'priority' },
     ...over,
   };
   return v;
@@ -121,6 +121,7 @@ describe('resolveView: basics', () => {
     const { input } = await resolveView(view(), SOURCE, provider);
     expect(input.viewId).toBe('v');
     expect(input.priorityLabels).toEqual(['P0']);
+    expect(input.orderingMode).toBe('priority');
     expect(input.issues.map((i) => i.key)).toEqual(['a/r#1', 'a/r#2']);
     expect(input.externalKeys).toEqual([]);
     expect(input.edges).toEqual([]);

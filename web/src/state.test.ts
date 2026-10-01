@@ -48,6 +48,8 @@ function snapshot(keys: string[]): Snapshot {
     title: 'A',
     fetchedAt: '2026-01-01T00:00:00Z',
     contentHash: 'h'.repeat(64),
+    priorityLabels: [],
+    orderingMode: 'priority',
     plan: {
       viewId: 'a',
       nodes: keys.map((k) => node(k)),

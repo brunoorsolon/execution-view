@@ -1,4 +1,4 @@
-import type { IssueKey, PlanNode, Snapshot } from '../core/types.js';
+import type { IssueKey, OrderingMode, PlanNode, Snapshot } from '../core/types.js';
 import { isMultiRepo, issueLabel, keyLabel, nodeIndex, oneLine, replaceChars } from './shared.js';
 
 const MD_ESCAPES: Record<string, string> = {
@@ -29,8 +29,19 @@ function issueLink(node: PlanNode, multi: boolean): string {
   return node.external ? `${link} (external)` : link;
 }
 
+/** The legend sentence that explains how the # column is ordered. */
+function orderLegend(mode: OrderingMode): string {
+  if (mode === 'waves') {
+    return 'The # column runs wave by wave; within a wave, by priority and critical path.';
+  }
+  return (
+    'The # column favours priority labels and the critical path: an issue from a later wave can ' +
+    'come before an earlier-wave issue once its prerequisites are done.'
+  );
+}
+
 export function toMarkdown(snapshot: Snapshot): string {
-  const { plan } = snapshot;
+  const { plan, priorityLabels } = snapshot;
   const multi = isMultiRepo(plan);
   const nodes = nodeIndex(plan);
   const position = new Map<IssueKey, number>();
@@ -41,6 +52,8 @@ export function toMarkdown(snapshot: Snapshot): string {
     node.blockedBy.length === 0
       ? ''
       : escapeMarkdown(node.blockedBy.map((k) => keyLabel(k, nodes, multi)).join(', '));
+
+  const priority = (node: PlanNode): string => escapeMarkdown(priorityLabels[node.priority] ?? '');
 
   const s = plan.stats;
   const out: string[] = [
@@ -54,7 +67,8 @@ export function toMarkdown(snapshot: Snapshot): string {
     '## Execution order',
     '',
     'Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all ' +
-      'earlier waves are done. ★ marks the critical path.',
+      'earlier waves are done. ★ marks the critical path. ' +
+      orderLegend(snapshot.orderingMode),
   ];
 
   if (plan.waves.length === 0) {
@@ -66,15 +80,15 @@ export function toMarkdown(snapshot: Snapshot): string {
       '',
       `### Wave ${i + 1}`,
       '',
-      '| # | Issue | Title | Status | Blocked by |',
-      '| --- | --- | --- | --- | --- |',
+      '| # | Issue | Title | Priority | Status | Blocked by |',
+      '| --- | --- | --- | --- | --- | --- |',
     );
     for (const key of wave) {
       const node = nodes.get(key);
       if (!node) continue;
       const pos = `${position.get(key) ?? ''}${critical.has(key) ? ' ★' : ''}`.trim();
       out.push(
-        `| ${pos} | ${issueLink(node, multi)} | ${escapeMarkdown(node.title)} | ${node.status} | ${blockedBy(node)} |`,
+        `| ${pos} | ${issueLink(node, multi)} | ${escapeMarkdown(node.title)} | ${priority(node)} | ${node.status} | ${blockedBy(node)} |`,
       );
     }
   });
@@ -89,12 +103,12 @@ export function toMarkdown(snapshot: Snapshot): string {
       '',
       'These issues cannot be ordered because they are in a dependency cycle or depend on one.',
       '',
-      '| Issue | Title | Status | Blocked by |',
-      '| --- | --- | --- | --- |',
+      '| Issue | Title | Priority | Status | Blocked by |',
+      '| --- | --- | --- | --- | --- |',
     );
     for (const node of unschedulable) {
       out.push(
-        `| ${issueLink(node, multi)} | ${escapeMarkdown(node.title)} | ${node.status} | ${blockedBy(node)} |`,
+        `| ${issueLink(node, multi)} | ${escapeMarkdown(node.title)} | ${priority(node)} | ${node.status} | ${blockedBy(node)} |`,
       );
     }
   }

@@ -69,31 +69,31 @@ View \`platform\` · fetched 2026-01-02T03:04:05.000Z · hash \`0123456789ab\`
 
 ## Execution order
 
-Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all earlier waves are done. ★ marks the critical path.
+Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all earlier waves are done. ★ marks the critical path. The # column favours priority labels and the critical path: an issue from a later wave can come before an earlier-wave issue once its prerequisites are done.
 
 ### Wave 1
 
-| # | Issue | Title | Status | Blocked by |
-| --- | --- | --- | --- | --- |
-| 1 | [acme/lib#7](https://github.com/acme/lib/issues/7) (external) | Upstream library release | ready |  |
-| 2 ★ | [acme/api#1](https://github.com/acme/api/issues/1) | Set up schema | ready |  |
+| # | Issue | Title | Priority | Status | Blocked by |
+| --- | --- | --- | --- | --- | --- |
+| 1 | [acme/lib#7](https://github.com/acme/lib/issues/7) (external) | Upstream library release |  | ready |  |
+| 2 ★ | [acme/api#1](https://github.com/acme/api/issues/1) | Set up schema | P0 | ready |  |
 
 ### Wave 2
 
-| # | Issue | Title | Status | Blocked by |
-| --- | --- | --- | --- | --- |
-| 3 ★ | [acme/api#2](https://github.com/acme/api/issues/2) | Fix "login" \\| SSO \\[wip\\] #42 &lt;b&gt; | blocked | acme/api#1 |
-| 4 | [acme/api#3](https://github.com/acme/api/issues/3) | Write docs | blocked | acme/api#1, acme/lib#7 |
+| # | Issue | Title | Priority | Status | Blocked by |
+| --- | --- | --- | --- | --- | --- |
+| 3 ★ | [acme/api#2](https://github.com/acme/api/issues/2) | Fix "login" \\| SSO \\[wip\\] #42 &lt;b&gt; | P1 | blocked | acme/api#1 |
+| 4 | [acme/api#3](https://github.com/acme/api/issues/3) | Write docs |  | blocked | acme/api#1, acme/lib#7 |
 
 ## Unschedulable
 
 These issues cannot be ordered because they are in a dependency cycle or depend on one.
 
-| Issue | Title | Status | Blocked by |
-| --- | --- | --- | --- |
-| [acme/api#10](https://github.com/acme/api/issues/10) | Cycle A | in-cycle | acme/api#11 |
-| [acme/api#11](https://github.com/acme/api/issues/11) | Cycle B | in-cycle | acme/api#10 |
-| [acme/api#12](https://github.com/acme/api/issues/12) | Behind the cycle | blocked-by-cycle | acme/api#11 |
+| Issue | Title | Priority | Status | Blocked by |
+| --- | --- | --- | --- | --- |
+| [acme/api#10](https://github.com/acme/api/issues/10) | Cycle A | P1 | in-cycle | acme/api#11 |
+| [acme/api#11](https://github.com/acme/api/issues/11) | Cycle B |  | in-cycle | acme/api#10 |
+| [acme/api#12](https://github.com/acme/api/issues/12) | Behind the cycle |  | blocked-by-cycle | acme/api#11 |
 
 ## Cycles
 
@@ -116,31 +116,31 @@ View \`platform\` · fetched 2026-01-02T03:04:05.000Z · hash \`0123456789ab\`
 
 ## Execution order
 
-Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all earlier waves are done. ★ marks the critical path.
+Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all earlier waves are done. ★ marks the critical path. The # column favours priority labels and the critical path: an issue from a later wave can come before an earlier-wave issue once its prerequisites are done.
 
 ### Wave 1
 
-| # | Issue | Title | Status | Blocked by |
-| --- | --- | --- | --- | --- |
-| 1 | [#99](https://github.com/acme/api/issues/99) (external) | Upstream library release | ready |  |
-| 2 ★ | [#1](https://github.com/acme/api/issues/1) | Set up schema | ready |  |
+| # | Issue | Title | Priority | Status | Blocked by |
+| --- | --- | --- | --- | --- | --- |
+| 1 | [#99](https://github.com/acme/api/issues/99) (external) | Upstream library release |  | ready |  |
+| 2 ★ | [#1](https://github.com/acme/api/issues/1) | Set up schema | P0 | ready |  |
 
 ### Wave 2
 
-| # | Issue | Title | Status | Blocked by |
-| --- | --- | --- | --- | --- |
-| 3 ★ | [#2](https://github.com/acme/api/issues/2) | Fix "login" \\| SSO \\[wip\\] #42 &lt;b&gt; | blocked | #1 |
-| 4 | [#3](https://github.com/acme/api/issues/3) | Write docs | blocked | #1, #99 |
+| # | Issue | Title | Priority | Status | Blocked by |
+| --- | --- | --- | --- | --- | --- |
+| 3 ★ | [#2](https://github.com/acme/api/issues/2) | Fix "login" \\| SSO \\[wip\\] #42 &lt;b&gt; | P1 | blocked | #1 |
+| 4 | [#3](https://github.com/acme/api/issues/3) | Write docs |  | blocked | #1, #99 |
 
 ## Unschedulable
 
 These issues cannot be ordered because they are in a dependency cycle or depend on one.
 
-| Issue | Title | Status | Blocked by |
-| --- | --- | --- | --- |
-| [#10](https://github.com/acme/api/issues/10) | Cycle A | in-cycle | #11 |
-| [#11](https://github.com/acme/api/issues/11) | Cycle B | in-cycle | #10 |
-| [#12](https://github.com/acme/api/issues/12) | Behind the cycle | blocked-by-cycle | #11 |
+| Issue | Title | Priority | Status | Blocked by |
+| --- | --- | --- | --- | --- |
+| [#10](https://github.com/acme/api/issues/10) | Cycle A | P1 | in-cycle | #11 |
+| [#11](https://github.com/acme/api/issues/11) | Cycle B |  | in-cycle | #10 |
+| [#12](https://github.com/acme/api/issues/12) | Behind the cycle |  | blocked-by-cycle | #11 |
 
 ## Cycles
 

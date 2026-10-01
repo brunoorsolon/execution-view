@@ -288,6 +288,7 @@ export async function resolveView(
         w.issues.every((k) => included.has(k)),
     ),
     priorityLabels: [...view.ordering.priorityLabels],
+    orderingMode: view.ordering.mode,
   };
   return { input };
 }
