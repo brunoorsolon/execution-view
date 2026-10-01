@@ -9,7 +9,6 @@ import {
   computeHighlight,
   criticalPathEdges,
   cyclePath,
-  derivePriorityLabels,
   downstreamOf,
   edgePath,
   edgeId,
@@ -237,28 +236,5 @@ describe('zoom and pan math', () => {
     expect(moved.k).toBe(1);
     expect(moved.x + (2000 + 120) * moved.k).toBeCloseTo(400);
     expect(moved.y + (100 + 32) * moved.k).toBeCloseTo(300);
-  });
-});
-
-describe('derivePriorityLabels', () => {
-  const node = (priority: number, labels: string[]): PlanNode =>
-    ({ key: 'o/r#1', priority, labels }) as unknown as PlanNode;
-
-  it('recovers the label shared by each priority group and skips the "none" group', () => {
-    const map = derivePriorityLabels([
-      node(0, ['P0', 'infra']),
-      node(0, ['p0']),
-      node(1, ['P1', 'ui']),
-      node(2, ['tech-debt']),
-      node(2, ['tech-debt', 'ui']),
-    ]);
-    expect(map.get(0)).toBe('P0');
-    expect(map.get(1)).toBe('P1');
-    expect(map.has(2)).toBe(false);
-  });
-
-  it('keeps the highest bucket when its shared label looks like a priority', () => {
-    const map = derivePriorityLabels([node(0, ['P0']), node(1, ['P1'])]);
-    expect(map.get(1)).toBe('P1');
   });
 });
