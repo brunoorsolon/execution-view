@@ -212,6 +212,7 @@ ev.example.com {
 Notes:
 
 - A cold refresh of a large view makes many requests to the tracker and can take a while: allow a generous read timeout (the nginx example uses 120 s).
+- Static files are resolved on every request, so after `npm run build` (or replacing `dist/web`) the new UI is served without restarting the app; a `dist/web` created after startup is picked up too. `index.html` is sent with `Cache-Control: no-cache` (also for the deep-link fallback), files under `assets/` (hashed names) with `Cache-Control: public, max-age=31536000, immutable`, other static files with `no-cache`, and `/api/*` with `no-store`. A proxy that caches should keep honouring these headers.
 - Bind the app to loopback (`EV_HOST=127.0.0.1`, or publish `127.0.0.1:8080:8080` from Docker) so that only the proxy can reach it.
 - The proxy is a good place for authentication and TLS; see the next section.
 

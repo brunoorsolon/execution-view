@@ -415,6 +415,102 @@ describe('static UI', () => {
     expect(post.statusCode).toBe(404);
   });
 
+  it('serves files added after startup, and a web dir created after startup', async () => {
+    const dir = tempWebDir();
+    const { app } = setup({ webDir: dir });
+    expect((await app.inject('/assets/index-abc123.js')).statusCode).toBe(404);
+    writeFileSync(path.join(dir, 'assets', 'index-abc123.js'), 'export {};');
+    const added = await app.inject('/assets/index-abc123.js');
+    expect(added.statusCode).toBe(200);
+    expect(added.body).toBe('export {};');
+
+    writeFileSync(path.join(dir, 'index.html'), '<!doctype html><p>REBUILT</p>');
+    expect((await app.inject('/')).body).toContain('REBUILT');
+
+    const late = path.join(tmpdir(), `ev-late-web-${process.pid}-${Date.now()}`);
+    cleanups.push(() => rmSync(late, { recursive: true, force: true }));
+    const { app: lateApp } = setup({ webDir: late });
+    expect((await lateApp.inject('/')).body).toContain('not built');
+    mkdirSync(path.join(late, 'assets'), { recursive: true });
+    writeFileSync(path.join(late, 'index.html'), '<p>LATE</p>');
+    writeFileSync(path.join(late, 'assets', 'a.js'), 'late');
+    expect((await lateApp.inject('/')).body).toContain('LATE');
+    expect((await lateApp.inject('/assets/a.js')).body).toBe('late');
+    const deep = await lateApp.inject({ url: '/deep', headers: { accept: 'text/html' } });
+    expect(deep.body).toContain('LATE');
+  });
+
+  it('sets cache headers: no-cache for index.html, immutable for assets', async () => {
+    const { app } = setup({ webDir: tempWebDir() });
+    expect((await app.inject('/')).headers['cache-control']).toBe('no-cache');
+    expect((await app.inject('/index.html')).headers['cache-control']).toBe('no-cache');
+    expect((await app.inject('/app.js')).headers['cache-control']).toBe('no-cache');
+    const asset = await app.inject('/assets/x.css');
+    expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    const fallback = await app.inject({
+      url: '/some/route',
+      headers: { accept: 'text/html' },
+    });
+    expect(fallback.statusCode).toBe(200);
+    expect(fallback.headers['cache-control']).toBe('no-cache');
+    expect((await app.inject('/api/views')).headers['cache-control']).toBe('no-store');
+  });
+
+  it('keeps /healthz and /api/* ahead of the static wildcard', async () => {
+    const dir = tempWebDir();
+    mkdirSync(path.join(dir, 'api'));
+    writeFileSync(path.join(dir, 'api', 'views'), 'STATIC');
+    writeFileSync(path.join(dir, 'healthz'), 'STATIC');
+    const { app } = setup({ webDir: dir });
+    expect((await app.inject('/healthz')).json()).toEqual({ status: 'ok' });
+    const views = await app.inject('/api/views');
+    expect(views.body).not.toContain('STATIC');
+    expect(Array.isArray(views.json())).toBe(true);
+  });
+
+  it('never serves files outside the web dir', async () => {
+    const outer = mkdtempSync(path.join(tmpdir(), 'ev-outer-'));
+    cleanups.push(() => rmSync(outer, { recursive: true, force: true }));
+    writeFileSync(path.join(outer, 'secret.txt'), 'TOP-SECRET');
+    const dir = path.join(outer, 'web');
+    mkdirSync(dir);
+    writeFileSync(path.join(dir, 'index.html'), '<p>INDEX</p>');
+    const { app } = setup({ webDir: dir });
+    const urls = [
+      '/../secret.txt',
+      '/%2e%2e/secret.txt',
+      '/%2E%2E/secret.txt',
+      '/..%2fsecret.txt',
+      '/%2e%2e%2fsecret.txt',
+      '/assets/../../secret.txt',
+      '/assets/%2e%2e/%2e%2e/secret.txt',
+      '/%252e%252e/secret.txt',
+      '/..\\secret.txt',
+    ];
+    for (const url of urls) {
+      for (const accept of ['*/*', 'text/html']) {
+        const res = await app.inject({ url, headers: { accept } });
+        expect(res.body, `${url} (${accept})`).not.toContain('TOP-SECRET');
+        if (accept === '*/*') expect([400, 403, 404], url).toContain(res.statusCode);
+      }
+    }
+  });
+
+  it('applies basic auth to static files, except /healthz', async () => {
+    const config = demoConfig((c) => {
+      c.server.basicAuth = { username: 'u', password: 'p' };
+    });
+    const { app } = setup({ config, webDir: tempWebDir() });
+    for (const url of ['/', '/app.js', '/assets/x.css', '/missing.js']) {
+      const res = await app.inject(url);
+      expect(res.statusCode, url).toBe(401);
+      expect(res.headers['www-authenticate']).toContain('Basic');
+    }
+    const ok = await app.inject({ url: '/app.js', headers: { authorization: basic('u', 'p') } });
+    expect(ok.statusCode).toBe(200);
+    expect((await app.inject('/healthz')).statusCode).toBe(200);
+  });
+
   it('starts and explains itself when the web dir is missing', async () => {
     const { app } = setup({ webDir: path.join(tmpdir(), 'ev-definitely-missing-dir') });
     const res = await app.inject('/');
