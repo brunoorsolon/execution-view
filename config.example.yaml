@@ -64,7 +64,7 @@ views:
       subIssues: false # treat sub-issues as dependencies (github only). default: false
       keywords: # matched at the start of a body line, case-insensitive
         # Each list is optional; a missing list uses its default shown here.
-        blockedBy: [depends on, blocked by, requires]
+        blockedBy: [depends on, blocked by, requires, dependencies]
         blocks: [blocks, blocking, required by]
     scope:
       labels: [] # when non-empty, only issues with at least one of these labels are in scope
