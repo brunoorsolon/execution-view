@@ -9,6 +9,15 @@
 >
 > Known deviations from the text below:
 >
+> - `Snapshot` has a `priorityLabels: string[]` field: the view's configured
+>   priority labels in rank order, so `PlanNode.priority` can be mapped to a
+>   label name (`priority === priorityLabels.length` means none). It is not part
+>   of `contentHash`. The Markdown export has a Priority column, and the web UI
+>   shows the exact name.
+> - `dependencies` is a default blocked-by keyword (the contract listed only
+>   `depends on`, `blocked by` and `requires`), so a `## Dependencies` heading
+>   and `Dependencies: #3` lines work without configuration. The singular
+>   `Dependency` is not a default keyword.
 > - `AppConfig` has an optional `warnings: string[]` (non-fatal problems found
 >   while loading: a `tokenEnv` naming an unset variable, `subIssues` on a
 >   non-GitHub source). The CLI and the server print them.
@@ -364,7 +373,7 @@ export interface KeywordConfig {
   blocks: string[];
 }
 export const DEFAULT_KEYWORDS: KeywordConfig = {
-  blockedBy: ['depends on', 'blocked by', 'requires'],
+  blockedBy: ['depends on', 'blocked by', 'requires', 'dependencies'],
   blocks: ['blocks', 'blocking', 'required by'],
 };
 export interface ParseOptions {
@@ -527,7 +536,7 @@ views:
       body: true # default true
       subIssues: false # default false (github only)
       keywords: # default DEFAULT_KEYWORDS
-        blockedBy: [depends on, blocked by, requires]
+        blockedBy: [depends on, blocked by, requires, dependencies]
         blocks: [blocks, blocking, required by]
     scope:
       labels: [] # when non-empty, only issues with at least one of these labels are in scope

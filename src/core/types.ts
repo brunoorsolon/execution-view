@@ -175,6 +175,14 @@ export interface Snapshot {
   fetchedAt: string;
   /** sha256 hex of canonicalJson({ plan, layout }). */
   contentHash: string;
+  /**
+   * The view's configured priority labels, in rank order (index 0 is the most
+   * urgent). `PlanNode.priority` indexes into this list;
+   * `PlanNode.priority === priorityLabels.length` means no priority label.
+   * Not part of the content hash: a change here already changes the hash through
+   * the `priority` values.
+   */
+  priorityLabels: string[];
   plan: Plan;
   layout: Layout;
 }

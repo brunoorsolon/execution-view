@@ -61,12 +61,12 @@ Same response as the snapshot endpoint (always `200` with a body, `ETag` header)
 
 ### `GET /api/views/:id/export.:format`
 
-| `:format` | Content-Type                       | `Content-Disposition`              | Content                                                 |
-| --------- | ---------------------------------- | ---------------------------------- | ------------------------------------------------------- |
-| `json`    | `application/json; charset=utf-8`  | `inline; filename="<viewId>.json"` | The full snapshot, indented, ending in a newline        |
-| `md`      | `text/markdown; charset=utf-8`     | `inline; filename="<viewId>.md"`   | Waves as tables, unschedulable issues, cycles, warnings |
-| `mmd`     | `text/plain; charset=utf-8`        | `inline; filename="<viewId>.mmd"`  | A Mermaid `flowchart LR`                                |
-| `dot`     | `text/vnd.graphviz; charset=utf-8` | `inline; filename="<viewId>.dot"`  | A Graphviz `digraph`, one `rank=same` group per wave    |
+| `:format` | Content-Type                       | `Content-Disposition`              | Content                                                                          |
+| --------- | ---------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------- |
+| `json`    | `application/json; charset=utf-8`  | `inline; filename="<viewId>.json"` | The full snapshot, indented, ending in a newline                                 |
+| `md`      | `text/markdown; charset=utf-8`     | `inline; filename="<viewId>.md"`   | Waves as tables (with a Priority column), unschedulable issues, cycles, warnings |
+| `mmd`     | `text/plain; charset=utf-8`        | `inline; filename="<viewId>.mmd"`  | A Mermaid `flowchart LR`                                                         |
+| `dot`     | `text/vnd.graphviz; charset=utf-8` | `inline; filename="<viewId>.dot"`  | A Graphviz `digraph`, one `rank=same` group per wave                             |
 
 `?refresh=1` works here too. Exports have no `ETag`. Any other extension answers `404`. The CLI produces the same text: `execution-view plan <viewId> -f md|json|mermaid|dot`.
 
@@ -144,14 +144,15 @@ cache-control: no-store
 
 A snapshot is the JSON document returned by the snapshot, refresh and `export.json` endpoints. The authoritative TypeScript definitions are in [`src/core/types.ts`](../src/core/types.ts) (`Snapshot`, `Plan`, `PlanNode`, `Layout`, ...).
 
-| Field         | Description                                             |
-| ------------- | ------------------------------------------------------- |
-| `viewId`      | The view id                                             |
-| `title`       | The view title                                          |
-| `fetchedAt`   | ISO timestamp of the fetch. **Not** part of the hash    |
-| `contentHash` | SHA-256 hex of the canonical JSON of `{ plan, layout }` |
-| `plan`        | The dependency plan (below)                             |
-| `layout`      | Coordinates for drawing the graph (below)               |
+| Field            | Description                                                                                                                                                                                                                                                                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `viewId`         | The view id                                                                                                                                                                                                                                                                                                                           |
+| `title`          | The view title                                                                                                                                                                                                                                                                                                                        |
+| `fetchedAt`      | ISO timestamp of the fetch. **Not** part of the hash                                                                                                                                                                                                                                                                                  |
+| `contentHash`    | SHA-256 hex of the canonical JSON of `{ plan, layout }`                                                                                                                                                                                                                                                                               |
+| `priorityLabels` | The view's configured `ordering.priorityLabels`, in rank order (index 0 is the most urgent). `plan.nodes[].priority` indexes into it, and `priority === priorityLabels.length` means the issue has no priority label. **Not** part of the hash: changing the configured labels already changes the hash through the `priority` values |
+| `plan`           | The dependency plan (below)                                                                                                                                                                                                                                                                                                           |
+| `layout`         | Coordinates for drawing the graph (below)                                                                                                                                                                                                                                                                                             |
 
 ### `plan`
 
@@ -182,6 +183,7 @@ Abridged real output (a five-issue view):
   "title": "mini",
   "fetchedAt": "2026-09-29T09:03:17.028Z",
   "contentHash": "f2de135ce1a7e8813731aa832a4957cd544ba9f10483aba53509ae53cc6bbf6c",
+  "priorityLabels": ["P0", "P1", "P2"],
   "plan": {
     "viewId": "mini",
     "nodes": [

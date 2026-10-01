@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AppConfig, ResolvedSource } from '../config/schema.js';
 import { loadConfig } from '../config/load.js';
 import type { FetchResult, Issue, IssueProvider, ListOptions, RepoRef } from '../core/types.js';
+import { contentHash } from '../core/hash.js';
 import { createProvider } from '../providers/index.js';
 import { PlanService, UnknownViewError } from './planService.js';
 
@@ -61,6 +62,7 @@ describe('PlanService: demo end to end', () => {
 
     expect(snap.viewId).toBe('demo');
     expect(snap.title).toBe('Acme demo roadmap');
+    expect(snap.priorityLabels).toEqual(['P0', 'P1', 'P2']);
     expect(plan.viewId).toBe('demo');
     expect(plan.stats).toEqual({
       total: 23,
@@ -199,6 +201,7 @@ describe('PlanService: demo end to end', () => {
     const a = await demoService(undefined, fixedClock(0)).service.getSnapshot('demo');
     const b = await demoService(undefined, fixedClock(1e12)).service.getSnapshot('demo');
     expect(a.contentHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(a.contentHash).toBe(contentHash({ plan: a.plan, layout: a.layout }));
     expect(a.contentHash).toBe(b.contentHash);
     expect(a.fetchedAt).not.toBe(b.fetchedAt);
     expect(JSON.stringify(a.plan)).toBe(JSON.stringify(b.plan));
