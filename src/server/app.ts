@@ -62,6 +62,15 @@ function isDirectory(p: string): boolean {
   }
 }
 
+/**
+ * Cache policy for a static file: hashed build output under `assets/` never changes, everything
+ * else (`index.html`, which references those hashed names, and any other file) is revalidated.
+ */
+function staticCacheControl(webDir: string, filePath: string): string {
+  const relative = path.relative(webDir, filePath).split(path.sep).join('/');
+  return relative.startsWith('assets/') ? 'public, max-age=31536000, immutable' : 'no-cache';
+}
+
 function isTruthyFlag(value: unknown): boolean {
   const v: unknown = Array.isArray(value) ? value[value.length - 1] : value;
   return v === '1' || v === 'true';
@@ -213,22 +222,34 @@ export function buildApp(
   );
 
   // --- static UI ---
-  if (hasWebDir) {
-    void app.register(fastifyStatic, { root: webDir, wildcard: false });
-  } else {
-    app.log.warn(`Web UI directory not found: ${webDir}. Serving the API only.`);
-    app.get('/', async (_request, reply) =>
-      reply.type('text/html; charset=utf-8').send(UI_NOT_BUILT_HTML),
-    );
+  // Files are resolved per request (wildcard), so a rebuilt `dist/web` with new hashed asset names
+  // is served without a restart, and so is a `dist/web` created after startup. `/api/*` and
+  // `/healthz` are more specific routes and take precedence over the wildcard.
+  if (!hasWebDir) {
+    app.log.warn(`Web UI directory not found: ${webDir}. Serving the API only until it exists.`);
   }
+  void app.register(fastifyStatic, {
+    root: webDir,
+    wildcard: true,
+    index: false,
+    suppressWarning: true,
+    setHeaders: (reply, filePath) => {
+      reply.header('Cache-Control', staticCacheControl(webDir, filePath));
+    },
+  });
+
+  app.get('/', async (_request, reply) => {
+    if (isDirectory(webDir)) return reply.sendFile('index.html');
+    return reply.type('text/html; charset=utf-8').send(UI_NOT_BUILT_HTML);
+  });
 
   app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
     const accept = request.headers.accept ?? '';
     if (
-      hasWebDir &&
       request.method === 'GET' &&
       !pathnameOf(request.url).startsWith('/api/') &&
-      accept.includes('text/html')
+      accept.includes('text/html') &&
+      isDirectory(webDir)
     ) {
       return reply.sendFile('index.html');
     }

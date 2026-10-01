@@ -7,7 +7,7 @@ export interface KeywordConfig {
 }
 
 export const DEFAULT_KEYWORDS: KeywordConfig = {
-  blockedBy: ['depends on', 'blocked by', 'requires'],
+  blockedBy: ['depends on', 'blocked by', 'requires', 'dependencies'],
   blocks: ['blocks', 'blocking', 'required by'],
 };
 
