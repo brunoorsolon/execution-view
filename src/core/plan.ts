@@ -6,6 +6,7 @@ import type {
   Issue,
   IssueKey,
   NodeStatus,
+  OrderingMode,
   Plan,
   PlanNode,
   PlanWarning,
@@ -22,6 +23,8 @@ export interface PlanInput {
   /** Warnings collected upstream; merged into the plan's warnings. */
   warnings: PlanWarning[];
   priorityLabels: string[];
+  /** How the linear order is built; default 'priority'. */
+  orderingMode?: OrderingMode;
 }
 
 /** Plain code-unit comparison (never localeCompare). */
@@ -340,8 +343,11 @@ export function buildPlan(input: PlanInput): Plan {
     depth[v] = best + 1;
   }
 
-  // Kahn with a priority queue: (priority asc, remainingDepth desc, key asc).
+  // Kahn with a priority queue: (priority asc, remainingDepth desc, key asc); in 'waves' mode
+  // the wave comes first, so the order never interleaves waves.
+  const waveMajor = input.orderingMode === 'waves';
   const heap = new IndexHeap((a, b) => {
+    if (waveMajor && wave[a] !== wave[b]) return wave[a]! < wave[b]!;
     if (priority[a] !== priority[b]) return priority[a]! < priority[b]!;
     if (depth[a] !== depth[b]) return depth[a]! > depth[b]!;
     return a < b;

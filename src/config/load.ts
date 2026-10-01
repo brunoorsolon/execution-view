@@ -2,7 +2,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ZodIssue } from 'zod';
-import type { ProviderKind } from '../core/types.js';
+import type { OrderingMode, ProviderKind } from '../core/types.js';
 import {
   DEFAULT_KEYWORDS,
   rawConfigSchema,
@@ -95,6 +95,12 @@ function parseBoolEnv(name: string, value: string): boolean {
   throw new ConfigError(`${name}: expected "true" or "false" (got "${value}")`);
 }
 
+function parseOrderingModeEnv(name: string, value: string): OrderingMode {
+  const v = value.toLowerCase();
+  if (v === 'priority' || v === 'waves') return v;
+  throw new ConfigError(`${name}: expected "priority" or "waves" (got "${value}")`);
+}
+
 function parseIntEnv(name: string, value: string, min: number, max: number): number {
   if (!/^\d+$/.test(value)) {
     throw new ConfigError(`${name}: expected an integer (got "${value}")`);
@@ -180,7 +186,10 @@ function resolveView(raw: RawView): ResolvedView {
       excludeLabels: [...(raw.scope?.excludeLabels ?? [])],
       milestones: [...(raw.scope?.milestones ?? [])],
     },
-    ordering: { priorityLabels: [...(raw.ordering?.priorityLabels ?? [])] },
+    ordering: {
+      priorityLabels: [...(raw.ordering?.priorityLabels ?? [])],
+      mode: raw.ordering?.mode ?? 'priority',
+    },
   };
 }
 
@@ -337,6 +346,7 @@ export function configFromEnv(env: Env, cwd: string = process.cwd()): AppConfig 
     envValue(env, provider === 'github' ? 'GITHUB_TOKEN' : 'GITEA_TOKEN');
   const baseUrl = envValue(env, 'EV_BASE_URL');
   const subIssues = envValue(env, 'EV_SUB_ISSUES');
+  const orderingMode = envValue(env, 'EV_ORDERING_MODE');
 
   const source: Record<string, unknown> = { id: 'default', kind: provider };
   if (baseUrl !== undefined) source['baseUrl'] = baseUrl;
@@ -346,7 +356,12 @@ export function configFromEnv(env: Env, cwd: string = process.cwd()): AppConfig 
     id: envValue(env, 'EV_VIEW_ID') ?? 'default',
     source: 'default',
     repos,
-    ordering: { priorityLabels: parseCommaList(env['EV_PRIORITY_LABELS']) },
+    ordering: {
+      priorityLabels: parseCommaList(env['EV_PRIORITY_LABELS']),
+      ...(orderingMode !== undefined
+        ? { mode: parseOrderingModeEnv('EV_ORDERING_MODE', orderingMode) }
+        : {}),
+    },
   };
   const title = envValue(env, 'EV_VIEW_TITLE');
   if (title !== undefined) view['title'] = title;

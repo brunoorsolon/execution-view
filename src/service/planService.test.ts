@@ -63,6 +63,7 @@ describe('PlanService: demo end to end', () => {
     expect(snap.viewId).toBe('demo');
     expect(snap.title).toBe('Acme demo roadmap');
     expect(snap.priorityLabels).toEqual(['P0', 'P1', 'P2']);
+    expect(snap.orderingMode).toBe('priority');
     expect(plan.viewId).toBe('demo');
     expect(plan.stats).toEqual({
       total: 23,
@@ -195,6 +196,38 @@ describe('PlanService: demo end to end', () => {
     const snap = await service.getSnapshot('demo');
     expect(snap.layout.nodes.map((n) => n.key)).toEqual(snap.plan.nodes.map((n) => n.key));
     expect(snap.layout.edges).toHaveLength(snap.plan.edges.length);
+  });
+
+  it('keeps the demo contentHash in priority mode', async () => {
+    const { service } = demoService();
+    const snap = await service.getSnapshot('demo');
+    expect(snap.contentHash).toBe(
+      'e65915280f17fb5d65c72e4ea75d62cc77dd08b00268a9f820ecd2bfef3cb3b0',
+    );
+  });
+
+  it('orders the demo wave by wave in waves mode', async () => {
+    const config = demoConfig();
+    config.views[0]!.ordering.mode = 'waves';
+    const service = new PlanService(config, {
+      now: fixedClock().now,
+      providerFor: (source: ResolvedSource) => createProvider(source),
+    });
+    const snap = await service.getSnapshot('demo');
+    expect(snap.orderingMode).toBe('waves');
+    const { plan } = snap;
+    expect(plan.order).toHaveLength(18);
+    const waveOf = new Map(plan.nodes.map((n) => [n.key, n.wave]));
+    const waves = plan.order.map((k) => waveOf.get(k)!);
+    expect(waves).toEqual([...waves].sort((a, b) => a - b));
+    expect(plan.order).toEqual(plan.waves.flat());
+
+    const { service: priorityService } = demoService();
+    const priority = await priorityService.getSnapshot('demo');
+    // The waves themselves are the same set of issues in both modes; only their order differs.
+    const sorted = (waves: string[][]) => waves.map((w) => [...w].sort());
+    expect(sorted(plan.waves)).toEqual(sorted(priority.plan.waves));
+    expect(snap.contentHash).not.toBe(priority.contentHash);
   });
 
   it('gives the same contentHash across two fresh services, whatever the clock', async () => {

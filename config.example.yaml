@@ -82,6 +82,7 @@ views:
       milestones: [] # when non-empty, only issues in one of these milestones are in scope
     ordering:
       priorityLabels: [] # highest priority first, e.g. [P0, P1, P2]
+      mode: priority # priority (default): order by priority and critical path; waves: order wave by wave
 
   - id: self-hosted
     source: gt

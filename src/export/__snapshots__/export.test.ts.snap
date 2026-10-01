@@ -69,7 +69,7 @@ View \`platform\` · fetched 2026-01-02T03:04:05.000Z · hash \`0123456789ab\`
 
 ## Execution order
 
-Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all earlier waves are done. ★ marks the critical path.
+Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all earlier waves are done. ★ marks the critical path. The # column favours priority labels and the critical path: an issue from a later wave can come before an earlier-wave issue once its prerequisites are done.
 
 ### Wave 1
 
@@ -116,7 +116,7 @@ View \`platform\` · fetched 2026-01-02T03:04:05.000Z · hash \`0123456789ab\`
 
 ## Execution order
 
-Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all earlier waves are done. ★ marks the critical path.
+Waves are numbered from 1. Issues in the same wave can be worked on in parallel once all earlier waves are done. ★ marks the critical path. The # column favours priority labels and the critical path: an issue from a later wave can come before an earlier-wave issue once its prerequisites are done.
 
 ### Wave 1
 

@@ -18,6 +18,13 @@
 >   label name (`priority === priorityLabels.length` means none). It is not part
 >   of `contentHash`. The Markdown export has a Priority column, and the web UI
 >   shows the exact name.
+> - `Snapshot` has an `orderingMode: 'priority' | 'waves'` field (the view's
+>   `ordering.mode`, default `priority`; env-only mode: `EV_ORDERING_MODE`).
+>   In `waves` mode the Kahn queue in §8 picks by **(wave asc, priority asc,
+>   remainingDepth desc, compareKeys asc)**, so the linear order runs wave by
+>   wave; `priority` mode is exactly the rule in §8. It is not hashed on its
+>   own: `plan.order` already reflects it. `PlanInput` has an optional
+>   `orderingMode` and `ResolvedView.ordering` has `mode`.
 > - `dependencies` is a default blocked-by keyword (the contract listed only
 >   `depends on`, `blocked by` and `requires`), so a `## Dependencies` heading
 >   and `Dependencies: #3` lines work without configuration. The singular

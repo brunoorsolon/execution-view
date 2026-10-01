@@ -151,6 +151,7 @@ A snapshot is the JSON document returned by the snapshot, refresh and `export.js
 | `fetchedAt`      | ISO timestamp of the fetch. **Not** part of the hash                                                                                                                                                                                                                                                                                  |
 | `contentHash`    | SHA-256 hex of the canonical JSON of `{ plan, layout }`                                                                                                                                                                                                                                                                               |
 | `priorityLabels` | The view's configured `ordering.priorityLabels`, in rank order (index 0 is the most urgent). `plan.nodes[].priority` indexes into it, and `priority === priorityLabels.length` means the issue has no priority label. **Not** part of the hash: changing the configured labels already changes the hash through the `priority` values |
+| `orderingMode`   | `priority` or `waves`: the view's `ordering.mode`. In `priority` mode `plan.order` can interleave waves; in `waves` mode it runs wave by wave. **Not** part of the hash on its own: `plan.order` already reflects it, so changing the mode changes the hash whenever it changes the order                                             |
 | `plan`           | The dependency plan (below)                                                                                                                                                                                                                                                                                                           |
 | `layout`         | Coordinates for drawing the graph (below)                                                                                                                                                                                                                                                                                             |
 
@@ -184,6 +185,7 @@ Abridged real output (a five-issue view):
   "fetchedAt": "2026-09-29T09:03:17.028Z",
   "contentHash": "f2de135ce1a7e8813731aa832a4957cd544ba9f10483aba53509ae53cc6bbf6c",
   "priorityLabels": ["P0", "P1", "P2"],
+  "orderingMode": "priority",
   "plan": {
     "viewId": "mini",
     "nodes": [
