@@ -9,6 +9,10 @@
 >
 > Known deviations from the text below:
 >
+> - The Gitea provider is tested in CI against live instances, not only mocked
+>   HTTP: Gitea 1.25 and Forgejo 11 (`scripts/forge-integration.sh`, the
+>   `forge-integration` job). Forgejo is supported through the `gitea` kind
+>   with no provider changes.
 > - `Snapshot` has a `priorityLabels: string[]` field: the view's configured
 >   priority labels in rank order, so `PlanNode.priority` can be mapped to a
 >   label name (`priority === priorityLabels.length` means none). It is not part
@@ -62,7 +66,7 @@ only in a dedicated PR.
 
 Produce **deterministic** views of the open issues of one or more repositories
 hosted on **GitHub** (github.com or GitHub Enterprise Server) or **Gitea**
-(Forgejo should work too, but is untested):
+(Forgejo works through the Gitea provider):
 
 - how the issues depend on each other (a dependency graph)
 - the order to execute them in (a linear order, plus "waves" of work that can
