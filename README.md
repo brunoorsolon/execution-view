@@ -202,14 +202,12 @@ npm run typecheck && npm test && npm run format:check
 
 ## Releasing
 
-1. Set the new version in `package.json` (and `package-lock.json`: `npm version 1.2.3 --no-git-tag-version`), and optionally write release notes in `.github/release-notes/v1.2.3.md`. Merge that to `main`.
-2. Tag the merge commit and push the tag:
+1. Set the new version in `package.json` and `package-lock.json` (`npm version 1.2.3 --no-git-tag-version`), and optionally write release notes in `.github/release-notes/v1.2.3.md`. Merge that to `main`.
+2. Start the release, either way:
+   - in GitHub: **Actions → Release → Run workflow** on `main`, with **version** `1.2.3`. The workflow creates the tag `v1.2.3` on that commit;
+   - or push a tag: `git tag v1.2.3 && git push origin v1.2.3`.
 
-```sh
-git tag v1.2.3 && git push origin v1.2.3
-```
-
-The [Release workflow](.github/workflows/release.yml) then runs the checks and the Docker smoke test, verifies that the tag matches `package.json`, publishes the multi-arch image to `ghcr.io/brunoorsolon/execution-view` (`1.2.3`, `1.2`, `1` and `latest`; prereleases such as `v1.3.0-rc.1` never move `latest`), and creates the GitHub Release. Publishing a release from the GitHub UI works too (the image is published; the release already exists). A manual run of the workflow is a dry run that builds the image without pushing it.
+The [Release workflow](.github/workflows/release.yml) runs the checks and the Docker smoke test, verifies that the version matches `package.json`, publishes the multi-arch image to `ghcr.io/brunoorsolon/execution-view` (`1.2.3`, `1.2`, `1` and `latest`; prereleases such as `1.3.0-rc.1` never move `latest`) and creates the GitHub Release. Publishing a release from the GitHub UI works too (the image is published; the release already exists). Run workflow with an empty version is a dry run that builds the image without pushing anything.
 
 ## License
 
