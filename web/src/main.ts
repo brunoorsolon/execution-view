@@ -1,14 +1,28 @@
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
 import './styles.css';
 import { errorMessage, fetchSnapshot, fetchViews, refreshSnapshot } from './api.js';
 import { h } from './dom.js';
 import { parseHash, serializeHash, type Route, type Tab } from './route.js';
 import { effectiveViewId, INITIAL_STATE, Store } from './state.js';
+import { applyTheme, loadTheme } from './theme.js';
 import { createGraphView } from './views/graph.js';
 import { createHeader } from './views/header.js';
 import { createOrderView } from './views/order.js';
 import { createProblemsView } from './views/problems.js';
-import type { Actions, View, ViewCtx } from './views/shared.js';
+import {
+  getIndex,
+  isVisible,
+  visibleKeys,
+  type Actions,
+  type View,
+  type ViewCtx,
+} from './views/shared.js';
+import { createSidePanel } from './views/side-panel.js';
 import { createStates } from './views/states.js';
+import { createSummary } from './views/summary.js';
+
+applyTheme(loadTheme());
 
 const store = new Store({ ...INITIAL_STATE, route: parseHash(location.hash) });
 
@@ -84,27 +98,42 @@ const actions: Actions = {
 
 const ctx: ViewCtx = { store, actions };
 const header = createHeader(ctx);
+const summary = createSummary(ctx);
 const states = createStates(ctx);
 const graph = createGraphView(ctx);
 const order = createOrderView(ctx);
 const problems = createProblemsView(ctx);
+const panel = createSidePanel(ctx);
 
-const main = h('main', { class: 'main' }, graph.el, order.el, problems.el);
+const main = h('main', { class: 'main' }, graph.el, order.el, problems.el, panel.el);
 const app = document.getElementById('app');
 if (!app) throw new Error('missing #app');
-app.append(header.el, states.el, main);
+app.append(header.el, summary.el, states.el, main);
 
-const views: View[] = [header, states, graph, order, problems];
+const views: View[] = [header, summary, states, graph, order, problems, panel];
+
+function layoutMain(state: ReturnType<Store['get']>): void {
+  main.hidden = !states.showsContent(state);
+  main.classList.toggle('panel-open', state.selected !== null && state.route.tab !== 'problems');
+}
 
 function render(): void {
   const state = store.get();
-  main.hidden = !states.showsContent(state);
+  layoutMain(state);
   for (const v of views) v.update(state, state);
 }
 
 let prevState = store.get();
 store.subscribe((state) => {
-  main.hidden = !states.showsContent(state);
+  // A selected issue that the filter hides is deselected.
+  const index = getIndex(state);
+  if (state.selected !== null && index !== null) {
+    if (!isVisible(visibleKeys(state, index), state.selected)) {
+      store.dispatch({ type: 'select', key: null });
+      return;
+    }
+  }
+  layoutMain(state);
   for (const v of views) v.update(state, prevState);
   prevState = state;
   document.title = titleFor(state);
@@ -137,6 +166,15 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey) {
     e.preventDefault();
     document.querySelector<HTMLInputElement>('.filter-input')?.focus();
+  } else if (
+    (e.key === 'f' || e.key === 'F') &&
+    !typing &&
+    !e.metaKey &&
+    !e.ctrlKey &&
+    !e.altKey &&
+    store.get().route.tab === 'graph'
+  ) {
+    graph.fit();
   }
 });
 

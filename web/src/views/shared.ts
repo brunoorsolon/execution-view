@@ -1,7 +1,9 @@
-import type { IssueKey, PlanNode, Snapshot } from '../../../src/core/types.js';
+import type { IssueKey, NodeStatus, PlanNode, Snapshot } from '../../../src/core/types.js';
 import type { AppState, Store } from '../state.js';
 import { effectiveViewId, indexSnapshot, type SnapshotIndex } from '../state.js';
 import { compileFilter, type FilterTarget } from '../filter.js';
+import { statusLabel } from '../format.js';
+import { priorityName } from '../priority.js';
 import type { Tab } from '../route.js';
 import { h } from '../dom.js';
 
@@ -43,37 +45,86 @@ export function getIndex(state: AppState): SnapshotIndex | null {
   return index;
 }
 
-export function nodeTarget(n: PlanNode): FilterTarget {
-  return { key: n.key, number: n.number, title: n.title, labels: n.labels };
+export function nodeTarget(n: PlanNode, snapshot: Snapshot, index: SnapshotIndex): FilterTarget {
+  return {
+    key: n.key,
+    number: n.number,
+    title: n.title,
+    labels: n.labels,
+    assignees: n.assignees,
+    milestone: n.milestone,
+    repo: `${n.repo.owner}/${n.repo.repo}`,
+    status: n.status,
+    external: n.external,
+    priority: priorityName(snapshot, n),
+    critical: index.criticalNodes.has(n.key),
+  };
 }
 
-let lastQuery: string | null = null;
-let lastFilter: ((t: FilterTarget) => boolean) | null = null;
+let visibleFor: { snapshot: Snapshot; q: string; keys: Set<IssueKey> | null } | null = null;
 
-/** Compiled filter for the query (memoized), or null when nothing is filtered. */
-export function filterFor(q: string): ((t: FilterTarget) => boolean) | null {
-  if (q !== lastQuery) {
-    lastQuery = q;
-    lastFilter = compileFilter(q);
+/**
+ * Keys of the issues that match the filter, or null when nothing is filtered.
+ * Memoized per (snapshot, query): the same Set object is returned until either
+ * changes, so views can compare it by identity.
+ */
+export function visibleKeys(state: AppState, index: SnapshotIndex): Set<IssueKey> | null {
+  const snapshot = state.snapshot;
+  if (snapshot === null) return null;
+  if (visibleFor?.snapshot === snapshot && visibleFor.q === state.route.q) return visibleFor.keys;
+  const f = compileFilter(state.route.q);
+  let keys: Set<IssueKey> | null = null;
+  if (f !== null) {
+    keys = new Set();
+    for (const n of snapshot.plan.nodes) if (f(nodeTarget(n, snapshot, index))) keys.add(n.key);
   }
-  return lastFilter;
+  visibleFor = { snapshot, q: state.route.q, keys };
+  return keys;
 }
 
-/** Keys of nodes that do NOT match the filter (empty set when no filter). */
-export function filteredOut(state: AppState, index: SnapshotIndex): Set<IssueKey> {
-  const f = filterFor(state.route.q);
-  const out = new Set<IssueKey>();
-  if (f === null) return out;
-  for (const n of index.nodes.values()) if (!f(nodeTarget(n))) out.add(n.key);
-  return out;
+export function isVisible(keys: Set<IssueKey> | null, key: IssueKey): boolean {
+  return keys === null || keys.has(key);
 }
 
-export function statusPill(label: string, status: string): HTMLElement {
-  return h('span', { class: `pill status-${status}` }, label);
+export function statusBadge(status: NodeStatus): HTMLElement {
+  return h('span', { class: `badge st-${status}` }, statusLabel(status));
 }
 
-export function labelChip(label: string, extraClass = ''): HTMLElement {
-  return h('span', { class: `chip ${extraClass}`.trim(), title: label }, label);
+export function labelChip(label: string): HTMLElement {
+  return h('span', { class: 'label', title: label }, label);
+}
+
+/** Priority tag; the most urgent configured priority is filled. */
+export function priorityTag(name: string, rank: number): HTMLElement {
+  return h('span', { class: `prio${rank === 0 ? ' prio-top' : ''}` }, name);
+}
+
+/** Labels of a node without its priority label (shown separately). */
+export function otherLabels(n: PlanNode, priority: string | null): string[] {
+  const p = priority?.toLowerCase();
+  return n.labels.filter((l) => l.toLowerCase() !== p);
+}
+
+const AVATAR_TONES = 6;
+
+export function avatar(login: string): HTMLElement {
+  let hash = 0;
+  for (const c of login) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
+  return h(
+    'span',
+    { class: `avatar tone-${hash % AVATAR_TONES}`, title: `@${login}`, 'aria-hidden': 'true' },
+    login.slice(0, 2),
+  );
+}
+
+export function avatars(logins: readonly string[], max = 3): HTMLElement {
+  if (logins.length === 0) return h('span', { class: 'muted small' }, 'None');
+  return h(
+    'span',
+    { class: 'avatars', title: logins.map((a) => `@${a}`).join(', ') },
+    ...logins.slice(0, max).map(avatar),
+    h('span', { class: 'sr-only' }, logins.map((a) => `@${a}`).join(', ')),
+  );
 }
 
 /** Only http(s) URLs are linked; anything else (javascript:, data:) becomes an inert "#". */

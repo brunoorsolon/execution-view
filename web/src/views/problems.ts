@@ -1,209 +1,251 @@
 import type { IssueKey, PlanWarning, Snapshot } from '../../../src/core/types.js';
-import { clear, h, icon, ICONS } from '../dom.js';
-import { displayKey, plural } from '../format.js';
+import { clear, h, icon } from '../dom.js';
+import { plural, shortKey } from '../format.js';
 import { cyclePath } from '../graph-model.js';
+import type { IconName } from '../icons.js';
 import { warningsByCode, type SnapshotIndex } from '../state.js';
-import { getIndex, issueLink, statusPill, type View, type ViewCtx } from './shared.js';
+import { getIndex, type View, type ViewCtx } from './shared.js';
 
-/** Human explanation per warning code (the plan's own `message` is shown below it). */
+/**
+ * Title and explanation per warning code. Cycles and blocked-by-cycle issues
+ * have their own sections (from the plan structure), so their warnings are not
+ * listed again.
+ */
 export const WARNING_EXPLANATIONS: Record<string, { title: string; text: string }> = {
   cycle: {
     title: 'Dependency cycle',
-    text: 'These issues depend on each other in a loop, so none of them can be started first. Remove one of the dependencies to break the loop.',
+    text: 'Each issue in this loop blocks the next one, so none of them can start. Remove one of these dependencies to break the loop.',
   },
   'blocked-by-cycle': {
-    title: 'Blocked by a cycle',
-    text: 'These issues are not part of a cycle themselves, but they depend (directly or transitively) on one, so they cannot be scheduled until the cycle is resolved.',
+    title: 'Waiting on the cycle',
+    text: 'These issues are not in a cycle themselves, but they depend (directly or transitively) on one, so they cannot be scheduled until it is broken.',
   },
   'self-reference': {
-    title: 'Self reference',
+    title: 'Issue depends on itself',
     text: 'An issue lists itself as a dependency. The self-reference is ignored.',
   },
   'dangling-reference': {
-    title: 'Dangling reference',
-    text: 'An issue references another issue that does not exist or is not accessible with the configured token.',
+    title: 'Reference to a missing issue',
+    text: 'An issue body points to an issue that does not exist or that the configured token cannot read. The reference is ignored.',
   },
   'external-unresolved': {
     title: 'External issues not followed',
     text: 'Some prerequisites outside the view were not followed because the limit of extra fetches was reached, so the plan may be incomplete.',
   },
   'native-unsupported': {
-    title: 'Native dependencies unsupported',
+    title: 'Native dependencies unavailable',
     text: 'The provider (or its version) does not expose native issue dependencies, so only dependencies written in issue bodies were used.',
   },
   'fetch-error': {
-    title: 'Fetch error',
-    text: 'Fetching an issue failed. It is treated as an open external issue titled "(unavailable)", so its own dependencies are unknown.',
+    title: 'An issue could not be fetched',
+    text: 'It is treated as an open external issue titled "(unavailable)", so its own dependencies are unknown.',
   },
 };
 
+const STRUCTURAL = new Set(['cycle', 'blocked-by-cycle']);
+
 export function createProblemsView(ctx: ViewCtx): View {
-  const root = h('div', { class: 'problems-pane' });
+  const root = h('div', { class: 'pane pane-scroll problems-pane' });
+  const wrap = h('div', { class: 'problems-wrap' });
+  root.append(wrap);
   let builtFor: Snapshot | null = null;
 
-  function issueChip(key: IssueKey, index: SnapshotIndex): HTMLElement {
+  function issuePill(key: IssueKey, index: SnapshotIndex): HTMLElement {
     const n = index.nodes.get(key);
-    const label = displayKey(key, index.multiRepo);
+    const label = shortKey(key, index.multiRepo);
+    if (!n)
+      return h(
+        'span',
+        { class: 'issue-pill', title: key },
+        h('span', { class: 'card-key' }, label),
+      );
     return h(
-      'span',
-      { class: 'issue-chip' },
-      n ? issueLink(key, n.url, label, `${key}: ${n.title}`) : h('span', { class: 'mono' }, label),
-      n
-        ? h(
-            'button',
-            {
-              class: 'btn btn-icon btn-xs',
-              type: 'button',
-              title: 'Show in graph',
-              'aria-label': `Show ${key} in graph`,
-              onclick: () => ctx.actions.showInGraph(key),
-            },
-            icon(ICONS.graph, 12),
-          )
-        : null,
+      'button',
+      {
+        class: 'issue-pill',
+        type: 'button',
+        title: `Show ${key} in the graph`,
+        onclick: () => ctx.actions.showInGraph(key),
+      },
+      h('span', { class: 'card-key' }, label),
+      h('span', { class: 't' }, n.title),
     );
   }
 
-  function section(title: string, count: number, ...body: (Node | null)[]): HTMLElement {
+  function head(ic: IconName, tone: string, title: string, count: string): HTMLElement {
     return h(
-      'section',
-      { class: 'problem-section' },
-      h('h2', null, title, h('span', { class: 'count' }, String(count))),
-      ...body,
+      'div',
+      { class: `p-head tone-${tone}` },
+      icon(ic, 18),
+      h('h3', null, title),
+      h('span', { class: 'n' }, count),
     );
   }
 
   function build(snapshot: Snapshot, index: SnapshotIndex): void {
-    clear(root);
+    clear(wrap);
     const { plan } = snapshot;
     const blockedByCycle = plan.unschedulable.filter(
       (k) => index.nodes.get(k)?.status === 'blocked-by-cycle',
     );
+    const other = [...warningsByCode(plan.warnings)].filter(([code]) => !STRUCTURAL.has(code));
+    const total = plan.cycles.length + (blockedByCycle.length > 0 ? 1 : 0) + other.length;
 
-    if (plan.cycles.length === 0 && blockedByCycle.length === 0 && plan.warnings.length === 0) {
-      root.append(
+    if (total === 0) {
+      wrap.append(
         h(
           'div',
-          { class: 'empty-state ok' },
+          { class: 'state-center' },
           h(
             'div',
-            { class: 'empty-title' },
-            'No problems found: every dependency is resolvable and acyclic.',
+            { class: 'box' },
+            h('div', { class: 'glyph' }, icon('checkCircle', 20)),
+            h('h2', null, 'No problems found'),
+            h('p', null, 'Every dependency resolves and nothing loops.'),
           ),
         ),
       );
       return;
     }
 
-    if (plan.cycles.length > 0) {
-      root.append(
-        section(
-          'Cycles',
-          plan.cycles.length,
-          ...plan.cycles.map((scc, i) => {
-            const { path, extra } = cyclePath(scc, plan.edges);
-            const seq = path.length > 0 ? path : scc;
-            const items: (Node | string)[] = [];
-            seq.forEach((k, j) => {
-              if (j > 0) items.push(h('span', { class: 'arrow-sep', 'aria-hidden': 'true' }, '→'));
-              items.push(issueChip(k, index));
-            });
-            return h(
-              'div',
-              { class: 'card cycle-card' },
-              h(
-                'div',
-                { class: 'card-title' },
-                `Cycle ${i + 1}`,
-                h('span', { class: 'muted' }, ` · ${plural(scc.length, 'issue')}`),
-              ),
-              h('div', { class: 'cycle-path' }, ...items),
-              extra.length > 0
-                ? h(
-                    'div',
-                    { class: 'cycle-extra muted' },
-                    'Also in this cycle: ',
-                    ...extra.flatMap((k, j) => [j > 0 ? ', ' : '', issueChip(k, index)]),
-                  )
-                : null,
-            );
-          }),
+    wrap.append(
+      h(
+        'div',
+        { class: 'problems-lede' },
+        h('h2', null, `${plural(total, 'problem')} in this plan`),
+        plan.unschedulable.length > 0
+          ? h(
+              'p',
+              null,
+              `${plural(plan.unschedulable.length, 'issue')} can't be scheduled until the dependency cycle is broken. Fix the cycle first; the rest of the plan is unaffected.`,
+            )
+          : null,
+      ),
+    );
+
+    plan.cycles.forEach((scc, i) => {
+      const { path, extra } = cyclePath(scc, plan.edges);
+      const loop = path.length > 0 ? path.slice(0, -1) : scc;
+      const items: Node[] = [];
+      loop.forEach((k, j) => {
+        if (j > 0) items.push(icon('arrow', 16));
+        items.push(issuePill(k, index));
+      });
+      if (path.length > 0) {
+        items.push(
+          icon('arrow', 16),
+          h(
+            'span',
+            { class: 'issue-pill back', title: 'Back to the start of the loop' },
+            icon('loop', 13),
+            h('span', { class: 'card-key' }, shortKey(loop[0]!, index.multiRepo)),
+          ),
+        );
+      }
+      wrap.append(
+        h(
+          'section',
+          { class: 'p-section' },
+          head(
+            'alert',
+            'cycle',
+            plan.cycles.length > 1 ? `Dependency cycle ${i + 1}` : 'Dependency cycle',
+            plural(scc.length, 'issue'),
+          ),
+          h(
+            'div',
+            { class: 'p-card' },
+            h('p', null, WARNING_EXPLANATIONS.cycle!.text),
+            h('div', { class: 'loop' }, ...items),
+            extra.length > 0
+              ? h(
+                  'div',
+                  { class: 'loop' },
+                  h('span', { class: 'muted small' }, 'Also in this cycle:'),
+                  ...extra.map((k) => issuePill(k, index)),
+                )
+              : null,
+          ),
         ),
       );
-    }
+    });
 
     if (blockedByCycle.length > 0) {
-      root.append(
-        section(
-          'Blocked by a cycle',
-          blockedByCycle.length,
+      wrap.append(
+        h(
+          'section',
+          { class: 'p-section' },
+          head(
+            'warning',
+            'bbc',
+            WARNING_EXPLANATIONS['blocked-by-cycle']!.title,
+            plural(blockedByCycle.length, 'issue'),
+          ),
           h(
-            'ul',
-            { class: 'plain-list' },
-            ...blockedByCycle.map((k) => {
-              const n = index.nodes.get(k)!;
-              const via = n.blockedBy.filter((b) => index.unschedulable.has(b));
-              return h(
-                'li',
-                { class: 'bbc-item' },
-                issueChip(k, index),
-                h('span', { class: 'bbc-title' }, n.title),
-                statusPill('blocked by cycle', 'blocked-by-cycle'),
-                via.length > 0
-                  ? h(
-                      'span',
-                      { class: 'muted' },
-                      `via ${via.map((b) => displayKey(b, index.multiRepo)).join(', ')}`,
-                    )
-                  : null,
-              );
-            }),
+            'div',
+            { class: 'p-card' },
+            h(
+              'div',
+              { class: 'p-rows' },
+              ...blockedByCycle.map((k) => {
+                const n = index.nodes.get(k)!;
+                const via = n.blockedBy.filter((b) => index.unschedulable.has(b));
+                return h(
+                  'div',
+                  { class: 'p-row' },
+                  h('span', { class: 'card-key' }, shortKey(k, index.multiRepo)),
+                  h('span', { class: 't' }, n.title),
+                  via.length > 0
+                    ? h(
+                        'span',
+                        { class: 'via' },
+                        'via ',
+                        h(
+                          'span',
+                          { class: 'mono' },
+                          via.map((b) => shortKey(b, index.multiRepo)).join(', '),
+                        ),
+                      )
+                    : h('span'),
+                  h(
+                    'button',
+                    {
+                      class: 'link-btn',
+                      type: 'button',
+                      onclick: () => ctx.actions.showInGraph(k),
+                    },
+                    'Show',
+                  ),
+                );
+              }),
+            ),
           ),
         ),
       );
     }
 
-    if (plan.warnings.length > 0) {
-      const groups = warningsByCode(plan.warnings);
-      root.append(
-        section(
-          'Warnings',
-          plan.warnings.length,
-          ...[...groups].map(([code, list]) => warningGroup(code, list, index)),
-        ),
-      );
-    }
+    for (const [code, list] of other) wrap.append(warningSection(code, list, index));
   }
 
-  function warningGroup(code: string, list: PlanWarning[], index: SnapshotIndex): HTMLElement {
+  function warningSection(code: string, list: PlanWarning[], index: SnapshotIndex): HTMLElement {
     const info = WARNING_EXPLANATIONS[code] ?? {
       title: code,
       text: 'The plan reported a warning of this kind.',
     };
     return h(
-      'div',
-      { class: 'card warn-group' },
+      'section',
+      { class: 'p-section' },
+      head('info', 'warn', info.title, String(list.length)),
       h(
         'div',
-        { class: 'card-title' },
-        h('span', { class: 'code-badge' }, code),
-        info.title,
-        h('span', { class: 'count' }, String(list.length)),
-      ),
-      h('p', { class: 'muted explain' }, info.text),
-      h(
-        'ul',
-        { class: 'plain-list warn-list' },
-        ...list.map((w) =>
-          h(
-            'li',
-            null,
-            h('div', { class: 'warn-message' }, w.message),
-            w.issues.length > 0
-              ? h('div', { class: 'warn-issues' }, ...w.issues.map((k) => issueChip(k, index)))
-              : null,
-          ),
-        ),
+        { class: 'p-card' },
+        h('p', null, info.text),
+        ...list.flatMap((w) => [
+          h('p', { class: 'warn-msg' }, w.message),
+          w.issues.length > 0
+            ? h('div', { class: 'loop' }, ...w.issues.map((k) => issuePill(k, index)))
+            : null,
+        ]),
       ),
     );
   }
