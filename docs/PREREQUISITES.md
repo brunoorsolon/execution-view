@@ -331,7 +331,7 @@ node dist/cli/index.js check
 Add view ids to check only those (`check platform`) and `--json` for machine-readable output. In the Docker image, the entrypoint is already the CLI:
 
 ```sh
-docker run --rm -e GITHUB_TOKEN -v "$PWD/config.yaml:/app/config.yaml:ro" execution-view check
+docker run --rm -e GITHUB_TOKEN -v "$PWD/config.yaml:/app/config.yaml:ro" ghcr.io/brunoorsolon/execution-view:1 check
 ```
 
 A clean view looks like this (a small fixture of five issues):

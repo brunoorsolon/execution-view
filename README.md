@@ -18,29 +18,15 @@ execution-view is a small self-hosted app that reads the **open issues** of your
 
 ## Quickstart (demo in 1 minute)
 
-The demo uses a bundled fixture (no network, no token): the "Acme demo roadmap", two repositories with 23 open issues, a cycle and a dangling reference.
-
-### With Docker
+The demo uses a bundled fixture (no network, no token): the "Acme demo roadmap", two repositories with 23 open issues, a cycle and a dangling reference. It only needs Docker:
 
 ```sh
-docker build -t execution-view .
-```
-
-```sh
-docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml execution-view
+docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml ghcr.io/brunoorsolon/execution-view:1
 ```
 
 Open <http://localhost:8080>.
 
-### Without Docker
-
-Requires Node.js 22 or newer.
-
-```sh
-npm ci && npm run build && EV_CONFIG=config.demo.yaml npm start
-```
-
-Open <http://localhost:8080>.
+Images are published to the GitHub Container Registry for `linux/amd64` and `linux/arm64` on every release: `ghcr.io/brunoorsolon/execution-view:<tag>`, where the tag is the exact version (`1.0.0`), the minor (`1.0`), the major (`1`) or `latest`.
 
 ## The web UI
 
@@ -60,41 +46,95 @@ The header has a view selector, the repositories, when the data was fetched, the
 
 ![Dark theme](docs/screenshots/graph-dark.png)
 
-## Use it on your repo
+## Run it on your repo with docker compose
 
-Read [Before you start: prerequisites](#before-you-start-prerequisites) first: without declared dependencies the graph is empty.
+Read [Before you start: prerequisites](#before-you-start-prerequisites) first: without declared dependencies the graph is empty. You need Docker with Compose 2.24 or newer (`docker compose version`).
 
-### Env-only (no config file)
+**1. Create a folder for it.**
+
+```sh
+mkdir execution-view && cd execution-view
+```
+
+**2. Create `docker-compose.yml`** with this content (it is also [in the repository](docker-compose.yml)):
+
+```yaml
+services:
+  execution-view:
+    image: ghcr.io/brunoorsolon/execution-view:1
+    ports:
+      - '8080:8080'
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+```
+
+**3. Create `.env`** next to it with your repositories and a read-only token ([which token?](docs/PREREQUISITES.md#7-tokens-and-permissions)).
 
 GitHub:
 
 ```sh
-docker run --rm -p 8080:8080 -e EV_PROVIDER=github -e EV_REPOS=owner/repo -e GITHUB_TOKEN execution-view
+EV_PROVIDER=github
+EV_REPOS=owner/repo,owner/other-repo
+GITHUB_TOKEN=github_pat_xxx
 ```
 
-Gitea (`EV_BASE_URL` is the instance root, without `/api/v1`):
+Gitea or Forgejo (`EV_BASE_URL` is the instance root, without `/api/v1`):
 
 ```sh
-docker run --rm -p 8080:8080 -e EV_PROVIDER=gitea -e EV_BASE_URL=https://gitea.example.com -e EV_REPOS=owner/repo -e GITEA_TOKEN execution-view
+EV_PROVIDER=gitea
+EV_BASE_URL=https://gitea.example.com
+EV_REPOS=owner/repo
+GITEA_TOKEN=xxx
 ```
 
-`-e GITHUB_TOKEN` (without a value) passes the variable from your shell into the container, so the token never appears in the command line. `EV_REPOS` takes a comma-separated list of `owner/repo`. Without a token, only public repositories work, at a low rate limit.
+Optional: `EV_PRIORITY_LABELS=P0,P1,P2` (highest first) and `EV_BASIC_AUTH=user:password`. Every variable is listed in [docs/CONFIGURATION.md](docs/CONFIGURATION.md#env-only-mode). Keep `.env` out of Git.
 
-### Config file
-
-For several repositories, several views, scope filters, priority labels, a GitHub Enterprise Server host or basic auth, use a config file:
+**4. Check the setup** (token, access, declared dependencies):
 
 ```sh
-cp config.example.yaml config.yaml
+docker compose run --rm execution-view check
 ```
 
-Edit `config.yaml` (remove the sources and views you do not need), then mount it at `/app/config.yaml`:
+Exit code `0` means everything is fine, `1` a configuration, token or access problem, `2` dependency cycles or references to issues that do not exist; every warning comes with a hint. "0 dependencies" means no dependencies are declared yet (see the prerequisites).
+
+**5. Start it:**
 
 ```sh
-docker run --rm -p 8080:8080 -v "$PWD/config.yaml:/app/config.yaml:ro" -e GITHUB_TOKEN execution-view
+docker compose up -d
 ```
 
-Every option is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Deployment recipes (docker-compose, systemd, reverse proxy, basic auth) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Open <http://localhost:8080>.
+
+**6. Upgrade later:**
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+`:1` follows the newest 1.x release; pin an exact version such as `:1.0.0` if you prefer to upgrade by hand.
+
+### Several repositories, views or options: the config file
+
+Env-only mode gives one view. For several views, scope filters, GitHub Enterprise Server, webhooks or the wave-by-wave ordering, use a config file: copy [`config.example.yaml`](config.example.yaml) to `config.yaml` next to `docker-compose.yml`, edit it, remove the `EV_PROVIDER`/`EV_REPOS` lines from `.env` (keep the tokens), and add the mount to the service:
+
+```yaml
+volumes:
+  - ./config.yaml:/app/config.yaml:ro
+```
+
+Create `config.yaml` **before** adding the mount: if the file does not exist, Docker creates a directory with that name. Every option is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md); deployment recipes (plain `docker run`, systemd, reverse proxy, basic auth, webhooks) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+### Without Docker
+
+Requires Node.js 22 or newer and a clone of the repository:
+
+```sh
+npm ci && npm run build && EV_CONFIG=config.demo.yaml npm start
+```
+
+That starts the demo; for your repositories set the same `EV_*` variables (or `EV_CONFIG=config.yaml`) instead.
 
 ## Before you start: prerequisites
 
@@ -105,11 +145,7 @@ The app can only show what your issues declare. In short:
 - [ ] Native dependencies are **available** on your platform (a setting that must be enabled on Gitea; possibly missing on older GitHub Enterprise Server versions). If not, use body lines only.
 - [ ] You know that only **open** issues are shown, and a **closed** issue never blocks anything.
 
-The full explanation, the accepted and rejected syntax, token permissions, API usage and a verification checklist are in **[docs/PREREQUISITES.md](docs/PREREQUISITES.md)**. Verify your setup at any time with:
-
-```sh
-node dist/cli/index.js check
-```
+The full explanation, the accepted and rejected syntax, token permissions, API usage and a verification checklist are in **[docs/PREREQUISITES.md](docs/PREREQUISITES.md)**. Verify your setup at any time with `docker compose run --rm execution-view check` (or `node dist/cli/index.js check` from a source checkout).
 
 ## Documentation
 
@@ -163,6 +199,17 @@ npm run typecheck && npm test && npm run format:check
 ```
 
 `npm run build` compiles the server to `dist/` and the web UI to `dist/web/`.
+
+## Releasing
+
+1. Set the new version in `package.json` (and `package-lock.json`: `npm version 1.2.3 --no-git-tag-version`), and optionally write release notes in `.github/release-notes/v1.2.3.md`. Merge that to `main`.
+2. Tag the merge commit and push the tag:
+
+```sh
+git tag v1.2.3 && git push origin v1.2.3
+```
+
+The [Release workflow](.github/workflows/release.yml) then runs the checks and the Docker smoke test, verifies that the tag matches `package.json`, publishes the multi-arch image to `ghcr.io/brunoorsolon/execution-view` (`1.2.3`, `1.2`, `1` and `latest`; prereleases such as `v1.3.0-rc.1` never move `latest`), and creates the GitHub Release. Publishing a release from the GitHub UI works too (the image is published; the release already exists). A manual run of the workflow is a dry run that builds the image without pushing it.
 
 ## License
 
