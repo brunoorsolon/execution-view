@@ -34,7 +34,7 @@ export function bezierPath(points: readonly Point[]): string {
 
 const GUTTER = 18;
 const CORNER = 8;
-/** Half a node height plus half the row gap, for the default layout (64 / 24). */
+/** Half a node height plus half the row gap, for a 64px card and a 24px gap. */
 const ROW_GAP_OFFSET = 44;
 
 /**
@@ -44,14 +44,14 @@ const ROW_GAP_OFFSET = 44;
  * them instead: out to the right gutter, along the gap between two rows, and in
  * from the left gutter of the target.
  */
-export function edgePath(points: readonly Point[]): string {
+export function edgePath(points: readonly Point[], rowGapOffset = ROW_GAP_OFFSET): string {
   const a = points[0];
   const b = points[points.length - 1];
   if (points.length !== 2 || a === undefined || b === undefined || b.x > a.x) {
     return bezierPath(points);
   }
   const dir = b.y >= a.y ? 1 : -1;
-  const ym = a.y + dir * ROW_GAP_OFFSET;
+  const ym = a.y + dir * rowGapOffset;
   const gx1 = a.x + GUTTER;
   const gx2 = b.x - GUTTER;
   const r = CORNER;
@@ -67,6 +67,104 @@ export function edgePath(points: readonly Point[]): string {
     `Q${num(gx2)} ${num(b.y)} ${num(gx2 + r)} ${num(b.y)}`,
     `H${num(b.x)}`,
   ].join(' ');
+}
+
+// ---------------------------------------------------------------------------
+// Card layout
+// ---------------------------------------------------------------------------
+
+/** Card and spacing sizes of the graph, in canvas pixels. */
+export interface Geometry {
+  cardW: number;
+  cardH: number;
+  colGap: number;
+  rowGap: number;
+  pad: number;
+}
+
+export const GEOMETRY: Geometry = { cardW: 256, cardH: 124, colGap: 72, rowGap: 16, pad: 20 };
+
+export interface PackedColumn {
+  /** Layout layer: the wave index, or waves.length for the unschedulable column. */
+  layer: number;
+  /** Left edge of the column's cards. */
+  x: number;
+  /** Visible keys, top to bottom. */
+  keys: IssueKey[];
+}
+
+export interface PackedLayout {
+  width: number;
+  height: number;
+  columns: PackedColumn[];
+  /** Top-left corner of each visible card. */
+  pos: Map<IssueKey, Point>;
+}
+
+/**
+ * Places the visible cards. Columns and the order inside a column come from
+ * the server layout (`layer`, `row`, already crossing-reduced); hidden cards
+ * leave no gap and a column with no visible card is dropped.
+ */
+export function packLayout(
+  nodes: readonly { key: IssueKey; layer: number; row: number }[],
+  visible: ReadonlySet<IssueKey> | null,
+  g: Geometry = GEOMETRY,
+): PackedLayout {
+  const byLayer = new Map<number, { key: IssueKey; row: number }[]>();
+  for (const n of nodes) {
+    if (visible !== null && !visible.has(n.key)) continue;
+    const list = byLayer.get(n.layer);
+    if (list) list.push(n);
+    else byLayer.set(n.layer, [n]);
+  }
+  const layers = [...byLayer.keys()].sort((a, b) => a - b);
+  const pos = new Map<IssueKey, Point>();
+  const columns: PackedColumn[] = [];
+  let maxRows = 0;
+  layers.forEach((layer, col) => {
+    const list = byLayer.get(layer)!.sort((a, b) => a.row - b.row);
+    const x = g.pad + col * (g.cardW + g.colGap);
+    list.forEach((n, row) => pos.set(n.key, { x, y: g.pad + row * (g.cardH + g.rowGap) }));
+    columns.push({ layer, x, keys: list.map((n) => n.key) });
+    maxRows = Math.max(maxRows, list.length);
+  });
+  const n = columns.length;
+  return {
+    width: n === 0 ? 0 : g.pad * 2 + n * g.cardW + (n - 1) * g.colGap,
+    height: maxRows === 0 ? 0 : g.pad * 2 + maxRows * g.cardH + (maxRows - 1) * g.rowGap,
+    columns,
+    pos,
+  };
+}
+
+/**
+ * Dependencies between visible issues that only run through hidden ones
+ * (`a -> hidden -> b`), so a filtered graph still shows that `b` waits on `a`.
+ * Pairs that already have a direct edge are left out. Sorted by (from, to).
+ */
+export function indirectEdges(
+  out: Map<IssueKey, IssueKey[]>,
+  visible: ReadonlySet<IssueKey>,
+): EdgeLike[] {
+  const result: EdgeLike[] = [];
+  for (const from of [...visible].sort()) {
+    const direct = new Set(out.get(from) ?? []);
+    const seen = new Set<IssueKey>();
+    const stack = (out.get(from) ?? []).filter((k) => !visible.has(k));
+    for (const k of stack) seen.add(k);
+    const found: IssueKey[] = [];
+    while (stack.length > 0) {
+      for (const next of out.get(stack.pop()!) ?? []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        if (!visible.has(next)) stack.push(next);
+        else if (next !== from && !direct.has(next)) found.push(next);
+      }
+    }
+    for (const to of found.sort()) result.push({ from, to });
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------

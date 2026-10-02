@@ -50,12 +50,12 @@ export function plural(n: number, singular: string, pluralForm = `${singular}s`)
 export function statusLabel(status: NodeStatus): string {
   switch (status) {
     case 'ready':
-      return 'ready';
+      return 'Ready';
     case 'blocked':
-      return 'blocked';
+      return 'Blocked';
     case 'in-cycle':
-      return 'in cycle';
+      return 'In cycle';
     case 'blocked-by-cycle':
-      return 'blocked by cycle';
+      return 'Blocked by cycle';
   }
 }

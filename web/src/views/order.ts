@@ -1,47 +1,60 @@
 import type { IssueKey, PlanNode, Snapshot } from '../../../src/core/types.js';
-import { clear, h, icon, ICONS, type Child } from '../dom.js';
-import { displayKey, plural, statusLabel } from '../format.js';
+import { clear, h, icon } from '../dom.js';
+import { plural, shortKey } from '../format.js';
 import { cyclePath } from '../graph-model.js';
 import { orderingExplanation } from '../ordering.js';
+import { priorityName } from '../priority.js';
 import type { SnapshotIndex } from '../state.js';
 import {
-  filteredOut,
+  avatars,
   getIndex,
+  isVisible,
   issueLink,
   labelChip,
-  statusPill,
+  otherLabels,
+  priorityTag,
+  statusBadge,
+  visibleKeys,
   type View,
   type ViewCtx,
 } from './shared.js';
 
-const MAX_LABELS = 3;
+const COLS = 7;
+
+interface Group {
+  tr: HTMLTableRowElement;
+  count: HTMLElement;
+  text: string;
+  keys: readonly IssueKey[];
+}
 
 export function createOrderView(ctx: ViewCtx): View {
-  const root = h('div', { class: 'order-pane' });
-  const scroller = h('div', { class: 'table-scroll' });
-  const note = h('p', { class: 'order-note' });
-  root.append(note, scroller);
+  const root = h('div', { class: 'pane pane-scroll order-pane' });
+  const note = h('p', null);
+  const noMatch = h(
+    'div',
+    { class: 'state-center', hidden: true },
+    h(
+      'div',
+      { class: 'box' },
+      h('h2', null, 'No issues match this filter'),
+      h(
+        'button',
+        { class: 'btn', type: 'button', onclick: () => ctx.actions.setQuery('') },
+        'Clear filter',
+      ),
+    ),
+  );
+  const tableBox = h('div', { class: 'table-box' });
+  root.append(
+    h('div', { class: 'order-wrap' }, h('div', { class: 'order-intro' }, note), noMatch, tableBox),
+  );
 
   let builtFor: Snapshot | null = null;
+  let filteredFor: Set<IssueKey> | null | undefined;
   let rows = new Map<IssueKey, HTMLTableRowElement>();
+  let groups: Group[] = [];
   let lastSelected: IssueKey | null = null;
-
-  function labelCell(n: PlanNode): HTMLElement {
-    const shown = n.labels.slice(0, MAX_LABELS);
-    const rest = n.labels.length - shown.length;
-    return h(
-      'span',
-      { class: 'chips' },
-      ...shown.map((l) => labelChip(l)),
-      rest > 0
-        ? h(
-            'span',
-            { class: 'chip chip-more', title: n.labels.slice(MAX_LABELS).join(', ') },
-            `+${rest}`,
-          )
-        : null,
-    );
-  }
 
   function keyButton(k: IssueKey, index: SnapshotIndex): HTMLElement {
     const n = index.nodes.get(k);
@@ -56,69 +69,71 @@ export function createOrderView(ctx: ViewCtx): View {
           ctx.actions.select(k);
         },
       },
-      displayKey(k, index.multiRepo),
+      shortKey(k, index.multiRepo),
     );
   }
 
-  function row(n: PlanNode, index: SnapshotIndex, reason: string | null): HTMLTableRowElement {
+  function row(
+    n: PlanNode,
+    snapshot: Snapshot,
+    index: SnapshotIndex,
+    reason: string | null,
+  ): HTMLTableRowElement {
+    const prio = priorityName(snapshot, n);
     const critical = index.criticalNodes.has(n.key);
     const tr = h(
       'tr',
-      {
-        class: `row${critical ? ' critical' : ''}${n.external ? ' external' : ''}`,
-        'data-key': n.key,
-      },
+      { class: `row${n.external ? ' external' : ''}`, 'data-key': n.key, tabindex: 0 },
       h(
         'td',
-        { class: 'col-num' },
-        n.order === null ? h('span', { class: 'muted' }, '–') : String(n.order + 1),
+        { class: 'c-num' },
+        n.order === null ? '–' : String(n.order + 1),
         critical
           ? h(
               'span',
               {
-                class: 'star',
+                class: 'crit',
                 title: 'On the critical path',
                 'aria-label': 'On the critical path',
               },
-              '★',
+              icon('critical', 13),
             )
           : null,
       ),
       h(
         'td',
-        { class: 'col-issue' },
-        issueLink(n.key, n.url, displayKey(n.key, index.multiRepo), `${n.key} (open in a new tab)`),
-        n.external ? h('span', { class: 'tag tag-external' }, 'ext') : null,
+        { class: 'c-issue' },
+        issueLink(n.key, n.url, shortKey(n.key, index.multiRepo), `${n.key} (opens the issue)`),
       ),
       h(
         'td',
-        { class: 'col-title' },
-        h('div', { class: 'title-text', title: n.title }, n.title),
+        { class: 'c-title' },
+        h('div', { class: 't' }, n.title),
+        h(
+          'div',
+          { class: 'labels' },
+          prio !== null ? priorityTag(prio, n.priority) : null,
+          n.external ? h('span', { class: 'badge st-external' }, 'External') : null,
+          ...otherLabels(n, prio).map((l) => labelChip(l)),
+        ),
         reason !== null ? h('div', { class: 'reason' }, reason) : null,
       ),
-      h('td', { class: 'col-status' }, statusPill(statusLabel(n.status), n.status)),
-      h('td', { class: 'col-labels' }, labelCell(n)),
+      h('td', { class: 'c-status' }, statusBadge(n.status)),
+      h('td', { class: 'c-people' }, avatars(n.assignees)),
       h(
         'td',
-        { class: 'col-assignees' },
-        n.assignees.length > 0
-          ? h('span', { title: n.assignees.join(', ') }, n.assignees.map((a) => `@${a}`).join(', '))
-          : h('span', { class: 'muted' }, '–'),
-      ),
-      h(
-        'td',
-        { class: 'col-blocked' },
+        { class: 'c-blocked' },
         n.blockedBy.length > 0
-          ? h('span', { class: 'keys' }, ...n.blockedBy.map((k) => keyButton(k, index)))
-          : h('span', { class: 'muted' }, '–'),
+          ? h('div', { class: 'keys' }, ...n.blockedBy.map((k) => keyButton(k, index)))
+          : h('span', { class: 'muted' }, 'Nothing'),
       ),
       h(
         'td',
-        { class: 'col-actions' },
+        { class: 'c-act' },
         h(
           'button',
           {
-            class: 'btn btn-icon',
+            class: 'btn btn-ghost btn-icon',
             type: 'button',
             title: 'Show in graph',
             'aria-label': `Show ${n.key} in graph`,
@@ -127,81 +142,38 @@ export function createOrderView(ctx: ViewCtx): View {
               ctx.actions.showInGraph(n.key);
             },
           },
-          icon(ICONS.graph),
+          icon('graph'),
         ),
       ),
     );
-    tr.addEventListener('click', () => ctx.actions.select(n.key));
+    tr.addEventListener('click', () =>
+      ctx.actions.select(ctx.store.get().selected === n.key ? null : n.key),
+    );
+    tr.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target === tr) ctx.actions.select(n.key);
+    });
     rows.set(n.key, tr);
     return tr;
   }
 
-  function sectionRow(cls: string, ...content: Child[]): HTMLTableRowElement {
-    return h(
+  function groupRow(
+    cls: string,
+    title: string,
+    text: string,
+    keys: readonly IssueKey[],
+  ): HTMLTableRowElement {
+    const count = h('span', null, text);
+    const tr = h(
       'tr',
-      { class: `section-row ${cls}` },
-      h('td', { colspan: 8 }, h('div', { class: 'section-head' }, ...content)),
-    );
-  }
-
-  function build(snapshot: Snapshot, index: SnapshotIndex): void {
-    clear(scroller);
-    note.textContent = orderingExplanation(snapshot.orderingMode);
-    rows = new Map();
-    const { plan } = snapshot;
-    const tbody = h('tbody');
-    plan.waves.forEach((wave, i) => {
-      tbody.append(
-        sectionRow(
-          'wave-row',
-          h('strong', null, `Wave ${i + 1}`),
-          h('span', { class: 'sep' }, '·'),
-          plural(wave.length, 'issue'),
-          wave.length > 1 ? h('span', { class: 'sep' }, '·') : null,
-          wave.length > 1 ? 'can run in parallel' : null,
-        ),
-      );
-      for (const key of wave) {
-        const n = index.nodes.get(key);
-        if (n) tbody.append(row(n, index, null));
-      }
-    });
-
-    if (plan.unschedulable.length > 0) {
-      tbody.append(
-        sectionRow(
-          'wave-row unsched-row',
-          h('strong', null, 'Unschedulable'),
-          h('span', { class: 'sep' }, '·'),
-          plural(plan.unschedulable.length, 'issue'),
-          h('span', { class: 'sep' }, '·'),
-          'cannot be ordered until the cycle is resolved',
-        ),
-      );
-      for (const key of plan.unschedulable) {
-        const n = index.nodes.get(key);
-        if (!n) continue;
-        tbody.append(row(n, index, unschedulableReason(n, snapshot, index)));
-      }
-    }
-
-    const head = h(
-      'thead',
-      null,
+      { class: `group${cls}` },
       h(
-        'tr',
-        null,
-        h('th', { class: 'col-num' }, '#'),
-        h('th', { class: 'col-issue' }, 'Issue'),
-        h('th', { class: 'col-title' }, 'Title'),
-        h('th', { class: 'col-status' }, 'Status'),
-        h('th', { class: 'col-labels' }, 'Labels'),
-        h('th', { class: 'col-assignees' }, 'Assignees'),
-        h('th', { class: 'col-blocked' }, 'Blocked by'),
-        h('th', { class: 'col-actions' }, ''),
+        'td',
+        { colspan: COLS },
+        h('div', { class: 'group-head' }, h('strong', null, title), count),
       ),
     );
-    scroller.append(h('table', { class: 'order-table' }, head, tbody));
+    groups.push({ tr, count, text, keys });
+    return tr;
   }
 
   function unschedulableReason(n: PlanNode, snapshot: Snapshot, index: SnapshotIndex): string {
@@ -209,17 +181,83 @@ export function createOrderView(ctx: ViewCtx): View {
       const scc = snapshot.plan.cycles.find((c) => c.includes(n.key));
       if (scc) {
         const { path } = cyclePath(scc, snapshot.plan.edges);
-        const text = (path.length > 0 ? path : scc)
-          .map((k) => displayKey(k, index.multiRepo))
-          .join(' → ');
-        return `In cycle: ${text}`;
+        const loop = path.length > 0 ? path : scc;
+        return `Part of the loop ${loop.map((k) => shortKey(k, index.multiRepo)).join(' → ')}`;
       }
-      return 'In a dependency cycle';
+      return 'Part of a dependency cycle';
     }
     const via = n.blockedBy.filter((k) => index.unschedulable.has(k));
     return via.length > 0
-      ? `Blocked by cycle, via ${via.map((k) => displayKey(k, index.multiRepo)).join(', ')}`
-      : 'Blocked by a cycle';
+      ? `Waits on the cycle through ${via.map((k) => shortKey(k, index.multiRepo)).join(', ')}`
+      : 'Waits on a dependency cycle';
+  }
+
+  function build(snapshot: Snapshot, index: SnapshotIndex): void {
+    note.textContent = orderingExplanation(snapshot.orderingMode);
+    rows = new Map();
+    groups = [];
+    const { plan } = snapshot;
+    const tbody = h('tbody');
+    plan.waves.forEach((wave, i) => {
+      tbody.append(
+        groupRow(
+          '',
+          `Wave ${i + 1}`,
+          wave.length > 1 ? `${wave.length} issues, can run in parallel` : '1 issue',
+          wave,
+        ),
+      );
+      const sorted = [...wave].sort(
+        (a, b) => (index.nodes.get(a)?.order ?? 0) - (index.nodes.get(b)?.order ?? 0),
+      );
+      for (const key of sorted) {
+        const n = index.nodes.get(key);
+        if (n) tbody.append(row(n, snapshot, index, null));
+      }
+    });
+    if (plan.unschedulable.length > 0) {
+      tbody.append(
+        groupRow(
+          ' unsched',
+          'Unschedulable',
+          `${plural(plan.unschedulable.length, 'issue')}. They can be ordered once the cycle is broken.`,
+          plan.unschedulable,
+        ),
+      );
+      for (const key of plan.unschedulable) {
+        const n = index.nodes.get(key);
+        if (n) tbody.append(row(n, snapshot, index, unschedulableReason(n, snapshot, index)));
+      }
+    }
+    const head = h(
+      'thead',
+      null,
+      h(
+        'tr',
+        null,
+        h('th', { class: 'c-num' }, '#'),
+        h('th', { class: 'c-issue' }, 'Issue'),
+        h('th', { class: 'c-title' }, 'Title'),
+        h('th', { class: 'c-status' }, 'Status'),
+        h('th', { class: 'c-people' }, 'Assignees'),
+        h('th', { class: 'c-blocked' }, 'Blocked by'),
+        h('th', { class: 'c-act' }, h('span', { class: 'sr-only' }, 'Actions')),
+      ),
+    );
+    clear(tableBox);
+    tableBox.append(h('table', { class: 'order' }, head, tbody));
+  }
+
+  function applyFilter(keys: Set<IssueKey> | null): void {
+    for (const [key, tr] of rows) tr.hidden = !isVisible(keys, key);
+    for (const g of groups) {
+      const shown = keys === null ? g.keys.length : g.keys.filter((k) => keys.has(k)).length;
+      g.tr.hidden = shown === 0;
+      g.count.textContent = shown < g.keys.length ? `${shown} of ${g.keys.length} shown` : g.text;
+    }
+    const empty = keys !== null && keys.size === 0;
+    noMatch.hidden = !empty;
+    tableBox.hidden = empty;
   }
 
   return {
@@ -232,13 +270,15 @@ export function createOrderView(ctx: ViewCtx): View {
       if (builtFor !== state.snapshot) {
         build(state.snapshot, index);
         builtFor = state.snapshot;
+        filteredFor = undefined;
         lastSelected = null;
       }
-      const out = filteredOut(state, index);
-      for (const [key, tr] of rows) {
-        tr.classList.toggle('selected', key === state.selected);
-        tr.classList.toggle('filtered', out.has(key));
+      const keys = visibleKeys(state, index);
+      if (filteredFor !== keys) {
+        filteredFor = keys;
+        applyFilter(keys);
       }
+      for (const [key, tr] of rows) tr.classList.toggle('selected', key === state.selected);
       if (tabVisible && state.selected !== null && state.selected !== lastSelected) {
         rows.get(state.selected)?.scrollIntoView({ block: 'nearest' });
       }

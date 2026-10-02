@@ -3,6 +3,8 @@
  * setAttribute, never as HTML, so issue data cannot inject markup.
  */
 
+import { ICON_PATHS, type IconName } from './icons.js';
+
 export type Child = Node | string | number | null | undefined | false;
 
 export interface Props {
@@ -68,35 +70,16 @@ export function setText(el: Element, text: string): void {
   if (el.textContent !== text) el.textContent = text;
 }
 
-/** Inline SVG icon from a path (24x24 viewBox, stroke style). */
-export function icon(pathD: string, size = 14): SVGSVGElement {
+/** Inline Phosphor icon (see icons.ts), coloured with `currentColor`. */
+export function icon(name: IconName, size = 16): SVGSVGElement {
   const s = svg('svg', {
-    viewBox: '0 0 24 24',
+    viewBox: '0 0 256 256',
     width: size,
     height: size,
-    fill: 'none',
-    stroke: 'currentColor',
-    'stroke-width': 2,
-    'stroke-linecap': 'round',
-    'stroke-linejoin': 'round',
+    fill: 'currentColor',
     'aria-hidden': 'true',
     class: 'icon',
   });
-  s.append(svg('path', { d: pathD }));
+  s.append(svg('path', { d: ICON_PATHS[name] }));
   return s;
 }
-
-export const ICONS = {
-  refresh: 'M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5',
-  download: 'M12 3v12m0 0-4-4m4 4 4-4M4 20h16',
-  chevron: 'm6 9 6 6 6-6',
-  external: 'M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
-  graph: 'M3 4h6v6H3zM15 14h6v6h-6zM9 7h3a3 3 0 0 1 3 3v4',
-  close: 'M6 6l12 12M18 6 6 18',
-  fit: 'M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4',
-  plus: 'M12 5v14M5 12h14',
-  minus: 'M5 12h14',
-  search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-4.3-4.3',
-  alert:
-    'M12 9v4m0 4h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
-} as const;

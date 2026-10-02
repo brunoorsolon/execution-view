@@ -52,7 +52,8 @@ describe('keys and labels', () => {
     expect(plural(4, 'issue')).toBe('4 issues');
   });
   it('names statuses', () => {
-    expect(statusLabel('in-cycle')).toBe('in cycle');
-    expect(statusLabel('blocked-by-cycle')).toBe('blocked by cycle');
+    expect(statusLabel('ready')).toBe('Ready');
+    expect(statusLabel('in-cycle')).toBe('In cycle');
+    expect(statusLabel('blocked-by-cycle')).toBe('Blocked by cycle');
   });
 });

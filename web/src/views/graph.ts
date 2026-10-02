@@ -1,686 +1,622 @@
-import type { IssueKey, LayoutNode, PlanNode, Snapshot } from '../../../src/core/types.js';
-import { append, clear, h, icon, ICONS, svg } from '../dom.js';
-import { displayKey, shortKey, statusLabel } from '../format.js';
-import { priorityName } from '../priority.js';
+import type { IssueKey, PlanNode, Point, Snapshot } from '../../../src/core/types.js';
+import { clear, h, icon, svg } from '../dom.js';
+import { shortKey, plural } from '../format.js';
 import {
-  edgePath,
+  GEOMETRY,
   computeHighlight,
   edgeId,
+  edgePath,
   ensureVisible,
   fitTransform,
-  IDENTITY,
+  indirectEdges,
+  packLayout,
   panBy,
-  transformAttr,
   wheelZoomFactor,
   zoomAt,
   type Highlight,
+  type PackedLayout,
   type Transform,
 } from '../graph-model.js';
+import { NARROW_HEADER_PX, compactTextScale, isCompact } from '../lod.js';
+import { priorityName } from '../priority.js';
+import type { AppState, SnapshotIndex } from '../state.js';
+import { effectiveViewId } from '../state.js';
 import {
-  BUCKET_COUNT,
-  bucketTextScale,
-  compactBaselines,
-  compactFonts,
-  headerFontSize,
-  lodFor,
-  tooltipPosition,
-  type Lod,
-} from '../lod.js';
-import type { AppState } from '../state.js';
-import { effectiveViewId, type SnapshotIndex } from '../state.js';
-import { measureText, readFonts, truncateToWidth, type Fonts } from './measure.js';
-import { createSidePanel } from './side-panel.js';
-import {
-  filteredOut,
-  filterFor,
+  avatars,
   getIndex,
-  labelChip,
-  statusPill,
+  otherLabels,
+  priorityTag,
+  statusBadge,
+  visibleKeys,
   type View,
   type ViewCtx,
 } from './shared.js';
 
-/** Vertical space above the layout for the wave column headers. */
-const HEADER_H = 36;
+const G = GEOMETRY;
+/** Height of the sticky wave header strip above the canvas. */
+const HEAD_H = 44;
 const DRAG_THRESHOLD = 4;
-/** Width taken by the floating side panel (incl. margin), excluded from "visible" area. */
-const PANEL_W = 344;
-/** Hover time before the node tooltip appears. */
-const TOOLTIP_DELAY_MS = 150;
+/** Width covered by the details panel (incl. margins) when it is open. */
+const PANEL_W = 404;
+/** The graph opens at 100%, unless the whole graph fits at this zoom or more. */
+const FIT_ON_OPEN = 0.85;
+/** Start/end x offset so an edge ends at the card border, not under it. */
+const EDGE_INSET = 1;
+const MARKERS = ['default', 'crit', 'cyc', 'up', 'down', 'hover', 'indirect'] as const;
+type Marker = (typeof MARKERS)[number];
+
+interface EdgeEl {
+  from: IssueKey;
+  to: IssueKey;
+  id: string;
+  el: SVGPathElement;
+  base: Marker;
+  shown: boolean;
+}
 
 interface Built {
   snapshot: Snapshot;
   index: SnapshotIndex;
-  nodeEls: Map<IssueKey, SVGGElement>;
-  edgeEls: { id: string; from: IssueKey; to: IssueKey; el: SVGPathElement }[];
-  baseEdges: SVGGElement;
-  hlEdges: SVGGElement;
-  contentW: number;
-  contentH: number;
+  cards: Map<IssueKey, HTMLElement>;
+  edges: EdgeEl[];
 }
 
-export function createGraphView(ctx: ViewCtx): View {
-  const pane = h('div', { class: 'graph-pane' });
-  const svgEl = svg('svg', { class: 'graph-svg', role: 'img', 'aria-label': 'Dependency graph' });
-  const viewport = svg('g', { class: 'viewport' });
-  svgEl.append(markerDefs(), viewport);
+export interface GraphView extends View {
+  /** Fits the whole (filtered) graph in the pane. */
+  fit(): void;
+}
 
-  const zoomLabel = h('span', { class: 'zoom-label' }, '100%');
-  const controls = h(
+export function createGraphView(ctx: ViewCtx): GraphView {
+  const pane = h('div', { class: 'pane graph-pane' });
+  const heads = h('div', { class: 'col-heads', 'aria-hidden': 'true' });
+  const stage = h('div', { class: 'stage', role: 'application', 'aria-label': 'Dependency graph' });
+  const canvas = h('div', { class: 'canvas' });
+  const bands = h('div', { class: 'bands' });
+  const edgesSvg = svg('svg', { class: 'edges' });
+  const indirectG = svg('g');
+  const directG = svg('g');
+  edgesSvg.append(markerDefs(), indirectG, directG);
+  canvas.append(bands, edgesSvg);
+  stage.append(canvas);
+  const noMatch = h('div', { class: 'no-match', hidden: true });
+
+  const zoomLabel = h('button', {
+    class: 'zoom-label',
+    type: 'button',
+    title: 'Reset to 100%',
+    onclick: () => zoomTo(1),
+  });
+  const zoomCtl = h(
     'div',
-    { class: 'graph-controls' },
+    { class: 'graph-chrome zoom-ctl' },
     h(
       'button',
       {
-        class: 'btn btn-icon',
+        class: 'btn btn-ghost btn-icon',
         type: 'button',
         title: 'Zoom out',
         'aria-label': 'Zoom out',
-        onclick: () => zoomBy(1 / 1.25),
+        onclick: () => zoomBy(1 / 1.2),
       },
-      icon(ICONS.minus),
+      icon('minus'),
     ),
     zoomLabel,
     h(
       'button',
       {
-        class: 'btn btn-icon',
+        class: 'btn btn-ghost btn-icon',
         type: 'button',
         title: 'Zoom in',
         'aria-label': 'Zoom in',
-        onclick: () => zoomBy(1.25),
+        onclick: () => zoomBy(1.2),
       },
-      icon(ICONS.plus),
+      icon('plus'),
     ),
+    h('span', { class: 'divider' }),
     h(
       'button',
-      { class: 'btn btn-fit', type: 'button', title: 'Fit graph to view', onclick: () => fit() },
-      icon(ICONS.fit),
+      { class: 'btn btn-ghost', type: 'button', title: 'Fit the graph (F)', onclick: () => fit() },
+      icon('fit'),
       'Fit',
     ),
   );
+  const legItem = (cls: string, label: string): HTMLElement =>
+    h('span', { class: 'li' }, h('span', { class: cls }), label);
   const legend = h(
     'div',
-    { class: 'graph-legend', 'aria-hidden': 'true' },
-    legendItem('swatch status-ready', 'Ready'),
-    legendItem('swatch status-blocked', 'Blocked'),
-    legendItem('swatch status-in-cycle', 'In cycle'),
-    legendItem('swatch status-blocked-by-cycle', 'Blocked by cycle'),
-    legendItem('swatch external', 'External'),
-    legendItem('swatch critical', 'Critical path'),
+    { class: 'graph-chrome legend', 'aria-hidden': 'true' },
+    legItem('sq st-ready', 'Ready'),
+    legItem('sq st-blocked', 'Blocked'),
+    legItem('sq st-in-cycle', 'In cycle'),
+    legItem('sq st-blocked-by-cycle', 'Blocked by cycle'),
+    h('span', { class: 'vr' }),
+    legItem('ln ln-crit', 'Critical path'),
+    legItem('ln ln-up', 'Prerequisites'),
+    legItem('ln ln-down', 'Dependents'),
+    legItem('ln ln-indirect', 'Through hidden issues'),
   );
-  const side = createSidePanel(ctx);
-  const tooltip = h('div', { class: 'graph-tooltip', role: 'tooltip', hidden: true });
-  pane.append(svgEl, legend, controls, tooltip, side.el);
+  pane.append(stage, heads, noMatch, legend, zoomCtl);
 
   let built: Built | null = null;
-  let transform: Transform = IDENTITY;
-  let needsFit = true;
+  let packed: PackedLayout | null = null;
+  let packedFor: Set<IssueKey> | null | undefined;
+  let indirect: EdgeEl[] = [];
+  let headEls: { el: HTMLElement; x: number }[] = [];
+  let t: Transform = { x: 16, y: 0, k: 1 };
+  let needsOpen = true;
   let lastViewId: string | null = null;
   let visible = false;
   let highlight: Highlight | null = null;
   let highlightKey: IssueKey | null = null;
-  let suppressReveal = false;
   let lastSelected: IssueKey | null = null;
+  let reflowTimer: number | undefined;
 
-  // ------------------------------------------------------------------ transform
+  // ------------------------------------------------------------ transform
 
   function applyTransform(): void {
-    viewport.setAttribute('transform', transformAttr(transform));
-    zoomLabel.textContent = `${Math.round(transform.k * 100)}%`;
-    applyLod();
-    positionTooltip();
-  }
-
-  /**
-   * Level of detail: only classes and one CSS variable change while zooming
-   * (and only when the mode, the compact bucket or the header size changes),
-   * the SVG is never rebuilt.
-   */
-  let lod: Lod | null = null;
-  let headFont = 0;
-  function applyLod(): void {
-    const next = lodFor(transform.k);
-    if (lod === null || next.mode !== lod.mode || next.bucket !== lod.bucket) {
-      svgEl.classList.toggle('lod-compact', next.mode === 'compact');
-      for (let b = 0; b < BUCKET_COUNT; b++) svgEl.classList.toggle(`lod-b${b}`, next.bucket === b);
-      lod = next;
+    canvas.style.transform = `translate(${t.x}px, ${t.y}px) scale(${t.k})`;
+    zoomLabel.textContent = `${Math.round(t.k * 100)}%`;
+    const compact = isCompact(t.k);
+    pane.classList.toggle('compact', compact);
+    pane.style.setProperty('--cs', String(compactTextScale(t.k)));
+    for (const { el, x } of headEls) {
+      el.style.transform = `translateX(${t.x + (x - 2) * t.k}px)`;
+      el.style.width = `${G.cardW * t.k}px`;
+      el.classList.toggle('narrow', G.cardW * t.k < NARROW_HEADER_PX);
     }
-    const head = headerFontSize(transform.k);
-    if (head !== headFont) {
-      headFont = head;
-      svgEl.style.setProperty('--head-fs', `${head}px`);
-    }
-  }
-
-  // ------------------------------------------------------------------ tooltip
-
-  let tooltipKey: IssueKey | null = null;
-  let tooltipTimer: number | undefined;
-
-  function hideTooltip(): void {
-    window.clearTimeout(tooltipTimer);
-    tooltipTimer = undefined;
-    tooltipKey = null;
-    tooltip.hidden = true;
-  }
-
-  function scheduleTooltip(key: IssueKey): void {
-    window.clearTimeout(tooltipTimer);
-    if (pointer?.panning) return;
-    tooltipTimer = window.setTimeout(() => showTooltip(key), TOOLTIP_DELAY_MS);
-  }
-
-  function showTooltip(key: IssueKey): void {
-    const snapshot = built?.snapshot;
-    const node = built?.index.nodes.get(key);
-    if (built === null || snapshot === undefined || node === undefined || pointer?.panning) return;
-    const prio = priorityName(snapshot, node);
-    clear(tooltip);
-    append(tooltip, [
-      h(
-        'div',
-        { class: 'tip-head' },
-        h('span', { class: 'tip-key' }, displayKey(node.key, true)),
-        node.external ? h('span', { class: 'tag tag-external' }, 'external') : null,
-      ),
-      h('div', { class: 'tip-title' }, node.title),
-      h(
-        'div',
-        { class: 'tip-facts' },
-        statusPill(statusLabel(node.status), node.status),
-        h('span', null, node.wave === null ? 'Unschedulable' : `Wave ${node.wave + 1}`),
-        prio !== null ? h('span', null, `Priority: ${prio}`) : null,
-      ),
-      node.labels.length > 0
-        ? h('div', { class: 'chips' }, ...node.labels.map((l) => labelChip(l)))
-        : null,
-      node.assignees.length > 0 || node.milestone !== null
-        ? h(
-            'div',
-            { class: 'tip-meta' },
-            [node.assignees.map((a) => `@${a}`).join(' '), node.milestone ?? '']
-              .filter((t) => t !== '')
-              .join('  ·  '),
-          )
-        : null,
-    ]);
-    tooltipKey = key;
-    tooltip.hidden = false;
-    positionTooltip();
-  }
-
-  /** Places the tooltip next to its node (not the mouse), inside the pane. */
-  function positionTooltip(): void {
-    if (tooltipKey === null || built === null) return;
-    const ln = built.index.layout.get(tooltipKey);
-    if (ln === undefined) return;
-    const k = transform.k;
-    const anchor = {
-      x: transform.x + ln.x * k,
-      y: transform.y + (ln.y + HEADER_H) * k,
-      width: ln.width * k,
-      height: ln.height * k,
-    };
-    const pos = tooltipPosition(
-      anchor,
-      { width: tooltip.offsetWidth, height: tooltip.offsetHeight },
-      size(),
-    );
-    tooltip.style.left = `${Math.round(pos.x)}px`;
-    tooltip.style.top = `${Math.round(pos.y)}px`;
-    tooltip.dataset.side = pos.side;
   }
 
   function size(): { width: number; height: number } {
-    return { width: pane.clientWidth, height: pane.clientHeight };
+    return { width: stage.clientWidth, height: stage.clientHeight };
+  }
+
+  function contentSize(): { width: number; height: number } {
+    return { width: packed?.width ?? 0, height: packed?.height ?? 0 };
   }
 
   function fit(): void {
-    if (built === null) return;
     const s = size();
-    if (s.width === 0 || s.height === 0) return;
-    transform = fitTransform({ width: built.contentW, height: built.contentH }, s);
+    if (s.width === 0 || packed === null || packed.width === 0) return;
+    t = fitTransform(contentSize(), s, 16);
+    t = { ...t, y: 0 };
     applyTransform();
   }
 
   function zoomBy(factor: number): void {
     const s = size();
-    transform = zoomAt(transform, factor, s.width / 2, s.height / 2);
+    t = zoomAt(t, factor, s.width / 2, s.height / 2);
+    applyTransform();
+  }
+
+  function zoomTo(k: number): void {
+    t = zoomAt(t, k / t.k, 16, 0);
+    applyTransform();
+  }
+
+  /** Opens at 100% (top-left), or fitted when the whole graph is readable fitted. */
+  function openView(): void {
+    const s = size();
+    const c = contentSize();
+    if (s.width === 0 || c.width === 0) return;
+    const k = Math.min((s.width - 32) / c.width, (s.height - 16) / c.height);
+    if (k >= FIT_ON_OPEN) fit();
+    else {
+      t = { x: 16, y: 0, k: 1 };
+      applyTransform();
+    }
+    needsOpen = false;
+  }
+
+  /** After a filter, brings the content back when it left the visible area. */
+  function keepInView(): void {
+    const s = size();
+    const c = contentSize();
+    const right = t.x + c.width * t.k;
+    const bottom = t.y + c.height * t.k;
+    if (t.x > s.width * 0.6 || right < s.width * 0.2 || t.y > s.height * 0.4 || bottom < 40) {
+      t = { ...t, x: 16, y: 0 };
+    }
     applyTransform();
   }
 
   function reveal(key: IssueKey): void {
-    if (built === null) return;
-    const ln = built.index.layout.get(key);
+    const p = packed?.pos.get(key);
     const s = size();
-    if (ln === undefined || s.width === 0) return;
-    const panelOpen = ctx.store.get().selected !== null;
+    if (p === undefined || s.width === 0) return;
+    const panelOpen = ctx.store.get().selected !== null && s.width > 640;
     const region = {
       x: 0,
       y: 0,
       width: Math.max(200, s.width - (panelOpen ? PANEL_W : 0)),
-      height: s.height,
+      height: s.height - 56,
     };
-    transform = ensureVisible(
-      transform,
-      { x: ln.x, y: ln.y + HEADER_H, width: ln.width, height: ln.height },
-      region,
-    );
+    const next = ensureVisible(t, { x: p.x, y: p.y, width: G.cardW, height: G.cardH }, region);
+    if (next === t) return;
+    t = next;
+    canvas.classList.add('glide');
     applyTransform();
+    window.setTimeout(() => canvas.classList.remove('glide'), 360);
   }
 
-  // -------------------------------------------------------------------- input
+  // ---------------------------------------------------------------- input
 
   let pointer: {
     id: number;
     x: number;
     y: number;
-    startX: number;
-    startY: number;
+    sx: number;
+    sy: number;
     panning: boolean;
   } | null = null;
   let dragged = false;
 
-  svgEl.addEventListener('pointerdown', (e) => {
+  stage.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     pointer = {
       id: e.pointerId,
       x: e.clientX,
       y: e.clientY,
-      startX: e.clientX,
-      startY: e.clientY,
+      sx: e.clientX,
+      sy: e.clientY,
       panning: false,
     };
     dragged = false;
   });
-  svgEl.addEventListener('pointermove', (e) => {
+  stage.addEventListener('pointermove', (e) => {
     if (pointer === null || e.pointerId !== pointer.id) return;
     if (!pointer.panning) {
-      if (Math.hypot(e.clientX - pointer.startX, e.clientY - pointer.startY) < DRAG_THRESHOLD)
-        return;
+      if (Math.hypot(e.clientX - pointer.sx, e.clientY - pointer.sy) < DRAG_THRESHOLD) return;
       pointer.panning = true;
       dragged = true;
-      hideTooltip();
-      svgEl.setPointerCapture(e.pointerId);
-      svgEl.classList.add('panning');
+      stage.setPointerCapture(e.pointerId);
+      stage.classList.add('panning');
     }
-    transform = panBy(transform, e.clientX - pointer.x, e.clientY - pointer.y);
+    t = panBy(t, e.clientX - pointer.x, e.clientY - pointer.y);
     pointer.x = e.clientX;
     pointer.y = e.clientY;
     applyTransform();
   });
   const endPointer = (e: PointerEvent): void => {
     if (pointer === null || e.pointerId !== pointer.id) return;
-    if (pointer.panning && svgEl.hasPointerCapture(e.pointerId))
-      svgEl.releasePointerCapture(e.pointerId);
+    if (pointer.panning && stage.hasPointerCapture(e.pointerId))
+      stage.releasePointerCapture(e.pointerId);
     pointer = null;
-    svgEl.classList.remove('panning');
+    stage.classList.remove('panning');
   };
-  svgEl.addEventListener('pointerleave', hideTooltip);
-  svgEl.addEventListener('pointerup', endPointer);
-  svgEl.addEventListener('pointercancel', endPointer);
+  stage.addEventListener('pointerup', endPointer);
+  stage.addEventListener('pointercancel', endPointer);
 
-  svgEl.addEventListener(
+  // Wheel and trackpad scroll pan; Ctrl/Cmd + wheel and pinch (ctrlKey) zoom.
+  stage.addEventListener(
     'wheel',
     (e) => {
       e.preventDefault();
-      const rect = svgEl.getBoundingClientRect();
-      transform = zoomAt(
-        transform,
-        wheelZoomFactor(e.deltaY, e.deltaMode, e.ctrlKey),
-        e.clientX - rect.left,
-        e.clientY - rect.top,
-      );
+      if (e.ctrlKey || e.metaKey) {
+        const rect = stage.getBoundingClientRect();
+        t = zoomAt(
+          t,
+          wheelZoomFactor(e.deltaY, e.deltaMode, true),
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+        );
+      } else {
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? size().height : 1;
+        const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX;
+        const dy = e.shiftKey && e.deltaX === 0 ? 0 : e.deltaY;
+        t = panBy(t, -dx * unit, -dy * unit);
+      }
       applyTransform();
     },
     { passive: false },
   );
 
-  // Click on the background clears the selection (a drag does not count).
-  svgEl.addEventListener('click', (e) => {
+  stage.addEventListener('click', (e) => {
     if (dragged) {
       dragged = false;
       return;
     }
-    if (!(e.target as Element).closest('.node')) ctx.actions.select(null);
+    if (!(e.target as Element).closest('.card')) ctx.actions.select(null);
   });
 
   new ResizeObserver(() => {
-    if (visible && needsFit && built !== null) {
-      fit();
-      if (pane.clientWidth > 0) needsFit = false;
-    }
-  }).observe(pane);
+    if (visible && needsOpen && built !== null) openView();
+    else applyTransform();
+  }).observe(stage);
 
-  // ------------------------------------------------------------------- build
+  // ---------------------------------------------------------------- build
 
   function build(snapshot: Snapshot, index: SnapshotIndex): Built {
-    hideTooltip();
-    clear(viewport);
-    const fonts = readFonts();
-    const { layout, plan } = snapshot;
-    const contentW = layout.width;
-    const contentH = layout.height + HEADER_H;
-
-    // Column bands and headers.
-    const colsG = svg('g', { class: 'columns' });
-    const layerX = new Map<number, { x: number; w: number }>();
-    for (const ln of layout.nodes)
-      if (!layerX.has(ln.layer)) layerX.set(ln.layer, { x: ln.x, w: ln.width });
-    const layers = [...layerX.keys()].sort((a, b) => a - b);
-    for (const layer of layers) {
-      const { x, w } = layerX.get(layer)!;
-      const unsched = layer >= plan.waves.length;
-      const count = unsched ? plan.unschedulable.length : (plan.waves[layer]?.length ?? 0);
-      colsG.append(
-        svg('rect', {
-          class: `col-band${unsched ? ' col-unsched' : ''}${layer % 2 === 1 ? ' alt' : ''}`,
-          x: x - 12,
-          y: 0,
-          width: w + 24,
-          height: contentH,
-        }),
-        svg(
-          'text',
-          { class: `col-head${unsched ? ' col-unsched' : ''}`, x: x, y: 23 },
-          svg('tspan', { class: 'col-title' }, unsched ? 'Unschedulable' : `Wave ${layer + 1}`),
-          svg('tspan', { class: 'col-count', dx: '0.45em' }, String(count)),
-        ),
-      );
+    for (const c of canvas.querySelectorAll('.card')) c.remove();
+    clear(directG);
+    const cards = new Map<IssueKey, HTMLElement>();
+    for (const n of snapshot.plan.nodes) {
+      const card = buildCard(n, snapshot, index);
+      cards.set(n.key, card);
+      canvas.append(card);
     }
-
-    // Edges, in two groups so highlighted ones can be raised.
-    const baseEdges = svg('g', { class: 'edges' });
-    const hlEdges = svg('g', { class: 'edges edges-hl' });
-    const edgeEls: Built['edgeEls'] = [];
-    layout.edges.forEach((le) => {
-      const toUnsched = index.unschedulable.has(le.to);
-      const id = edgeId(le.from, le.to);
-      const cls = ['edge'];
-      if (toUnsched) cls.push('edge-cycle');
-      if (index.criticalEdges.has(id)) cls.push('crit');
-      const path = svg('path', {
-        class: cls.join(' '),
-        d: edgePath(le.points),
-        'marker-end': 'url(#arrow-default)',
+    const edges: EdgeEl[] = snapshot.plan.edges.map((e) => {
+      const id = edgeId(e.from, e.to);
+      const cyc =
+        index.nodes.get(e.from)?.status === 'in-cycle' &&
+        index.nodes.get(e.to)?.status === 'in-cycle';
+      const base: Marker = cyc ? 'cyc' : index.criticalEdges.has(id) ? 'crit' : 'default';
+      const el = svg('path', {
+        class: `edge${base === 'default' ? '' : ` ${base}`}`,
+        'marker-end': `url(#arrow-${base})`,
       });
-      edgeEls.push({ id, from: le.from, to: le.to, el: path });
-      baseEdges.append(path);
+      directG.append(el);
+      return { from: e.from, to: e.to, id, el, base, shown: true };
     });
-
-    // Nodes.
-    const nodesG = svg('g', { class: 'nodes' });
-    const nodeEls = new Map<IssueKey, SVGGElement>();
-    for (const ln of layout.nodes) {
-      const node = index.nodes.get(ln.key);
-      if (node === undefined) continue;
-      const g = buildNode(ln, node, snapshot, index, fonts);
-      nodeEls.set(ln.key, g);
-      nodesG.append(g);
-    }
-
-    const content = svg('g', { transform: `translate(0 ${HEADER_H})` }, baseEdges, hlEdges, nodesG);
-    // Columns are drawn in un-shifted coordinates (they own the header band).
-    viewport.append(colsG, content);
-    return { snapshot, index, nodeEls, edgeEls, baseEdges, hlEdges, contentW, contentH };
+    return { snapshot, index, cards, edges };
   }
 
-  function buildNode(
-    ln: LayoutNode,
-    n: PlanNode,
-    snapshot: Snapshot,
-    index: SnapshotIndex,
-    fonts: Fonts,
-  ): SVGGElement {
-    const w = ln.width;
-    const hgt = ln.height;
-    const keyFont = `600 12px ${fonts.mono}`;
-    const titleFont = `500 13px ${fonts.sans}`;
-    const metaFont = `11px ${fonts.sans}`;
-    const chipFont = `600 10px ${fonts.sans}`;
-    const padL = 14;
-    const padR = 10;
-
-    const keyText = displayKey(n.key, index.multiRepo);
-    const keyW = measureText(keyText, keyFont);
-
-    // Label chips: priority label first, max 2 + "+k", only what fits next to the key.
-    const prio = priorityName(snapshot, n)?.toLowerCase() ?? null;
-    const labels = [...n.labels].sort((a, b) => {
-      const pa = a.toLowerCase() === prio ? 0 : 1;
-      const pb = b.toLowerCase() === prio ? 0 : 1;
-      return pa - pb || (a < b ? -1 : a > b ? 1 : 0);
-    });
-    const avail = w - padL - padR - keyW - 10;
-    const chipW = (text: string): number => Math.ceil(measureText(text, chipFont)) + 12;
-    let shown = labels.slice(0, 2).map((l) => truncateToWidth(l, 70, chipFont));
-    const total = (): number => {
-      const rest = labels.length - shown.length;
-      const parts = shown.map(chipW);
-      if (rest > 0) parts.push(chipW(`+${rest}`));
-      return parts.reduce((a, b) => a + b, 0) + Math.max(0, parts.length - 1) * 4;
-    };
-    while (shown.length > 0 && total() > avail) shown = shown.slice(0, -1);
-    const chipTexts = [...shown];
-    if (labels.length - shown.length > 0 && total() <= avail)
-      chipTexts.push(`+${labels.length - shown.length}`);
-
-    const g = svg('g', {
-      class: `node status-${n.status}${n.external ? ' external' : ''}`,
-      transform: `translate(${ln.x} ${ln.y})`,
-      tabindex: 0,
-      role: 'button',
-      'data-key': n.key,
-      'aria-label': `${n.key} ${n.title}`,
-    });
-    g.append(svg('rect', { class: 'card', width: w, height: hgt, rx: 7 }));
-    const r = 7;
-    g.append(
-      svg('path', {
-        class: 'stripe',
-        d: `M${r} 0H4V${hgt}H${r}A${r} ${r} 0 0 1 0 ${hgt - r}V${r}A${r} ${r} 0 0 1 ${r} 0Z`,
-      }),
-    );
-    // Detailed content. It is hidden (display: none) by `.lod-compact` on the root.
-    const detail = svg('g', { class: 'lod-detail' });
-    g.append(detail);
-    detail.append(svg('text', { class: 'node-key', x: padL, y: 22 }, keyText));
-
-    let cx = w - padR;
-    for (let i = chipTexts.length - 1; i >= 0; i--) {
-      const text = chipTexts[i]!;
-      const cw = chipW(text);
-      cx -= cw;
-      const isMore =
-        text.startsWith('+') && i === chipTexts.length - 1 && labels.length > shown.length;
-      detail.append(
-        svg(
-          'g',
-          { class: `chip-g${isMore ? ' chip-more' : ''}`, transform: `translate(${cx} 9)` },
-          svg('rect', { width: cw, height: 16, rx: 8 }),
-          svg('text', { x: cw / 2, y: 11.5, 'text-anchor': 'middle' }, text),
-        ),
-      );
-      cx -= 4;
-    }
-
-    detail.append(
-      svg(
-        'text',
-        { class: 'node-title', x: padL, y: 41 },
-        truncateToWidth(n.title, w - padL - padR, titleFont),
+  function buildCard(n: PlanNode, snapshot: Snapshot, index: SnapshotIndex): HTMLElement {
+    const prio = priorityName(snapshot, n);
+    const labels = otherLabels(n, prio);
+    const card = h(
+      'div',
+      {
+        class: `card st-${n.status}${n.external ? ' external' : ''}`,
+        style: `width:${G.cardW}px;height:${G.cardH}px`,
+        tabindex: 0,
+        role: 'button',
+        'data-key': n.key,
+        'aria-label': `${n.key}: ${n.title}`,
+      },
+      h(
+        'div',
+        { class: 'card-top' },
+        h('span', { class: 'card-key' }, shortKey(n.key, index.multiRepo)),
+        index.criticalNodes.has(n.key)
+          ? h('span', { class: 'card-crit', title: 'On the critical path' }, icon('critical', 13))
+          : null,
+        n.external ? h('span', { class: 'badge st-external' }, 'External') : null,
+        prio !== null ? priorityTag(prio, n.priority) : null,
+        h('span', { class: 'rel' }),
+      ),
+      h('p', { class: 'card-title', title: n.title }, n.title),
+      h(
+        'div',
+        { class: 'card-foot' },
+        statusBadge(n.status),
+        h('span', { class: 'labels' }, labels.join(', ')),
+        n.assignees.length > 0 ? avatars(n.assignees, 2) : null,
       ),
     );
-
-    const meta = [
-      n.assignees.length > 0 ? n.assignees.map((a) => `@${a}`).join(' ') : '',
-      n.milestone ?? '',
-    ]
-      .filter((s) => s !== '')
-      .join('  ·  ');
-    if (meta !== '') {
-      detail.append(
-        svg(
-          'text',
-          { class: 'node-meta', x: padL, y: 56 },
-          truncateToWidth(meta, w - padL - padR, metaFont),
-        ),
-      );
-    }
-
-    // Compact content: the key and one line of title per zoom bucket, each with
-    // a font size that keeps the text legible at that bucket's zoom. The bucket
-    // shown is picked by a class on the root.
-    for (let b = 0; b < BUCKET_COUNT; b++) {
-      const fs = compactFonts(bucketTextScale(b), hgt);
-      const y = compactBaselines(fs, hgt);
-      const maxW = w - padL - padR;
-      g.append(
-        svg(
-          'g',
-          { class: `lod-c lod-b${b}` },
-          svg(
-            'text',
-            { class: 'c-key', x: padL, y: y.key, 'font-size': fs.key },
-            truncateToWidth(
-              shortKey(n.key, index.multiRepo),
-              maxW,
-              `600 ${fs.key}px ${fonts.mono}`,
-            ),
-          ),
-          svg(
-            'text',
-            { class: 'c-title', x: padL, y: y.title, 'font-size': fs.title },
-            truncateToWidth(n.title, maxW, `500 ${fs.title}px ${fonts.sans}`),
-          ),
-        ),
-      );
-    }
-
-    g.addEventListener('mouseenter', () => scheduleTooltip(n.key));
-    g.addEventListener('mouseleave', hideTooltip);
-    g.addEventListener('click', (e) => {
+    card.addEventListener('click', (e) => {
       e.stopPropagation();
       if (dragged) {
         dragged = false;
         return;
       }
-      suppressReveal = true;
-      ctx.actions.select(n.key);
+      ctx.actions.select(ctx.store.get().selected === n.key ? null : n.key);
     });
-    g.addEventListener('keydown', (e) => {
+    card.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        suppressReveal = true;
         ctx.actions.select(n.key);
       }
     });
-    return g;
+    card.addEventListener('mouseenter', () => hoverEdges(n.key, true));
+    card.addEventListener('mouseleave', () => hoverEdges(n.key, false));
+    return card;
   }
 
-  // ------------------------------------------------------------- state -> DOM
+  function hoverEdges(key: IssueKey, on: boolean): void {
+    if (ctx.store.get().selected !== null) return;
+    for (const e of [...(built?.edges ?? []), ...indirect]) {
+      if (!e.shown || (e.from !== key && e.to !== key)) continue;
+      e.el.classList.toggle('hover', on);
+      e.el.setAttribute('marker-end', `url(#arrow-${on ? 'hover' : e.base})`);
+      if (on && e.base !== 'indirect') directG.append(e.el);
+    }
+  }
 
-  function applyState(state: AppState): void {
-    if (built === null) return;
-    const { index, nodeEls, edgeEls, baseEdges, hlEdges } = built;
+  function edgeD(a: Point, b: Point): string {
+    return edgePath(
+      [
+        { x: a.x + G.cardW, y: a.y + G.cardH / 2 },
+        { x: b.x - EDGE_INSET, y: b.y + G.cardH / 2 },
+      ],
+      G.cardH / 2 + G.rowGap / 2,
+    );
+  }
+
+  /** Places the visible cards, wave headers, bands and edges. */
+  function relayout(b: Built, keys: Set<IssueKey> | null): void {
+    const { snapshot, index } = b;
+    const plan = snapshot.plan;
+    packed = packLayout(snapshot.layout.nodes, keys, G);
+    canvas.style.width = `${packed.width}px`;
+    canvas.style.height = `${packed.height}px`;
+    edgesSvg.setAttribute('width', String(packed.width));
+    edgesSvg.setAttribute('height', String(packed.height));
+
+    clear(bands);
+    clear(heads);
+    headEls = [];
+    for (const col of packed.columns) {
+      const unsched = col.layer >= plan.waves.length;
+      bands.append(
+        h('div', {
+          class: `band${col.layer % 2 === 1 ? ' alt' : ''}${unsched ? ' unsched' : ''}`,
+          style: `left:${col.x - 12}px;width:${G.cardW + 24}px;height:${packed.height}px`,
+        }),
+      );
+      const total = unsched ? plan.unschedulable.length : (plan.waves[col.layer]?.length ?? 0);
+      const shown = col.keys.length;
+      const sub =
+        shown < total
+          ? `${shown} of ${total}`
+          : unsched
+            ? `${plural(total, 'issue')} in or behind a cycle`
+            : total > 1
+              ? `${total} in parallel`
+              : '1 issue';
+      const el = h(
+        'div',
+        { class: `col-head${unsched ? ' unsched' : ''}` },
+        h('strong', null, unsched ? 'Unschedulable' : `Wave ${col.layer + 1}`),
+        h('span', null, sub),
+      );
+      headEls.push({ el, x: col.x });
+      heads.append(el);
+    }
+
+    for (const [key, card] of b.cards) {
+      const p = packed.pos.get(key);
+      card.hidden = p === undefined;
+      if (p !== undefined) card.style.transform = `translate(${p.x}px, ${p.y}px)`;
+    }
+    for (const e of b.edges) {
+      const from = packed.pos.get(e.from);
+      const to = packed.pos.get(e.to);
+      e.shown = from !== undefined && to !== undefined;
+      e.el.style.display = e.shown ? '' : 'none';
+      if (from !== undefined && to !== undefined) e.el.setAttribute('d', edgeD(from, to));
+    }
+
+    clear(indirectG);
+    indirect = [];
+    if (keys !== null) {
+      for (const e of indirectEdges(index.adjacency.out, keys)) {
+        const el = svg('path', {
+          class: 'edge indirect',
+          d: edgeD(packed.pos.get(e.from)!, packed.pos.get(e.to)!),
+          'marker-end': 'url(#arrow-indirect)',
+        });
+        el.append(
+          svg(
+            'title',
+            null,
+            `${shortKey(e.from, index.multiRepo)} to ${shortKey(e.to, index.multiRepo)}, through hidden issues`,
+          ),
+        );
+        indirectG.append(el);
+        indirect.push({ ...e, id: `${e.from}~${e.to}`, el, base: 'indirect', shown: true });
+      }
+    }
+    legend.classList.toggle('with-indirect', indirect.length > 0);
+
+    noMatch.hidden = packed.columns.length > 0;
+    if (packed.columns.length === 0) {
+      clear(noMatch);
+      noMatch.append(
+        h(
+          'div',
+          { class: 'box' },
+          h('div', { class: 'glyph' }, icon('filter', 20)),
+          h('h2', null, 'No issues match this filter'),
+          h('p', null, h('code', null, ctx.store.get().route.q.trim())),
+          h(
+            'button',
+            { class: 'btn', type: 'button', onclick: () => ctx.actions.setQuery('') },
+            'Clear filter',
+          ),
+        ),
+      );
+    }
+  }
+
+  // --------------------------------------------------------- state -> DOM
+
+  function applySelection(state: AppState, b: Built): void {
     const selected = state.selected;
     if (selected !== highlightKey) {
       highlightKey = selected;
       highlight =
-        selected !== null && index.nodes.has(selected)
-          ? computeHighlight(index.adjacency, built.snapshot.plan.edges, selected)
+        selected !== null && b.index.nodes.has(selected)
+          ? computeHighlight(b.index.adjacency, b.snapshot.plan.edges, selected)
           : null;
     }
-    const out = filteredOut(state, index);
-    const filtering = filterFor(state.route.q) !== null;
-    svgEl.classList.toggle('has-selection', highlight !== null);
-    svgEl.classList.toggle('has-filter', filtering);
-
-    for (const [key, el] of nodeEls) {
+    pane.classList.toggle('has-selection', highlight !== null);
+    for (const [key, card] of b.cards) {
       const isSel = key === selected;
       const up = highlight?.up.has(key) ?? false;
       const down = highlight?.down.has(key) ?? false;
-      el.classList.toggle('selected', isSel);
-      el.classList.toggle('hl-up', up && !isSel);
-      el.classList.toggle('hl-down', down && !isSel);
-      el.classList.toggle('dim', highlight !== null && !isSel && !up && !down);
-      el.classList.toggle('filtered', out.has(key));
-      el.setAttribute('aria-pressed', String(isSel));
+      card.classList.toggle('selected', isSel);
+      card.classList.toggle('hl-up', up && !isSel);
+      card.classList.toggle('hl-down', down && !isSel);
+      card.querySelector('.rel')!.textContent = isSel
+        ? 'Selected'
+        : up
+          ? 'Prerequisite'
+          : down
+            ? 'Dependent'
+            : '';
+      card.setAttribute('aria-pressed', String(isSel));
     }
-    for (const e of edgeEls) {
-      const role = highlight?.edges.get(e.id);
-      e.el.classList.toggle('edge-up', role === 'up' || role === 'both');
-      e.el.classList.toggle('edge-down', role === 'down');
-      e.el.classList.toggle('dim', highlight !== null && role === undefined);
-      e.el.classList.toggle('filtered', out.has(e.from) || out.has(e.to));
-      const marker =
-        role === 'up' || role === 'both'
-          ? 'up'
-          : role === 'down'
-            ? 'down'
-            : e.el.classList.contains('edge-cycle')
-              ? 'cycle'
-              : e.el.classList.contains('crit') && highlight === null
-                ? 'crit'
-                : 'default';
+    for (const e of [...b.edges, ...indirect]) {
+      if (!e.shown) continue;
+      let role: 'up' | 'down' | null = null;
+      if (highlight !== null && selected !== null) {
+        const isUp = highlight.up.has(e.from) && (highlight.up.has(e.to) || e.to === selected);
+        const isDown =
+          highlight.down.has(e.to) && (highlight.down.has(e.from) || e.from === selected);
+        role = isUp ? 'up' : isDown ? 'down' : null;
+      }
+      e.el.classList.remove('hover');
+      e.el.classList.toggle('up', role === 'up');
+      e.el.classList.toggle('down', role === 'down');
+      e.el.classList.toggle('dim', highlight !== null && role === null);
+      const marker: Marker =
+        role ?? (highlight !== null && e.base !== 'indirect' ? 'default' : e.base);
       e.el.setAttribute('marker-end', `url(#arrow-${marker})`);
-      const target = role !== undefined ? hlEdges : baseEdges;
-      if (e.el.parentNode !== target) target.append(e.el);
+      if (role !== null && e.base !== 'indirect') directG.append(e.el);
     }
-    // Keep the stacking order stable inside the base group.
-    if (highlight === null) for (const e of edgeEls) baseEdges.append(e.el);
+    // Keep the stacking order stable when nothing is highlighted.
+    if (highlight === null) for (const e of b.edges) directG.append(e.el);
   }
 
-  const update: View['update'] = (state, prev) => {
+  const update: View['update'] = (state) => {
     const tabVisible = state.route.tab === 'graph';
     const wasVisible = visible;
-    visible = tabVisible && state.status !== 'error' && state.snapshot !== null;
     pane.hidden = !tabVisible;
+    const index = getIndex(state);
+    visible = tabVisible && state.snapshot !== null && index !== null;
 
     const viewId = effectiveViewId(state);
-    const index = getIndex(state);
     if (state.snapshot !== null && index !== null) {
-      if (built === null || built.snapshot !== state.snapshot) {
-        if (lastViewId !== viewId) needsFit = true;
+      const keys = visibleKeys(state, index);
+      const rebuilt = built === null || built.snapshot !== state.snapshot;
+      if (rebuilt) {
+        if (lastViewId !== viewId) needsOpen = true;
         lastViewId = viewId;
         built = build(state.snapshot, index);
         highlightKey = null;
         highlight = null;
-        applyTransform();
+      }
+      if (rebuilt || packedFor !== keys) {
+        const filterChange = !rebuilt;
+        packedFor = keys;
+        if (filterChange) {
+          pane.classList.add('reflow');
+          window.clearTimeout(reflowTimer);
+          reflowTimer = window.setTimeout(() => pane.classList.remove('reflow'), 360);
+        }
+        relayout(built!, keys);
+        if (filterChange && visible) keepInView();
       }
     } else {
       built = null;
     }
     if (built === null) return;
 
-    applyState(state);
-    side.update(state, prev);
+    applySelection(state, built);
+    if (visible && needsOpen && stage.clientWidth > 0) openView();
+    else if (visible && !wasVisible) applyTransform();
 
-    if (visible && needsFit && pane.clientWidth > 0) {
-      fit();
-      needsFit = false;
-    }
     const selChanged = state.selected !== lastSelected;
     lastSelected = state.selected;
-    if (visible && state.selected !== null && (selChanged || !wasVisible)) {
-      if (suppressReveal) suppressReveal = false;
-      else reveal(state.selected);
-    } else if (selChanged) {
-      suppressReveal = false;
-    }
+    if (visible && state.selected !== null && (selChanged || !wasVisible)) reveal(state.selected);
   };
 
-  return { el: pane, update };
-}
-
-function legendItem(swatchClass: string, text: string): HTMLElement {
-  return h('span', { class: 'legend-item' }, h('span', { class: swatchClass }), text);
+  return { el: pane, update, fit };
 }
 
 function markerDefs(): SVGDefsElement {
   const defs = svg('defs');
-  for (const kind of ['default', 'cycle', 'crit', 'up', 'down']) {
+  for (const kind of MARKERS) {
     defs.append(
       svg(
         'marker',
@@ -689,12 +625,12 @@ function markerDefs(): SVGDefsElement {
           viewBox: '0 0 10 10',
           refX: 9,
           refY: 5,
-          markerWidth: 8,
-          markerHeight: 8,
+          markerWidth: 9,
+          markerHeight: 9,
           markerUnits: 'userSpaceOnUse',
           orient: 'auto',
         },
-        svg('path', { d: 'M0 1.5 L9 5 L0 8.5 Z', class: `arrow arrow-${kind}` }),
+        svg('path', { d: 'M1 1.5 L9 5 L1 8.5 Z', class: `arrow arrow-${kind}` }),
       ),
     );
   }

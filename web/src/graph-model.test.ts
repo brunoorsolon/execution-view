@@ -14,6 +14,8 @@ import {
   edgeId,
   ensureVisible,
   fitTransform,
+  indirectEdges,
+  packLayout,
   upstreamOf,
   wheelZoomFactor,
   zoomAt,
@@ -236,5 +238,68 @@ describe('zoom and pan math', () => {
     expect(moved.k).toBe(1);
     expect(moved.x + (2000 + 120) * moved.k).toBeCloseTo(400);
     expect(moved.y + (100 + 32) * moved.k).toBeCloseTo(300);
+  });
+});
+
+describe('packLayout', () => {
+  const g = { cardW: 100, cardH: 50, colGap: 20, rowGap: 10, pad: 5 };
+  const nodes = [
+    { key: 'a', layer: 0, row: 0 },
+    { key: 'b', layer: 0, row: 1 },
+    { key: 'c', layer: 1, row: 0 },
+    { key: 'd', layer: 2, row: 1 },
+    { key: 'e', layer: 2, row: 0 },
+  ];
+
+  it('places every card by layer and row when nothing is hidden', () => {
+    const p = packLayout(nodes, null, g);
+    expect(p.columns.map((c) => [c.layer, c.x, c.keys])).toEqual([
+      [0, 5, ['a', 'b']],
+      [1, 125, ['c']],
+      [2, 245, ['e', 'd']],
+    ]);
+    expect(p.pos.get('b')).toEqual({ x: 5, y: 65 });
+    expect(p.width).toBe(5 * 2 + 3 * 100 + 2 * 20);
+    expect(p.height).toBe(5 * 2 + 2 * 50 + 10);
+  });
+
+  it('packs visible cards to the top and drops empty columns, keeping the layer', () => {
+    const p = packLayout(nodes, new Set(['b', 'd']), g);
+    expect(p.columns.map((c) => [c.layer, c.x, c.keys])).toEqual([
+      [0, 5, ['b']],
+      [2, 125, ['d']],
+    ]);
+    expect(p.pos.get('d')).toEqual({ x: 125, y: 5 });
+    expect(p.pos.has('a')).toBe(false);
+    expect(p.height).toBe(60);
+  });
+
+  it('is empty when nothing is visible', () => {
+    const p = packLayout(nodes, new Set(), g);
+    expect(p).toEqual({ width: 0, height: 0, columns: [], pos: new Map() });
+  });
+});
+
+describe('indirectEdges', () => {
+  // a -> h1 -> h2 -> b, a -> c (direct), a -> h1 -> c, h2 -> a (cycle back)
+  const { out } = buildAdjacency([
+    { from: 'a', to: 'h1' },
+    { from: 'h1', to: 'h2' },
+    { from: 'h2', to: 'b' },
+    { from: 'a', to: 'c' },
+    { from: 'h1', to: 'c' },
+    { from: 'h2', to: 'a' },
+  ]);
+
+  it('links visible issues through hidden ones, skipping direct pairs and self loops', () => {
+    expect(indirectEdges(out, new Set(['a', 'b', 'c']))).toEqual([{ from: 'a', to: 'b' }]);
+  });
+
+  it('is empty when nothing is hidden on the way', () => {
+    expect(indirectEdges(out, new Set(['a', 'h1', 'h2', 'b', 'c']))).toEqual([]);
+  });
+
+  it('stops at the first visible issue on a path', () => {
+    expect(indirectEdges(out, new Set(['a', 'h2', 'b']))).toEqual([{ from: 'a', to: 'h2' }]);
   });
 });

@@ -732,26 +732,47 @@ Errors: unknown view → 404 `{ error }`; a provider error → 502 `{ error }`
 
 ## 16. Web UI (`web/`)
 
-Single page, no framework:
+Single page, no framework. Fonts (Geist, Geist Mono) and icons (Phosphor) are
+bundled at build time; nothing is loaded from a CDN.
 
 - A header with a view selector, the repo list, `fetchedAt`, a short content
-  hash, a Refresh button, and export links.
-- The **Graph** tab renders an SVG from `Layout`, with wave column headers,
-  status colours, external nodes with a dashed border, and bezier edges built
-  from the edge points. Pan with drag, zoom with the wheel, and a "fit" button.
-  Clicking a node selects it, highlights its upstream and downstream, and
-  opens a side panel (title, link, labels, assignees, status, wave, order,
-  blocked by, blocks). Below 75% zoom the cards switch to a compact level of
-  detail (status stripe, key and one line of title, counter-scaled to about
-  12px on screen; see `web/src/lod.ts`). A hover tooltip (after about 150ms)
-  shows the full details at any zoom, and the wave headers are counter-scaled
-  so they stay readable.
+  hash, a Refresh button, an export menu and a theme menu (system, light,
+  dark; stored in localStorage). Under it, the tabs, the Filter menu and the
+  search box.
+- A summary strip (Graph and Execution order tabs): the ready issues in plan
+  order, as many as fit plus "+N more" (which filters to `status:ready`), and a
+  status breakdown of the issues that match the filter.
+- The **Graph** tab draws HTML cards over an SVG edge layer. The column
+  (`layer`) and the order inside a column (`row`) come from `Layout`; the
+  client places the cards itself (`packLayout` in `web/src/graph-model.ts`)
+  so a filter can hide cards without leaving gaps, and drops waves with no
+  visible card (wave numbers do not change). Edges are beziers; edges inside
+  the unschedulable column are routed around the cards. A dependency between
+  two visible issues that runs only through hidden ones is drawn dashed
+  (`indirectEdges`). Wave headers sit in a sticky strip above the canvas.
+  Drag or scroll pans, Ctrl/Cmd + wheel or pinch zooms, Fit (or `F`) shows
+  everything. It opens at 100%, or fitted when the whole graph fits at 85% or
+  more. Below 70% zoom the cards switch to a compact, status-tinted form whose
+  text is counter-scaled to stay about 12px on screen (`web/src/lod.ts`).
+  Clicking a card selects it, highlights its upstream and downstream (with a
+  "Prerequisite" / "Dependent" tag on each related card) and opens the
+  details panel.
+- The details panel (Graph and Execution order tabs) shows the title, link,
+  status, critical-path flag, transitive prerequisite and dependent counts,
+  wave, position, priority, milestone, assignees, labels, blocked by and blocks.
 - The **Execution order** tab shows a table grouped by wave with order #,
-  issue, title, status, labels, and blocked by. Critical-path rows are marked.
-- The **Problems** tab lists cycles, blocked-by-cycle nodes and warnings.
-- A text filter (title, label, or `#N`) dims non-matching nodes and rows. It
+  issue, title and labels, status, assignees and blocked by. Critical-path
+  rows are marked.
+- The **Problems** tab lists each cycle as a loop, the issues blocked by a
+  cycle, and the other warnings (cycle and blocked-by-cycle warnings are not
+  repeated). It is not filtered.
+- One filter query (`web/src/filter.ts`) drives every tab and hides the
+  issues that do not match. It takes free text, `#N`, keys and qualifiers
+  (`status:`, `priority:`, `label:`, `assignee:`/`@`, `milestone:`, `repo:`,
+  `is:critical`, `no:`, `-` to exclude); the Filter menu toggles the same
+  qualifiers. A selected issue that the filter hides is deselected. The filter
   never changes the order.
-- Light and dark themes via `prefers-color-scheme`. It must be usable at 1024px width.
+- Light and dark themes via `prefers-color-scheme` or the theme menu. It must be usable at 1024px width, and it stays usable on a phone.
 
 ## 17. Conventions for contributors (and agents)
 
