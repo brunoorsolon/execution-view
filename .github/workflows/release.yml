@@ -1,13 +1,16 @@
 # Publishes the Docker image to GHCR and creates the GitHub Release for a version.
 #
-# Triggers:
-# - pushing a tag vX.Y.Z (git tag v1.2.3 && git push origin v1.2.3): verify, publish
-#   the image, then create the GitHub Release (notes from .github/release-notes/vX.Y.Z.md
-#   if present, plus GitHub's generated notes);
-# - publishing a release in the GitHub UI (which creates the tag): verify and publish
-#   the image; the release already exists;
-# - manual run (Actions → Release → Run workflow): a dry run that verifies and builds
-#   the multi-arch image without pushing anything.
+# Ways to release version X.Y.Z (package.json must already say X.Y.Z):
+# - push a tag: git tag vX.Y.Z && git push origin vX.Y.Z
+# - Actions → Release → Run workflow, with "version" set to X.Y.Z: the workflow
+#   creates the tag vX.Y.Z on the commit it ran on;
+# - publish a release in the GitHub UI (this creates the tag).
+# Each one verifies the code, publishes the image and makes sure the GitHub
+# Release exists (notes from .github/release-notes/vX.Y.Z.md if present, plus
+# GitHub's generated notes).
+#
+# Run workflow with an empty "version" is a dry run: verify and build the
+# multi-arch image without pushing or releasing anything.
 name: Release
 
 on:
@@ -16,12 +19,17 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 1.2.3 (must match package.json). Empty = dry run.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.inputs.version || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -31,25 +39,46 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.plan.outputs.release }}
+      tag: ${{ steps.plan.outputs.tag }}
+      latest: ${{ steps.plan.outputs.latest }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Check that the tag matches package.json
-        id: version
+      - name: Decide what to release
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           pkg="$(node -p "require('./package.json').version")"
-          echo "version=$pkg" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            tag="${GITHUB_REF#refs/tags/}"
-            if [[ "$tag" != "v$pkg" ]]; then
-              echo "::error::Tag $tag does not match package.json version $pkg (expected v$pkg)"
-              exit 1
-            fi
+          case "$EVENT" in
+            push) tag="$GITHUB_REF_NAME" ;;
+            release) tag="$RELEASE_TAG" ;;
+            workflow_dispatch) tag="${INPUT_VERSION:+v${INPUT_VERSION#v}}" ;;
+          esac
+          if [[ -z "$tag" ]]; then
+            echo "Dry run: nothing will be pushed or released."
+            { echo "release=false"; echo "tag="; echo "latest=false"; } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$tag is not a vX.Y.Z version"
+            exit 1
+          fi
+          if [[ "$tag" != "v$pkg" ]]; then
+            echo "::error::$tag does not match package.json version $pkg (expected v$pkg)"
+            exit 1
+          fi
+          # Prereleases (vX.Y.Z-rc.1) never move the latest tag.
+          latest=true
+          [[ "$tag" == *-* ]] && latest=false
+          echo "Releasing $tag (latest=$latest)"
+          { echo "release=true"; echo "tag=$tag"; echo "latest=$latest"; } >> "$GITHUB_OUTPUT"
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
@@ -69,7 +98,7 @@ jobs:
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Log in to GHCR
-        if: github.event_name != 'workflow_dispatch'
+        if: needs.verify.outputs.release == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -81,13 +110,12 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=dry-run,enable=${{ github.event_name == 'workflow_dispatch' }}
-          # latest only for stable vX.Y.Z tags (never for prereleases or dry runs)
+            type=semver,pattern={{version}},value=${{ needs.verify.outputs.tag }},enable=${{ needs.verify.outputs.release == 'true' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.verify.outputs.tag }},enable=${{ needs.verify.outputs.release == 'true' }}
+            type=semver,pattern={{major}},value=${{ needs.verify.outputs.tag }},enable=${{ needs.verify.outputs.release == 'true' }}
+            type=raw,value=dry-run,enable=${{ needs.verify.outputs.release != 'true' }}
           flavor: |
-            latest=auto
+            latest=${{ needs.verify.outputs.latest }}
           labels: |
             org.opencontainers.image.title=execution-view
             org.opencontainers.image.description=Deterministic dependency graph and execution order for open GitHub/Gitea issues
@@ -97,7 +125,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'workflow_dispatch' }}
+          push: ${{ needs.verify.outputs.release == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -105,7 +133,8 @@ jobs:
 
   github-release:
     needs: [verify, publish-image]
-    if: github.event_name == 'push'
+    # A published release already exists; push and manual runs create it.
+    if: needs.verify.outputs.release == 'true' && github.event_name != 'release'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -114,7 +143,7 @@ jobs:
       - name: Create the release if it does not exist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.verify.outputs.tag }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; nothing to do."
@@ -132,4 +161,13 @@ jobs:
             echo "docker pull $IMAGE:${TAG#v}"
             echo '```'
           } >> "$notes"
-          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$notes" --generate-notes
+          prerelease=()
+          [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            target=(--verify-tag)
+          else
+            # Manual run: create the tag on the commit this run built.
+            target=(--target "$GITHUB_SHA")
+          fi
+          gh release create "$TAG" "${target[@]}" "${prerelease[@]}" --title "$TAG" \
+            --notes-file "$notes" --generate-notes
