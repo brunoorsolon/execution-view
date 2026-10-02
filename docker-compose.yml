@@ -1,22 +1,23 @@
+# execution-view with the published image. Quick start: see "Run with docker compose"
+# in README.md. Settings and tokens come from .env (see .env.example).
 services:
   execution-view:
-    build: .
-    image: execution-view:latest
+    # :1 follows the latest 1.x release. Pin a version (e.g. :1.0.0) for fully
+    # reproducible deployments. To build from source instead, replace this line
+    # with `build: .`.
+    image: ghcr.io/brunoorsolon/execution-view:1
     ports:
       - '8080:8080'
-    volumes:
-      # Your config goes at /app/config.yaml (the default lookup path). Copy
-      # config.example.yaml to config.yaml first. Not needed in env-only mode.
-      - ./config.yaml:/app/config.yaml:ro
-    # Tokens and EV_* overrides. The file is optional (needs Compose >= 2.24).
+    # Env-only mode (EV_PROVIDER, EV_REPOS, ...) and tokens. Requires Compose >= 2.24
+    # for `required: false`.
     env_file:
       - path: .env
         required: false
     restart: unless-stopped
 
-    # Env-only mode: no config file at all. Remove the config volume above,
-    # then uncomment:
-    # environment:
-    #   EV_PROVIDER: github          # or gitea (also set EV_BASE_URL)
-    #   EV_REPOS: owner/repo,owner/other-repo
-    #   # the token comes from GITHUB_TOKEN / GITEA_TOKEN in .env
+    # Config-file mode (several repos or views, priority labels, scope filters,
+    # basic auth, webhooks): create config.yaml from config.example.yaml first,
+    # then uncomment. Do not uncomment before the file exists: Docker would
+    # create a directory named config.yaml instead.
+    # volumes:
+    #   - ./config.yaml:/app/config.yaml:ro

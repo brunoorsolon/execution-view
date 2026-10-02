@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # ---- build stage: compile the server (tsc) and the web UI (vite) ----
-FROM node:22-alpine AS build
+# Runs on the build machine's platform: its output is plain JavaScript, so a
+# multi-arch build only emulates the small runtime stage.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci

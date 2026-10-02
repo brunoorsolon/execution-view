@@ -27,18 +27,26 @@ Contents:
 
 ## Docker
 
-There is no published image; build it locally from the repository root:
+Every release publishes a multi-arch image (`linux/amd64`, `linux/arm64`) to the GitHub Container Registry:
+
+```sh
+docker pull ghcr.io/brunoorsolon/execution-view:1
+```
+
+Tags: the exact version (`1.0.0`), the minor (`1.0`), the major (`1`, used in these examples: it follows the newest 1.x release) and `latest`. Pin an exact version if you want to upgrade by hand.
+
+To build the image yourself instead (for example to test unreleased changes), run this from the repository root and use `execution-view` as the image name in the commands below:
 
 ```sh
 docker build -t execution-view .
 ```
 
-The image is a multi-stage build on `node:22-alpine`: it compiles the server and the web UI, then keeps only production dependencies and the compiled output. It runs as the non-root user `node`, exposes port 8080, has `EV_HOST=0.0.0.0` and `EV_PORT=8080` set, and its entrypoint is the CLI with the default command `serve`. So `docker run execution-view check` runs the check instead of the server.
+The image is a multi-stage build on `node:22-alpine`: it compiles the server and the web UI, then keeps only production dependencies and the compiled output. It runs as the non-root user `node`, exposes port 8080, has `EV_HOST=0.0.0.0` and `EV_PORT=8080` set, and its entrypoint is the CLI with the default command `serve`. So `docker run ghcr.io/brunoorsolon/execution-view:1 check` runs the check instead of the server.
 
 ### The demo (no token, no network)
 
 ```sh
-docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml execution-view
+docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml ghcr.io/brunoorsolon/execution-view:1
 ```
 
 `config.demo.yaml`, `config.example.yaml` and the demo fixture are part of the image.
@@ -46,13 +54,13 @@ docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml execution-view
 ### Env-only (no config file)
 
 ```sh
-docker run -d --name execution-view -p 8080:8080 --restart unless-stopped -e EV_PROVIDER=github -e EV_REPOS=owner/repo -e GITHUB_TOKEN execution-view
+docker run -d --name execution-view -p 8080:8080 --restart unless-stopped -e EV_PROVIDER=github -e EV_REPOS=owner/repo -e GITHUB_TOKEN ghcr.io/brunoorsolon/execution-view:1
 ```
 
 For Gitea add `-e EV_BASE_URL=https://gitea.example.com` and use `-e GITEA_TOKEN`. All variables are listed in [CONFIGURATION.md](CONFIGURATION.md#env-only-mode). Put the variables in a file to keep them out of your shell history and process list:
 
 ```sh
-docker run -d --name execution-view -p 8080:8080 --restart unless-stopped --env-file .env execution-view
+docker run -d --name execution-view -p 8080:8080 --restart unless-stopped --env-file .env ghcr.io/brunoorsolon/execution-view:1
 ```
 
 ### With a config file
@@ -60,7 +68,7 @@ docker run -d --name execution-view -p 8080:8080 --restart unless-stopped --env-
 The image does **not** set `EV_CONFIG`. Without it, the default lookup is `<cwd>/config.yaml`, which is `/app/config.yaml` in the image: mount your file there.
 
 ```sh
-docker run -d --name execution-view -p 8080:8080 --restart unless-stopped -v "$PWD/config.yaml:/app/config.yaml:ro" --env-file .env execution-view
+docker run -d --name execution-view -p 8080:8080 --restart unless-stopped -v "$PWD/config.yaml:/app/config.yaml:ro" --env-file .env ghcr.io/brunoorsolon/execution-view:1
 ```
 
 Notes:
@@ -73,7 +81,7 @@ Notes:
 ### Verify inside the container
 
 ```sh
-docker run --rm -v "$PWD/config.yaml:/app/config.yaml:ro" --env-file .env execution-view check
+docker run --rm -v "$PWD/config.yaml:/app/config.yaml:ro" --env-file .env ghcr.io/brunoorsolon/execution-view:1 check
 ```
 
 The exit code is `0`, `1` or `2` (see [PREREQUISITES.md](PREREQUISITES.md#verify-with-execution-view-check)).
@@ -82,29 +90,23 @@ The repository also has `scripts/smoke-test.sh`, which builds the image and test
 
 ## docker-compose
 
-`docker-compose.yml` in the repository builds the image and starts one service.
+The step-by-step setup is in the README: [Run it on your repo with docker compose](../README.md#run-it-on-your-repo-with-docker-compose). In short, put `docker-compose.yml` (from the repository) and a `.env` (from `.env.example`) in one folder, then:
 
 ```sh
-cp .env.example .env
+docker compose run --rm execution-view check
 ```
 
 ```sh
-cp config.example.yaml config.yaml
-```
-
-Edit `.env` (tokens, and optionally `EV_BASIC_AUTH=user:password`) and `config.yaml` (remove the sources and views you do not use), then:
-
-```sh
-docker compose up -d --build
+docker compose up -d
 ```
 
 What the compose file does:
 
-- builds `.` and tags the image `execution-view:latest`, publishes `8080:8080`, and restarts `unless-stopped`;
-- mounts `./config.yaml` read-only at `/app/config.yaml`;
-- loads `.env` with `env_file` (marked `required: false`, which needs Docker Compose 2.24 or newer). The tokens in `.env` are named `GITHUB_TOKEN` and `GITEA_TOKEN`, so `tokenEnv: GITHUB_TOKEN` in the config finds them.
+- runs `ghcr.io/brunoorsolon/execution-view:1`, publishes `8080:8080` and restarts `unless-stopped`;
+- loads `.env` with `env_file` (marked `required: false`, which needs Docker Compose 2.24 or newer). In env-only mode `.env` holds `EV_PROVIDER`, `EV_REPOS` (and `EV_BASE_URL` for Gitea) plus the token; with a config file it holds only the tokens, named `GITHUB_TOKEN` and `GITEA_TOKEN`, so `tokenEnv: GITHUB_TOKEN` in the config finds them;
+- has a commented-out `volumes:` entry that mounts `./config.yaml` at `/app/config.yaml` for config-file mode. Create the file before you uncomment it, otherwise Docker creates a directory with that name.
 
-For **env-only mode**, remove the `./config.yaml` volume and uncomment the `environment:` block at the bottom of the file (`EV_PROVIDER`, `EV_REPOS`, ...); the token still comes from `.env`. To publish only on localhost (when a reverse proxy runs on the same host), change the port mapping to `'127.0.0.1:8080:8080'`.
+To build from source instead of pulling, replace the `image:` line with `build: .` and run `docker compose up -d --build` from the repository root. To publish only on localhost (when a reverse proxy runs on the same host), change the port mapping to `'127.0.0.1:8080:8080'`.
 
 ## Bare Node.js
 
@@ -299,21 +301,15 @@ Small. There is no database and no persistent state: the process keeps one snaps
 
 The app keeps no persistent state, so upgrading means replacing the code and restarting.
 
-Docker:
+Docker with compose:
 
 ```sh
-git pull
+docker compose pull && docker compose up -d
 ```
 
-```sh
-docker build -t execution-view .
-```
+Plain Docker: `docker pull ghcr.io/brunoorsolon/execution-view:1`, remove the old container (`docker rm -f execution-view`) and run your usual `docker run` command again. With a pinned version, change the tag first. Release notes are on the [releases page](https://github.com/brunoorsolon/execution-view/releases).
 
-```sh
-docker rm -f execution-view
-```
-
-Then run the container again with your usual `docker run` command. With compose: `git pull && docker compose up -d --build`.
+From source: `git pull`, then `docker build -t execution-view .` (or `docker compose up -d --build` with `build: .`).
 
 Bare Node.js: `git pull && npm ci && npm run build`, then restart the service (`sudo systemctl restart execution-view`).
 
