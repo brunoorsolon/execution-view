@@ -1,6 +1,12 @@
-import type { IssueKey, PlanNode } from '../../../src/core/types.js';
+import type { DependencySource, IssueKey, PlanNode } from '../../../src/core/types.js';
 import type { AppState, Store } from '../state.js';
-import { displayStatus, isClaimed, statusLabel, type DisplayStatus } from '../format.js';
+import {
+  displayStatus,
+  isClaimed,
+  sourceLabel,
+  statusLabel,
+  type DisplayStatus,
+} from '../format.js';
 import type { Tab } from '../route.js';
 import { h } from '../dom.js';
 
@@ -41,6 +47,19 @@ export function statusBadges(node: PlanNode): HTMLElement {
 
 export function labelChip(label: string): HTMLElement {
   return h('span', { class: 'label', title: label }, label);
+}
+
+/**
+ * Text marker naming where a dependency link was declared. Reads on its own
+ * ("native", "body", "native + body"), never colour alone.
+ */
+export function sourceTag(sources: readonly DependencySource[]): HTMLElement | null {
+  if (sources.length === 0) return null;
+  return h(
+    'span',
+    { class: 'src-tag', title: `Declared by: ${sourceLabel(sources)}` },
+    sourceLabel(sources),
+  );
 }
 
 /** Priority tag; the most urgent configured priority is filled. */

@@ -1,4 +1,7 @@
-import type { IssueKey, NodeStatus } from '../../src/core/types.js';
+import type { DependencySource, IssueKey, NodeStatus } from '../../src/core/types.js';
+
+/** Display order of a link's declared sources, most authoritative first. */
+const SOURCE_ORDER: readonly DependencySource[] = ['native', 'body', 'sub-issue'];
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -22,6 +25,11 @@ export function absoluteTime(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return iso;
   return new Date(t).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
+}
+
+/** Readable text for a link's declared sources ("native", "body", "native + body"). */
+export function sourceLabel(sources: readonly DependencySource[]): string {
+  return SOURCE_ORDER.filter((s) => sources.includes(s)).join(' + ');
 }
 
 export function shortHash(hash: string, length = 8): string {

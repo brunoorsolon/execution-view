@@ -1556,10 +1556,23 @@ code {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Own row: a long source label must not squeeze the relation title. */
+.rel-item .src-tag {
+  grid-column: 2 / -1;
+  justify-self: start;
+}
 .rel-empty {
   padding: 4px 0;
   font-size: 13px;
   color: var(--fg-3);
+}
+.src-tag {
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--fg-3);
+  white-space: nowrap;
 }
 .rel-note {
   margin: 6px 0 0;
