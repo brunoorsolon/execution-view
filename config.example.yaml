@@ -6,7 +6,7 @@
 #
 # Environment overrides that apply on top of this file:
 #   EV_HOST, EV_PORT (1-65535), EV_CACHE_TTL (seconds, >= 0),
-#   EV_BASIC_AUTH (user:password), EV_WEBHOOK_SECRET
+#   EV_REFRESH_MINUTES (0-1440), EV_BASIC_AUTH (user:password), EV_WEBHOOK_SECRET
 
 server:
   host: 0.0.0.0 # default: 0.0.0.0
@@ -23,6 +23,9 @@ server:
 
 cache:
   ttlSeconds: 300 # default: 300. 0 disables caching.
+
+ui:
+  refreshMinutes: 5 # default: 5. How often the web UI refreshes the open view; 0 = only the Refresh button.
 
 # Optional webhooks: GitHub/Gitea/Forgejo issue events invalidate the cached views of the repository
 # (POST /api/webhooks/github and /api/webhooks/gitea). Disabled without a secret. One of:

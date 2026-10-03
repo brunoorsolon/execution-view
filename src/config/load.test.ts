@@ -40,6 +40,7 @@ describe('parseConfig defaults', () => {
     const cfg = parseConfig(MIN, {});
     expect(cfg.server).toEqual({ host: '0.0.0.0', port: 8080, basicAuth: null });
     expect(cfg.cache).toEqual({ ttlSeconds: 300 });
+    expect(cfg.ui).toEqual({ refreshMinutes: 5 });
     expect(cfg.webhooks).toBeNull();
     expect(cfg.sources).toEqual([
       {
@@ -408,14 +409,21 @@ describe('webhooks', () => {
 });
 
 describe('EV_* overrides', () => {
-  it('EV_HOST, EV_PORT and EV_CACHE_TTL override the file', () => {
-    const yaml = `server: { host: 1.2.3.4, port: 9000 }\ncache: { ttlSeconds: 10 }\n${MIN}`;
+  it('EV_HOST, EV_PORT, EV_CACHE_TTL and EV_REFRESH_MINUTES override the file', () => {
+    const yaml = `server: { host: 1.2.3.4, port: 9000 }\ncache: { ttlSeconds: 10 }\nui: { refreshMinutes: 15 }\n${MIN}`;
     const base = parseConfig(yaml, {});
     expect(base.server).toMatchObject({ host: '1.2.3.4', port: 9000 });
     expect(base.cache.ttlSeconds).toBe(10);
-    const cfg = parseConfig(yaml, { EV_HOST: 'localhost', EV_PORT: '3000', EV_CACHE_TTL: '0' });
+    expect(base.ui.refreshMinutes).toBe(15);
+    const cfg = parseConfig(yaml, {
+      EV_HOST: 'localhost',
+      EV_PORT: '3000',
+      EV_CACHE_TTL: '0',
+      EV_REFRESH_MINUTES: '0',
+    });
     expect(cfg.server).toMatchObject({ host: 'localhost', port: 3000 });
     expect(cfg.cache.ttlSeconds).toBe(0);
+    expect(cfg.ui.refreshMinutes).toBe(0);
   });
 
   it('validates EV_PORT and EV_CACHE_TTL', () => {
@@ -428,6 +436,15 @@ describe('EV_* overrides', () => {
         'EV_CACHE_TTL',
       );
     }
+    for (const minutes of ['-1', 'x', '2.5', '1441']) {
+      expect(errorOf(() => parseConfig(MIN, { EV_REFRESH_MINUTES: minutes })).message).toContain(
+        'EV_REFRESH_MINUTES',
+      );
+    }
+    expect(parseConfig(MIN, { EV_REFRESH_MINUTES: '1440' }).ui.refreshMinutes).toBe(1440);
+    expect(
+      errorOf(() => parseConfig(`ui: { refreshMinutes: 1441 }\n${MIN}`, {})).message,
+    ).toContain('refreshMinutes');
   });
 
   it('treats empty values as unset', () => {

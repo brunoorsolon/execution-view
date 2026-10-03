@@ -73,6 +73,8 @@ export interface AppState {
   /** View the snapshot / status / error belong to. */
   loadedViewId: string | null;
   snapshot: Snapshot | null;
+  /** Last snapshot of every view loaded in this tab, so a revisit skips the fetch. */
+  snapshots: Record<string, Snapshot>;
   error: string | null;
   refreshing: boolean;
   refreshError: string | null;
@@ -86,6 +88,7 @@ export const INITIAL_STATE: AppState = {
   status: 'idle',
   loadedViewId: null,
   snapshot: null,
+  snapshots: {},
   error: null,
   refreshing: false,
   refreshError: null,
@@ -129,23 +132,27 @@ export function reducer(state: AppState, action: Action): AppState {
       // is swapped by the loader (which dispatches load-start).
       return { ...state, route: action.route, selected: viewChanged ? null : state.selected };
     }
-    case 'load-start':
+    case 'load-start': {
+      // A view loaded earlier is shown as it was; the refresh timer updates it.
+      const cached = state.snapshots[action.viewId] ?? null;
       return {
         ...state,
-        status: 'loading',
+        status: cached === null ? 'loading' : 'ready',
         loadedViewId: action.viewId,
-        snapshot: state.loadedViewId === action.viewId ? state.snapshot : null,
+        snapshot: cached,
         error: null,
         refreshing: false,
         refreshError: null,
         selected: state.loadedViewId === action.viewId ? state.selected : null,
       };
+    }
     case 'load-done':
       if (action.viewId !== state.loadedViewId) return state;
       return {
         ...state,
         status: 'ready',
         snapshot: action.snapshot,
+        snapshots: { ...state.snapshots, [action.viewId]: action.snapshot },
         error: null,
         selected: keepSelection(state.selected, action.snapshot),
       };
@@ -162,6 +169,7 @@ export function reducer(state: AppState, action: Action): AppState {
         refreshError: null,
         status: 'ready',
         snapshot: action.snapshot,
+        snapshots: { ...state.snapshots, [action.viewId]: action.snapshot },
         error: null,
         selected: keepSelection(state.selected, action.snapshot),
       };

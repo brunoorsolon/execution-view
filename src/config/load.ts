@@ -5,6 +5,7 @@ import type { ZodIssue } from 'zod';
 import type { OrderingMode, ProviderKind } from '../core/types.js';
 import {
   DEFAULT_KEYWORDS,
+  MAX_REFRESH_MINUTES,
   rawConfigSchema,
   type AppConfig,
   type RawConfig,
@@ -22,6 +23,7 @@ type Env = Record<string, string | undefined>;
 export const DEFAULT_HOST = '0.0.0.0';
 export const DEFAULT_PORT = 8080;
 export const DEFAULT_CACHE_TTL_SECONDS = 300;
+export const DEFAULT_REFRESH_MINUTES = 5;
 export const DEFAULT_GITHUB_API_URL = 'https://api.github.com';
 export const DEFAULT_GITHUB_WEB_URL = 'https://github.com';
 
@@ -286,10 +288,16 @@ function resolveConfig(input: unknown, env: Env, baseDir: string): AppConfig {
     ttlEnv !== undefined
       ? parseIntEnv('EV_CACHE_TTL', ttlEnv, 0, Number.MAX_SAFE_INTEGER)
       : (raw.cache?.ttlSeconds ?? DEFAULT_CACHE_TTL_SECONDS);
+  const refreshEnv = envValue(env, 'EV_REFRESH_MINUTES');
+  const refreshMinutes =
+    refreshEnv !== undefined
+      ? parseIntEnv('EV_REFRESH_MINUTES', refreshEnv, 0, MAX_REFRESH_MINUTES)
+      : (raw.ui?.refreshMinutes ?? DEFAULT_REFRESH_MINUTES);
 
   return {
     server: { host, port, basicAuth: resolveBasicAuth(raw.server?.basicAuth, env) },
     cache: { ttlSeconds },
+    ui: { refreshMinutes },
     webhooks: resolveWebhooks(raw.webhooks, env, warnings),
     sources,
     views,

@@ -89,6 +89,13 @@ describe('health and views', () => {
     expect(res.json()).toEqual({ status: 'ok' });
   });
 
+  it('GET /api/settings reports the refresh interval', async () => {
+    const { app } = setup({ config: demoConfig((c) => (c.ui.refreshMinutes = 12)) });
+    const res = await app.inject('/api/settings');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ refreshMinutes: 12 });
+  });
+
   it('GET /api/views lists the demo view with no-store', async () => {
     const { app } = setup();
     const res = await app.inject('/api/views');

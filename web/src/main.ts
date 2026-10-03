@@ -1,7 +1,7 @@
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
 import './styles.css';
-import { errorMessage, fetchSnapshot, fetchViews, refreshSnapshot } from './api.js';
+import { errorMessage, fetchSettings, fetchSnapshot, fetchViews, refreshSnapshot } from './api.js';
 import { h } from './dom.js';
 import { parseHash, serializeHash, type Route, type Tab } from './route.js';
 import {
@@ -56,6 +56,7 @@ let loadToken = 0;
 async function loadSnapshot(viewId: string): Promise<void> {
   const token = ++loadToken;
   store.dispatch({ type: 'load-start', viewId });
+  if (store.get().status === 'ready') return; // loaded earlier in this tab
   try {
     const snapshot = await fetchSnapshot(viewId);
     if (token === loadToken) store.dispatch({ type: 'load-done', viewId, snapshot });
@@ -194,4 +195,11 @@ render();
 fetchViews().then(
   (list) => store.dispatch({ type: 'views-loaded', views: list }),
   (e: unknown) => store.dispatch({ type: 'views-failed', error: errorMessage(e) }),
+);
+
+fetchSettings().then(
+  ({ refreshMinutes }) => {
+    if (refreshMinutes > 0) setInterval(() => void refresh(), refreshMinutes * 60_000);
+  },
+  () => {}, // no timer; the Refresh button still works
 );
