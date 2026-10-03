@@ -231,6 +231,7 @@ export function nodeTarget(n: PlanNode, snapshot: Snapshot, index: SnapshotIndex
     external: n.external,
     priority: priorityName(snapshot, n),
     critical: index.criticalNodes.has(n.key),
+    parents: n.parents,
   };
 }
 
