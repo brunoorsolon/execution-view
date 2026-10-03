@@ -4,20 +4,20 @@ import './styles.css';
 import { errorMessage, fetchSnapshot, fetchViews, refreshSnapshot } from './api.js';
 import { h } from './dom.js';
 import { parseHash, serializeHash, type Route, type Tab } from './route.js';
-import { effectiveViewId, INITIAL_STATE, Store } from './state.js';
+import {
+  effectiveViewId,
+  getIndex,
+  INITIAL_STATE,
+  isVisible,
+  Store,
+  visibleKeys,
+} from './state.js';
 import { applyTheme, loadTheme } from './theme.js';
 import { createGraphView } from './views/graph.js';
 import { createHeader } from './views/header.js';
 import { createOrderView } from './views/order.js';
 import { createProblemsView } from './views/problems.js';
-import {
-  getIndex,
-  isVisible,
-  visibleKeys,
-  type Actions,
-  type View,
-  type ViewCtx,
-} from './views/shared.js';
+import { type Actions, type View, type ViewCtx } from './views/shared.js';
 import { createSidePanel } from './views/side-panel.js';
 import { createStates } from './views/states.js';
 import { createSummary } from './views/summary.js';
@@ -33,10 +33,14 @@ function navigate(route: Route, replace = false): void {
   const hash = serializeHash(route);
   if (replace) {
     history.replaceState(null, '', hash);
-    store.dispatch({ type: 'route', route });
   } else if (location.hash !== hash) {
-    location.hash = hash; // hashchange dispatches the route
+    location.hash = hash; // hashchange re-dispatches the same route; the sync dispatch below covers callers that act first
+  } else {
+    return;
   }
+  // Dispatch synchronously so a caller that acts right after navigate, or a
+  // microtask that resolves before the hashchange event, sees the new route.
+  store.dispatch({ type: 'route', route });
 }
 
 function currentRoute(): Route {
@@ -142,9 +146,11 @@ store.subscribe((state) => {
   if (viewId !== null && viewId !== state.loadedViewId) {
     void loadSnapshot(viewId);
   }
-  // Canonicalise the URL once the default view is known.
-  if (viewId !== null && state.route.viewId !== viewId) {
-    navigate({ ...state.route, viewId }, true);
+  // Keep the URL in step with the route: the canonical view id, and the filter
+  // a reveal changed in the store.
+  if (viewId !== null) {
+    const route = { ...state.route, viewId };
+    if (location.hash !== serializeHash(route)) navigate(route, true);
   }
 });
 
@@ -154,7 +160,12 @@ function titleFor(state: ReturnType<Store['get']>): string {
 }
 
 window.addEventListener('hashchange', () => {
-  store.dispatch({ type: 'route', route: parseHash(location.hash) });
+  const route = parseHash(location.hash);
+  const current = store.get().route;
+  // Skip the echo of our own navigate(); this only handles back/forward and manual edits.
+  if (current.viewId !== route.viewId || current.tab !== route.tab || current.q !== route.q) {
+    store.dispatch({ type: 'route', route });
+  }
 });
 
 document.addEventListener('keydown', (e) => {

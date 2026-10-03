@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PlanNode, Snapshot } from '../../src/core/types.js';
 import type { ViewSummary } from './api.js';
-import { DEFAULT_ROUTE } from './route.js';
+import { DEFAULT_ROUTE, type Tab } from './route.js';
 import {
   INITIAL_STATE,
   Store,
@@ -163,6 +163,36 @@ describe('Store', () => {
     store.dispatch({ type: 'select', key: null });
     expect(calls).toBe(1);
     expect(store.get().selected).toBeNull();
+  });
+});
+
+describe('select reveals a hidden issue', () => {
+  const loaded = (q: string, tab: Tab = 'graph'): Store => {
+    const store = new Store({ ...INITIAL_STATE, views, route: { ...DEFAULT_ROUTE, tab, q } });
+    store.dispatch({ type: 'load-start', viewId: 'a' });
+    store.dispatch({ type: 'load-done', viewId: 'a', snapshot: snapshot(['o/r#1', 'o/q#1']) });
+    return store;
+  };
+
+  it('narrows the filter to the repository of a hidden issue', () => {
+    const store = loaded('repo:o/r');
+    store.dispatch({ type: 'select', key: 'o/q#1' });
+    expect(store.get().route.q).toBe('repo:o/q');
+    expect(store.get().selected).toBe('o/q#1');
+  });
+
+  it('keeps the filter for an issue it already shows', () => {
+    const store = loaded('repo:o/r');
+    const route = store.get().route;
+    store.dispatch({ type: 'select', key: 'o/r#1' });
+    expect(store.get().route).toBe(route);
+    expect(store.get().selected).toBe('o/r#1');
+  });
+
+  it('stays on the current tab', () => {
+    const store = loaded('repo:o/r', 'problems');
+    store.dispatch({ type: 'select', key: 'o/q#1' });
+    expect(store.get().route.tab).toBe('problems');
   });
 });
 
