@@ -25,9 +25,10 @@ export type DependencySource = 'native' | 'body' | 'sub-issue';
  * A relation declared on an issue.
  * kind 'blocked-by': the issue that declares it cannot start before `ref` is closed.
  * kind 'blocks':     `ref` cannot start before the issue that declares it is closed.
+ * kind 'parent':     the declaring issue's parent (hierarchy only: never an edge).
  */
 export interface RawRelation {
-  kind: 'blocked-by' | 'blocks';
+  kind: 'blocked-by' | 'blocks' | 'parent';
   ref: IssueRef;
   source: DependencySource;
 }
@@ -97,6 +98,10 @@ export interface PlanNode {
   blockedBy: IssueKey[];
   /** Keys of open direct dependents, sorted with compareKeys. */
   blocks: IssueKey[];
+  /** Keys of issues named by a `Parent:` relation line on this issue, present in the plan and sorted with compareKeys. Hierarchy only: never an edge. */
+  parents: IssueKey[];
+  /** Keys of issues whose `Parent:` relation line names this issue, present in the plan and sorted with compareKeys. */
+  children: IssueKey[];
   /** Index of the first matching entry of ordering.priorityLabels; priorityLabels.length when none match. Lower = more urgent. */
   priority: number;
   /** Number of nodes on the longest dependent chain starting at this node (1 = nothing depends on it). 0 when unschedulable. */

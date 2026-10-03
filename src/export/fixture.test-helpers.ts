@@ -34,6 +34,8 @@ function node(spec: NodeSpec): PlanNode {
     order: spec.order,
     blockedBy: spec.blockedBy ?? [],
     blocks: spec.blocks ?? [],
+    parents: [],
+    children: [],
     priority: spec.priority ?? 2,
     remainingDepth: spec.wave === null ? 0 : 1,
   };

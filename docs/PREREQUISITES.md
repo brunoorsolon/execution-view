@@ -110,7 +110,18 @@ You can change them in the config (see [Custom keywords](#custom-keywords)).
 
 **Rule 2: section form.** A markdown heading (`#` to `######`) whose text equals a keyword (case-insensitive, ignoring bold markers, closing `#`s and a trailing colon) starts a section. Every **list item** under it (`-`, `*`, `+`, `1.`, with or without a checkbox, any indentation) contributes its references, with that keyword's direction, until the next heading of any level. Plain text lines inside the section are ignored.
 
-**Rule 3: reference forms.**
+**Rule 3: relation lines.** A line declares relations when, after optional leading whitespace, it starts with:
+
+1. an optional list marker (`-`, `*`, `+` or `1.`),
+2. an optional task checkbox (`[ ]`, `[x]`, `[X]`),
+3. the keyword `Blocked by` or `Parent` (case-insensitive) and a colon,
+4. then `[`, the references, and `]`; any text after `]` is a note for humans.
+
+Only the references **inside the brackets** count. Unlike rules 1 and 2, the keywords are fixed (not configurable). When a line has this shape, only this rule applies to it in every mode that reads the body (`true` and `strict`; `false` reads no body line at all), so `- Blocked by: [#76] needs #99 first` reads only `#76`. There is no `Blocks:` form: the blocked issue declares its blocker.
+
+`Parent` is a hierarchy link, not a dependency: it creates no edge, does not change waves, order or the critical path, and never pulls an issue into the plan. See [Parent relations and `body: strict`](#parent-relations-and-body-strict).
+
+**Rule 4: reference forms.**
 
 | Form                                   | Meaning                                                                                                                                                                                                                                                                                                                                   |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -120,14 +131,14 @@ You can change them in the config (see [Custom keywords](#custom-keywords)).
 
 A `#123` must not be glued to a word or to a `/` before it (`foo#1` and `a/b/#1` are not references) and must not continue with word characters (`#3abc` is not a reference). Issue numbers start at 1.
 
-**Rule 4: ignored regions.** Nothing inside these is read, even if it looks like a declaration:
+**Rule 5: ignored regions.** Nothing inside these is read, even if it looks like a declaration:
 
 - fenced code blocks (``` or `~~~`; an unclosed fence ignores the rest of the body),
 - inline code spans (`` `like this` ``),
 - HTML comments, including multi-line ones (`<!-- ... -->`),
 - blockquote lines (starting with `>`).
 
-**Rule 5: prose is ignored, on purpose.** The keyword has to be at the start of the line (after markers). "This depends on #3" is not a declaration.
+**Rule 6: prose is ignored, on purpose.** The keyword has to be at the start of the line (after markers). "This depends on #3" is not a declaration.
 
 Bodies are read line by line, so a keyword and its references must be **on the same line** (in section form, each reference goes on its own list item under the heading). Line endings may be `\n`, `\r\n` or `\r`.
 
@@ -171,6 +182,43 @@ Assume default keywords and a source on `github.com`.
 | A comment saying `Depends on #3`                       | **Not accepted**                      | Comments are not read                                                                                        |
 
 Also good to know: a reference that is accepted by the parser but points at a **pull request** or a non-existent issue becomes a `dangling-reference` warning (section 6).
+
+Relation-line rows, for any `dependencies.body` setting unless stated otherwise:
+
+| Body text                                                             | Result                                                              | Why                                                                  |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `- Blocked by: [#76, #77]`                                            | Accepted: blocked by #76 and #77                                    | Relation line, list marker (rule 3)                                  |
+| `* [x] Parent: [owner/repo#12]`                                       | Accepted: parent `owner/repo#12`                                    | Relation line, task checkbox; hierarchy only, no dependency          |
+| `BLOCKED BY: [#1]`, `parent: [#2]`                                    | Accepted                                                            | Relation-line keywords are case-insensitive                          |
+| `Parent: [https://github.com/o/r/issues/9]`                           | Accepted: parent `o/r#9`                                            | URL form, on the source's web host                                   |
+| `Blocked by: [puglab/cortex#12] needs the new API first`              | Accepted: blocked by `puglab/cortex#12` only                        | Text after `]` is a note for humans                                  |
+| `Parent: [#71] and #72`                                               | Only #71 accepted                                                   | References outside the brackets are ignored                          |
+| `Parent: [#71]` where #71 is not in the snapshot                      | Ignored, no warning                                                 | A parent never pulls an issue into the plan                          |
+| `## Dependencies` then `- No implementation dependency on #17 or #72` | Accepted in `body: true`; **not accepted** in `body: strict`        | The section form reads every bullet (the reason `strict` exists)     |
+| `Depends on #12` with `body: strict`                                  | **Not accepted**                                                    | `strict` reads only relation lines                                   |
+| `Blocks: [#3]`                                                        | Accepted as "blocks #3" with `body: true`; not accepted in `strict` | There is no `Blocks` relation keyword; only the legacy forms read it |
+| `` `Blocked by: [#3]` `` or inside a fence                            | **Not accepted**                                                    | Inline code and fenced code are ignored                              |
+| `> Blocked by: [#3]`                                                  | **Not accepted**                                                    | Quoted text is ignored                                               |
+| `Blocked by: [#3` (no closing `]`)                                    | `body: true`: blocked by #3; `strict`: **not accepted**             | The shape is incomplete, so `strict` skips the line                  |
+| `Blocked by: [#3]` with `body: false`                                 | **Not accepted**                                                    | `false` reads no body line                                           |
+
+### Parent relations and `body: strict`
+
+A `Parent: [...]` line names the parent of the issue that carries it (a Wayfinder map or a spec). It is a **hierarchy link only**:
+
+- it creates no dependency: no edge, no wave, no order, no critical path, no cycle;
+- it never pulls an extra issue into the plan: a parent that is not already in the snapshot is ignored without a warning;
+- the snapshot's plan nodes carry `parents` and `children` (issue keys, sorted), filled from `Parent` lines between issues of the snapshot.
+
+`views[].dependencies.body` accepts three values:
+
+| Value            | What is read                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| `true` (default) | Rules 1 to 5: keyword lines, sections, and relation lines (rule 3)                   |
+| `strict`         | Rule 3 only: relation lines. Keyword lines, section headings and bullets are ignored |
+| `false`          | Nothing in the body                                                                  |
+
+`strict` is the way to keep agent-written tickets from being misread: a bullet such as `- No implementation dependency on #17 or #72` under `## Dependencies` is read as a dependency by the section form (rule 2) but ignored by `strict`.
 
 ### Custom keywords
 
@@ -224,6 +272,20 @@ Describe the work.
 Depends on: #12, owner/repo#7
 Blocks: #30
 ```
+
+For new templates, prefer a `## Relations` section made of relation lines (rule 3). It works in every `dependencies.body` mode, including `strict`, and prose in nearby bullets cannot be misread:
+
+```md
+## Relations
+
+<!-- Use the bracketed forms; text after ] is ignored. Leave a line out when it does not apply. -->
+
+- Parent: [#71] the spec this belongs to
+- Blocked by: [#76, #77] both must land first
+- Blocked by: [puglab/cortex#12] needs the new API first
+```
+
+Rules 1 and 2 are ignored by `body: strict`, so an issue template that keeps only `## Relations` needs no keyword lines or section headings at all.
 
 ## 5. Cross-repository and external issues
 
@@ -314,6 +376,7 @@ Before you run against a real repository:
 
 - [ ] Dependencies are declared **natively** and/or as **body lines** on the issue (not in comments), using the syntax of section 4.
 - [ ] Body lines start with a keyword (`Depends on`, `Blocked by`, `Requires`, `Dependencies`, `Blocks`, ...) and keep the references on the same line, or use a `## Depends on` (or `## Dependencies`) heading with list items.
+- [ ] For the strictest reading, use a `## Relations` section with `Blocked by: [#N]` and `Parent: [#N]` lines and set `dependencies.body: strict`, so keyword lines and section bullets cannot be misread.
 - [ ] For native dependencies: the feature exists on your platform version, and on Gitea it is enabled for the repository (and cross-repository dependencies are allowed if you use them).
 - [ ] The token is **read-only**, is stored in an environment variable, and can read **every repository** involved, including repositories that are only referenced.
 - [ ] Referenced issues are **issues, not pull requests**.

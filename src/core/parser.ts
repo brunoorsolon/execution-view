@@ -15,6 +15,8 @@ export interface ParseOptions {
   keywords?: KeywordConfig;
   /** Hostnames accepted in URL references (e.g. ['github.com']). Empty or undefined: URLs are ignored. */
   webHosts?: string[];
+  /** When true, read only `Blocked by: [...]` / `Parent: [...]` relation lines and ignore the keyword-line and section forms. */
+  strict?: boolean;
 }
 
 type Kind = RawRelation['kind'];
@@ -127,6 +129,14 @@ const FENCE_CLOSE_RE = /^\s*(`+|~+)\s*$/;
 const HEADING_RE = /^ {0,3}#{1,6}(?:[ \t]+(.*))?$/;
 const LIST_MARKER_RE = /^\s*(?:[-*+]|\d+\.)\s+/;
 
+/**
+ * A relation line: `Blocked by: [...]` or `Parent: [...]`, optionally after a list
+ * marker or task checkbox. Only references inside the brackets count. The keyword is
+ * fixed (not configurable) and case-insensitive.
+ */
+const RELATION_LINE_RE =
+  /^\s*(?:(?:[-*+]|\d+\.)\s+)?(?:\[[ xX]\]\s*)?(blocked by|parent)\s*:\s*\[/i;
+
 /** Removes surrounding `**` / `__` emphasis markers. */
 function stripEmphasis(s: string): string {
   let r = s.trim();
@@ -149,7 +159,7 @@ function headingText(raw: string | undefined): string {
 
 export function parseBodyRelations(body: string, options: ParseOptions = {}): RawRelation[] {
   const keywords = buildKeywords(options.keywords ?? DEFAULT_KEYWORDS);
-  if (keywords.length === 0 || !body) return [];
+  if (!body) return [];
   const kindOf = new Map<string, Kind>(keywords.map((k) => [k.text, k.kind]));
   const hosts = new Set(
     (options.webHosts ?? []).map((h) => h.trim().toLowerCase()).filter((h) => h !== ''),
@@ -225,6 +235,19 @@ export function parseBodyRelations(body: string, options: ParseOptions = {}): Ra
     const line = cleanLine(raw, lineState);
     if (/^\s*>/.test(line)) continue;
 
+    // A relation line is read in every mode; when it has this shape, only the
+    // references inside its brackets count (text after `]` is a human note).
+    const relation = RELATION_LINE_RE.exec(line);
+    if (relation) {
+      const close = line.indexOf(']', relation[0].length);
+      if (close >= 0) {
+        const kind: Kind = normalizeKeyword(relation[1]!) === 'parent' ? 'parent' : 'blocked-by';
+        addRefs(line.slice(relation[0].length, close), kind);
+        continue;
+      }
+    }
+    if (options.strict || keywords.length === 0) continue;
+
     const heading = HEADING_RE.exec(line);
     if (heading) {
       section = kindOf.get(headingText(heading[1])) ?? null;
@@ -244,7 +267,7 @@ export function parseBodyRelations(body: string, options: ParseOptions = {}): Ra
     }
   }
 
-  const kindRank = (k: Kind): number => (k === 'blocked-by' ? 0 : 1);
+  const kindRank = (k: Kind): number => (k === 'blocked-by' ? 0 : k === 'blocks' ? 1 : 2);
   return [...found.values()].sort(
     (a, b) => kindRank(a.kind) - kindRank(b.kind) || compareRefs(a.ref, b.ref),
   );

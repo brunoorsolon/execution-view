@@ -213,7 +213,7 @@ That starts the demo; for your repositories set the same `EV_*` variables (or `E
 
 The app can only show what your issues declare. In short:
 
-- [ ] Your dependencies are declared **natively** (GitHub "Relationships", Gitea "Dependencies") and/or as **lines in the issue body**, such as `Depends on #12`. Mid-sentence prose is deliberately ignored.
+- [ ] Your dependencies are declared **natively** (GitHub "Relationships", Gitea "Dependencies") and/or as **lines in the issue body**, such as `Depends on #12` or the stricter `Blocked by: [#12]` relation line (see [PREREQUISITES](docs/PREREQUISITES.md)). Mid-sentence prose is deliberately ignored.
 - [ ] You have a **read-only token** that can read every repository involved, including repositories that are only referenced from another one.
 - [ ] Native dependencies are **available** on your platform (a setting that must be enabled on Gitea; possibly missing on older GitHub Enterprise Server versions). If not, use body lines only.
 - [ ] You know that only **open** issues are shown, and a **closed** issue never blocks anything.

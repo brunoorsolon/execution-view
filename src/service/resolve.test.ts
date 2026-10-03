@@ -448,6 +448,56 @@ describe('resolveView: toggles and directions', () => {
   });
 });
 
+describe('resolveView: strict relation lines and parents', () => {
+  it('body: strict reads only relation lines and ignores the legacy forms', async () => {
+    const provider = new FakeProvider([
+      mk('a/r#1'),
+      mk('a/r#2'),
+      mk('a/r#3', {
+        body: 'Blocked by: [#1]\nDepends on #2\n## Dependencies\n- No implementation dependency on #2\n',
+      }),
+    ]);
+    const { input } = await resolveView(view({}, { body: 'strict' }), SOURCE, provider);
+    expect(edgesOf(input)).toEqual(['a/r#1->a/r#3[body]']);
+  });
+
+  it('body: true keeps reading the legacy forms', async () => {
+    const provider = new FakeProvider([mk('a/r#1'), mk('a/r#2', { body: 'Depends on #1' })]);
+    const { input } = await resolveView(view(), SOURCE, provider);
+    expect(edgesOf(input)).toEqual(['a/r#1->a/r#2[body]']);
+  });
+
+  it('a Parent line links child and parent without an edge or a lookup', async () => {
+    const provider = new FakeProvider([
+      mk('a/r#1', { body: 'Parent: [a/r#2]' }),
+      mk('a/r#2'),
+      mk('a/r#3', { body: 'Parent: [x/y#9] ignored when missing from the snapshot' }),
+    ]);
+    const { input } = await resolveView(view(), SOURCE, provider);
+    expect(input.parentLinks).toEqual([
+      { parent: 'a/r#2', child: 'a/r#1' },
+      { parent: 'x/y#9', child: 'a/r#3' },
+    ]);
+    expect(edgesOf(input)).toEqual([]);
+    expect(provider.getCalls).toEqual([]);
+    expect(input.warnings).toEqual([]);
+  });
+
+  it('relation lines are read even when the keyword lists are empty', async () => {
+    const provider = new FakeProvider([
+      mk('a/r#1'),
+      mk('a/r#2', { body: 'Blocked by: [#1]\nParent: [#3]\nDepends on #1' }),
+      mk('a/r#3'),
+    ]);
+    const keywords = { blockedBy: [], blocks: [] };
+    for (const body of [true, 'strict'] as const) {
+      const { input } = await resolveView(view({}, { body, keywords }), SOURCE, provider);
+      expect(edgesOf(input)).toEqual(['a/r#1->a/r#2[body]']);
+      expect(input.parentLinks).toEqual([{ parent: 'a/r#3', child: 'a/r#2' }]);
+    }
+  });
+});
+
 describe('resolveView: scope', () => {
   const base = () => [
     mk('a/r#1', { labels: ['infra'], milestone: 'v1' }),

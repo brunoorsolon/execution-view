@@ -38,6 +38,8 @@ function makePlan(nodes: N[], edges: [IssueKey, IssueKey][], order?: IssueKey[])
         order: n.wave === null ? null : linear.indexOf(n.key),
         blockedBy: [],
         blocks: [],
+        parents: [],
+        children: [],
         priority: 0,
         remainingDepth: n.wave === null ? 0 : 1,
       };

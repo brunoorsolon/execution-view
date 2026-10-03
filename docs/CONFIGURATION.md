@@ -86,7 +86,7 @@ A list (at least one). A view is a set of repositories of one source that are pl
 | `views[].source`                          | string                          | required                                           | The `id` of one of the `sources`.                                                                                                                                                                                                              |
 | `views[].repos`                           | list of `owner/repo`            | required (at least one)                            | Repositories to read (`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`). Lowercased, deduplicated and sorted.                                                                                                                                               |
 | `views[].dependencies.native`             | boolean                         | `true`                                             | Use the platform's native relations (GitHub issue dependencies, Gitea dependencies).                                                                                                                                                           |
-| `views[].dependencies.body`               | boolean                         | `true`                                             | Parse dependency lines in issue bodies.                                                                                                                                                                                                        |
+| `views[].dependencies.body`               | `boolean` or `"strict"`         | `true`                                             | Parse dependency lines in issue bodies. `true`: keyword lines, sections and relation lines. `"strict"`: relation lines only. `false`: none. See [PREREQUISITES.md](PREREQUISITES.md).                                                          |
 | `views[].dependencies.subIssues`          | boolean                         | `false`                                            | GitHub only: a parent issue is blocked by each of its sub-issues. On other sources it is ignored, with a config warning. Independent of `native`.                                                                                              |
 | `views[].dependencies.keywords.blockedBy` | list of strings                 | `[depends on, blocked by, requires, dependencies]` | Keywords meaning "this issue is blocked by ...". Replaces the default list. Case-insensitive, whitespace-flexible.                                                                                                                             |
 | `views[].dependencies.keywords.blocks`    | list of strings                 | `[blocks, blocking, required by]`                  | Keywords meaning "this issue blocks ...". Replaces the default list. `[]` disables this direction.                                                                                                                                             |
@@ -132,7 +132,7 @@ Used when no config file is found and `EV_PROVIDER` is set. It builds one source
 | `EV_SUB_ISSUES`      | no          | `true` or `false`: sets `dependencies.subIssues`.                                                                                                |
 | `EV_ORDERING_MODE`   | no          | `priority` (default) or `waves`: sets `ordering.mode`. Anything else is a configuration error.                                                   |
 
-Env-only mode cannot express: several views or sources, scope filters, custom keywords, `native: false`, `body: false`, a `webUrl`. Use a config file for those.
+Env-only mode cannot express: several views or sources, scope filters, custom keywords, `native: false`, `body: false` or `body: strict`, a `webUrl`. Use a config file for those.
 
 ## Validation
 
@@ -197,6 +197,7 @@ views:
       - acme/infra
     dependencies:
       subIssues: false
+      body: strict # keep agent prose out of the graph; relation lines only
       keywords:
         blockedBy: [depends on, blocked by, requires, needs]
     scope:

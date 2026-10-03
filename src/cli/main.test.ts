@@ -237,6 +237,57 @@ describe('check', () => {
     );
   });
 
+  it('accepts dependencies.body: strict and reads only relation lines', async () => {
+    const dir = tmp();
+    writeFileSync(
+      path.join(dir, 'fixture.json'),
+      JSON.stringify({
+        issues: [
+          { owner: 'o', repo: 'r', number: 1, title: 'First', state: 'open' },
+          {
+            owner: 'o',
+            repo: 'r',
+            number: 2,
+            title: 'Second',
+            state: 'open',
+            body: 'Blocked by: [#1]',
+          },
+          {
+            owner: 'o',
+            repo: 'r',
+            number: 3,
+            title: 'Third',
+            state: 'open',
+            body: 'Depends on #1',
+          },
+        ],
+      }),
+    );
+    const configPath = path.join(dir, 'config.yaml');
+    writeFileSync(
+      configPath,
+      [
+        'sources:',
+        '  - id: fx',
+        '    kind: fixture',
+        '    path: ./fixture.json',
+        '    webUrl: https://fixture.local',
+        'views:',
+        '  - id: chain',
+        '    source: fx',
+        '    repos: [o/r]',
+        '    dependencies:',
+        '      body: strict',
+        '',
+      ].join('\n'),
+    );
+    const r = await run(['check', '-c', configPath]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(
+      '  3 issues · 2 ready · 1 blocked · 0 unschedulable · 0 external · 1 dependencies · 2 waves',
+    );
+  });
+
   it('hints when a view has no dependencies', async () => {
     const configPath = writeProject([
       { number: 1, title: 'A' },

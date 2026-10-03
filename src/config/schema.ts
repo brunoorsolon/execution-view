@@ -23,7 +23,12 @@ export interface ResolvedView {
   title: string;
   source: string;
   repos: RepoRef[];
-  dependencies: { native: boolean; body: boolean; subIssues: boolean; keywords: KeywordConfig };
+  dependencies: {
+    native: boolean;
+    body: boolean | 'strict';
+    subIssues: boolean;
+    keywords: KeywordConfig;
+  };
   scope: { labels: string[]; excludeLabels: string[]; milestones: string[] };
   ordering: { priorityLabels: string[]; mode: OrderingMode };
 }
@@ -102,7 +107,7 @@ const viewSchema = z
     dependencies: z
       .object({
         native: z.boolean().optional(),
-        body: z.boolean().optional(),
+        body: z.union([z.boolean(), z.literal('strict')]).optional(),
         subIssues: z.boolean().optional(),
         keywords: z.object({ blockedBy: keywordList, blocks: keywordList }).strict().optional(),
       })

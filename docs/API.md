@@ -175,7 +175,7 @@ A snapshot is the JSON document returned by the snapshot, refresh and `export.js
 | `warnings`      | `{ code, message, issues }`. Codes: `cycle`, `blocked-by-cycle`, `self-reference`, `dangling-reference`, `external-unresolved`, `native-unsupported`, `fetch-error` ([meaning and fixes](PREREQUISITES.md#warning-codes)) |
 | `stats`         | `total`, `ready`, `blocked`, `unschedulable`, `external`, `edges`, `waves`                                                                                                                                                |
 
-A node has: `key` (`owner/repo#number`, lowercase), `repo`, `number`, `title`, `url`, `labels`, `assignees`, `milestone` (or `null`), `external` (boolean), `status` (`ready`, `blocked`, `in-cycle` or `blocked-by-cycle`), `wave` and `order` (0-based, `null` when unschedulable), `blockedBy` and `blocks` (keys of open direct prerequisites and dependents), `priority` (index in `priorityLabels`, or `priorityLabels.length`) and `remainingDepth`.
+A node has: `key` (`owner/repo#number`, lowercase), `repo`, `number`, `title`, `url`, `labels`, `assignees`, `milestone` (or `null`), `external` (boolean), `status` (`ready`, `blocked`, `in-cycle` or `blocked-by-cycle`), `wave` and `order` (0-based, `null` when unschedulable), `blockedBy` and `blocks` (keys of open direct prerequisites and dependents), `parents` and `children` (keys of the `Parent:` hierarchy; never dependencies), `priority` (index in `priorityLabels`, or `priorityLabels.length`) and `remainingDepth`.
 
 ### `layout`
 
@@ -188,7 +188,7 @@ Abridged real output (a five-issue view):
   "viewId": "mini",
   "title": "mini",
   "fetchedAt": "2026-09-29T09:03:17.028Z",
-  "contentHash": "f2de135ce1a7e8813731aa832a4957cd544ba9f10483aba53509ae53cc6bbf6c",
+  "contentHash": "1097a5d86c6003c4a601af62bb6cb0f5ae620a5193dbe1c52612914607154907",
   "priorityLabels": ["P0", "P1", "P2"],
   "orderingMode": "priority",
   "plan": {
@@ -209,6 +209,8 @@ Abridged real output (a five-issue view):
         "order": 2,
         "blockedBy": ["acme/app#1"],
         "blocks": ["acme/app#5"],
+        "parents": [],
+        "children": [],
         "priority": 3,
         "remainingDepth": 2
       }
