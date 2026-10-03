@@ -86,7 +86,7 @@ For Gitea or Forgejo, use these `environment:` lines instead (`EV_BASE_URL` is t
 - GITEA_TOKEN=${GITEA_TOKEN}
 ```
 
-Optional: `- EV_PRIORITY_LABELS=P0,P1,P2` (highest first) and `- EV_BASIC_AUTH=${EV_BASIC_AUTH}` (`user:password`). Every variable is listed in [docs/CONFIGURATION.md](docs/CONFIGURATION.md#env-only-mode). The `wud.*` labels let [What's Up Docker](https://getwud.github.io/wud/) report new releases; drop them if you do not use it.
+Optional: `- EV_PRIORITY_LABELS=P0,P1,P2` (highest first) and `- EV_BASIC_AUTH=${EV_BASIC_AUTH}` (`user:password`, turns on a login page). Every variable is listed in [docs/CONFIGURATION.md](docs/CONFIGURATION.md#env-only-mode). The `wud.*` labels let [What's Up Docker](https://getwud.github.io/wud/) report new releases; drop them if you do not use it.
 
 If your Gitea runs on the same host behind a reverse proxy and the container cannot reach its public name, map that name to the host's address:
 
@@ -195,7 +195,7 @@ volumes:
   - ./config.yaml:/app/config.yaml:ro
 ```
 
-with both tokens in `.env`. Create `config.yaml` **before** adding the mount: if the file does not exist, Docker creates a directory with that name. Then run `docker compose run --rm execution-view check`, which reports each view separately. Every option is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md); deployment recipes (plain `docker run`, systemd, reverse proxy, basic auth, webhooks) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+with both tokens in `.env`. Create `config.yaml` **before** adding the mount: if the file does not exist, Docker creates a directory with that name. Then run `docker compose run --rm execution-view check`, which reports each view separately. Every option is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md); deployment recipes (plain `docker run`, systemd, reverse proxy, login, webhooks) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Without Docker
 
@@ -224,7 +224,7 @@ The full explanation, the accepted and rejected syntax, token permissions, API u
 | ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | [docs/PREREQUISITES.md](docs/PREREQUISITES.md) | What the app reads, how to declare dependencies, tokens, rate limits, warning codes and a checklist |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every config option and environment variable, with complete examples                                |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)       | Docker, docker-compose, bare Node, systemd, reverse proxy, basic auth, security, upgrading          |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)       | Docker, docker-compose, bare Node, systemd, reverse proxy, login, security, upgrading               |
 | [docs/DETERMINISM.md](docs/DETERMINISM.md)     | The guarantees, the exact ordering rules, the content hash                                          |
 | [docs/API.md](docs/API.md)                     | HTTP endpoints, headers, snapshot schema, curl examples                                             |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)   | The implementation contract (for contributors)                                                      |

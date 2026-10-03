@@ -15,6 +15,8 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8080',
       '/healthz': 'http://localhost:8080',
+      '/login': 'http://localhost:8080',
+      '/logout': 'http://localhost:8080',
     },
   },
 });

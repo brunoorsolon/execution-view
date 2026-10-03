@@ -30,6 +30,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     throw new ApiError('Network error: could not reach the execution-view server.', 0);
   }
+  if (res.status === 401) {
+    // The session ended (logout or a server restart): log in again, keeping the shared link.
+    location.assign(`login${location.hash}`);
+  }
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`.trim();
     try {
@@ -62,6 +66,11 @@ export function refreshSnapshot(viewId: string): Promise<Snapshot> {
   return request<Snapshot>(`${API}/views/${encodeURIComponent(viewId)}/refresh`, {
     method: 'POST',
   });
+}
+
+/** The signed-in user; fails with 404 when the server has no login. */
+export function fetchSession(): Promise<{ username: string }> {
+  return request<{ username: string }>(`${API}/session`);
 }
 
 export function exportUrl(viewId: string, format: ExportFormat): string {

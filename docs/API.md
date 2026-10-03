@@ -25,6 +25,10 @@ Contents:
 | GET    | `/api/views/:id/export.:format` | The snapshot rendered as a file: `json`, `md`, `mmd` (Mermaid) or `dot` | `200` text with `Content-Disposition` |
 | POST   | `/api/webhooks/github`          | Webhook receiver for GitHub issue events (only with a secret)           | `202` `{"invalidated":[...]}`         |
 | POST   | `/api/webhooks/gitea`           | Webhook receiver for Gitea / Forgejo issue events (only with a secret)  | `202` `{"invalidated":[...]}`         |
+| GET    | `/api/session`                  | The signed-in user (only with a login configured)                       | `200` `{"username":"admin"}`          |
+| GET    | `/login`                        | The login page (only with a login configured). **No authentication.**   | `200` HTML                            |
+| POST   | `/login`                        | Form login: `username` and `password`, form-encoded                     | `303` to the UI, with session cookie  |
+| POST   | `/logout`                       | Ends the session and clears the cookie                                  | `303` to the login page               |
 | GET    | `/` and other paths             | The web UI (static files)                                               | `200` HTML/JS/CSS                     |
 
 ### `GET /api/views`
@@ -106,14 +110,14 @@ Everything else is served from the built web UI directory (`dist/web`). A `GET` 
 
 ## Common behaviour
 
-| Status | When                                                                                                              | Body                                                                             |
-| ------ | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `200`  | Success                                                                                                           | See above                                                                        |
-| `304`  | `If-None-Match` matches the snapshot's `ETag`                                                                     | none (headers `ETag`, `Cache-Control`)                                           |
-| `401`  | Basic auth is enabled and the credentials are missing or wrong                                                    | `{"error":"Unauthorized"}` plus `WWW-Authenticate: Basic realm="execution-view"` |
-| `404`  | Unknown view id, unknown export format, or unknown path                                                           | `{"error":"Unknown view: nope"}` or `{"error":"Not found"}`                      |
-| `502`  | The tracker could not be reached or answered with an error (bad token, rate limit, network, repository not found) | `{"error":"<message>"}`, with tokens redacted                                    |
-| `500`  | Unexpected internal error                                                                                         | `{"error":"Internal Server Error"}`                                              |
+| Status | When                                                                                                              | Body                                                        |
+| ------ | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `200`  | Success                                                                                                           | See above                                                   |
+| `304`  | `If-None-Match` matches the snapshot's `ETag`                                                                     | none (headers `ETag`, `Cache-Control`)                      |
+| `401`  | The login is enabled and there is no valid session cookie or basic-auth header                                    | `{"error":"Unauthorized"}`                                  |
+| `404`  | Unknown view id, unknown export format, or unknown path                                                           | `{"error":"Unknown view: nope"}` or `{"error":"Not found"}` |
+| `502`  | The tracker could not be reached or answered with an error (bad token, rate limit, network, repository not found) | `{"error":"<message>"}`, with tokens redacted               |
+| `500`  | Unexpected internal error                                                                                         | `{"error":"Internal Server Error"}`                         |
 
 - Every response under `/api/` carries `Cache-Control: no-store`. Caching is done by the server (see `cache.ttlSeconds`) and by `ETag`.
 - Successful fetches are cached in memory per view for `cache.ttlSeconds` (default 300). The snapshot's `fetchedAt` tells you when the data was read. A failed fetch is not cached.
@@ -123,17 +127,18 @@ Everything else is served from the built web UI directory (`dist/web`). A `GET` 
 
 ## Authentication
 
-When `server.basicAuth` (or `EV_BASIC_AUTH`) is configured, **every** path except `/healthz` requires HTTP basic authentication, including the web UI and the exports. The only other exception is the pair of `POST /api/webhooks/*` endpoints (when enabled), which require a valid signature instead. Use it over TLS (see [DEPLOYMENT.md](DEPLOYMENT.md#basic-auth)).
+When `server.basicAuth` (or `EV_BASIC_AUTH`) is configured, **every** path except `/healthz`, `/login` and `/logout` requires a session cookie from the login page or an HTTP basic-auth header with the same credentials, including the web UI and the exports. The only other exception is the pair of `POST /api/webhooks/*` endpoints (when enabled), which require a valid signature instead. Use it over TLS (see [DEPLOYMENT.md](DEPLOYMENT.md#login)).
+
+Scripts send basic auth preemptively; there is no `WWW-Authenticate` challenge, because it would make browsers show their own dialog instead of the login page:
 
 ```sh
 curl -u admin:change-me http://localhost:8080/api/views
 ```
 
-Without credentials:
+Without credentials, a browser page load (`GET` with `Accept: text/html`) is redirected to the login page, and everything else gets:
 
 ```text
 HTTP/1.1 401 Unauthorized
-www-authenticate: Basic realm="execution-view"
 content-type: application/json; charset=utf-8
 cache-control: no-store
 

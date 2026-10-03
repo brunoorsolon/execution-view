@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,8 @@ export interface BuildAppOptions {
   logger?: boolean;
 }
 
-const BASIC_REALM = 'execution-view';
+const SESSION_COOKIE = 'ev_session';
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /** URL extension to exporter. `mmd` is the Mermaid exporter; any other value is unknown. */
 const EXTENSION_FORMATS: Record<string, ExportFormat> = {
@@ -42,6 +43,113 @@ const UI_NOT_BUILT_HTML = `<!doctype html>
   </body>
 </html>
 `;
+
+/** Static login form. The script keeps a shared `#/view/...` link across the login redirect. */
+function loginPage(failed: boolean): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Log in · execution-view</title>
+    <style>
+      :root {
+        --bg: #f3f4f6;
+        --surface: #ffffff;
+        --line: #c9ced6;
+        --fg: #15181e;
+        --fg-2: #464d5a;
+        --accent: #2b52c4;
+        --error: #b3261e;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0e1014;
+          --surface: #161920;
+          --line: #353b46;
+          --fg: #e9ebf0;
+          --fg-2: #b6bcc7;
+          --accent: #86a3ff;
+          --error: #ff7a6e;
+        }
+      }
+      body {
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      }
+      form {
+        display: grid;
+        gap: 6px;
+        width: min(320px, calc(100vw - 32px));
+        padding: 28px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+      label {
+        margin-top: 8px;
+        color: var(--fg-2);
+        font-size: 13px;
+      }
+      input {
+        height: 36px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--fg);
+        font: inherit;
+      }
+      button {
+        height: 36px;
+        margin-top: 16px;
+        border: 0;
+        border-radius: 6px;
+        background: var(--accent);
+        color: var(--surface);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .error {
+        margin: 0;
+        color: var(--error);
+      }
+    </style>
+  </head>
+  <body>
+    <form method="post" action="login">
+      <h1>execution-view</h1>
+      ${failed ? '<p class="error" role="alert">Wrong user name or password.</p>' : ''}
+      <label for="username">User name</label>
+      <input id="username" name="username" autocomplete="username" required autofocus />
+      <label for="password">Password</label>
+      <input
+        id="password"
+        name="password"
+        type="password"
+        autocomplete="current-password"
+        required
+      />
+      <button type="submit">Log in</button>
+    </form>
+    <script>
+      document.forms[0].action += location.hash;
+    </script>
+  </body>
+</html>
+`;
+}
 
 /** A failure while fetching from the provider; answered with 502. */
 class BadGatewayError extends Error {
@@ -100,10 +208,34 @@ function checkBasicAuth(
   const colon = decoded.indexOf(':');
   const username = colon === -1 ? decoded : decoded.slice(0, colon);
   const password = colon === -1 ? '' : decoded.slice(colon + 1);
+  return credentialsMatch(username, password, expected) && colon !== -1;
+}
+
+function credentialsMatch(
+  username: string,
+  password: string,
+  expected: { username: string; password: string },
+): boolean {
   // Evaluate both comparisons so timing does not reveal which one failed.
   const userOk = safeEqual(username, expected.username);
   const passOk = safeEqual(password, expected.password);
-  return userOk && passOk && colon !== -1;
+  return userOk && passOk;
+}
+
+function sessionToken(cookie: string | undefined): string | null {
+  const match = /(?:^|;\s*)ev_session=([A-Za-z0-9_-]+)/.exec(cookie ?? '');
+  return match === null ? null : (match[1] as string);
+}
+
+/**
+ * The session cookie. Without a Path attribute the browser scopes it to the directory of the login
+ * URL, so it also works below a sub-path. `X-Forwarded-Proto` is read without trusting the proxy
+ * because it can only add `Secure`, which makes the cookie stricter.
+ */
+function sessionCookie(request: FastifyRequest, value: string, maxAge: number): string {
+  const forwarded = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0];
+  const secure = request.protocol === 'https' || forwarded?.trim() === 'https';
+  return `${SESSION_COOKIE}=${value}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
 }
 
 /** True when an If-None-Match header value matches the etag (weak comparison, `*` matches all). */
@@ -136,21 +268,75 @@ export function buildApp(
     return out;
   };
 
-  // --- auth (everything except /healthz and, when enabled, the POST webhook endpoints, which
-  // authenticate with a signature instead) ---
+  // --- auth (everything except /healthz, the login routes and, when enabled, the POST webhook
+  // endpoints, which authenticate with a signature instead). A session cookie from the login page
+  // or a basic-auth header both pass. No `WWW-Authenticate` challenge: it would make the browser
+  // show its own dialog instead of the login page. ---
   const webhooks = config.webhooks;
   if (basicAuth !== null) {
+    // ponytail: sessions live in memory, so a restart logs everyone out; sign cookies with a
+    // configured secret if that becomes a nuisance.
+    const sessions = new Map<string, number>(); // token -> expiry, epoch ms
+    const hasSession = (request: FastifyRequest): boolean => {
+      const token = sessionToken(request.headers.cookie);
+      const expires = token === null ? undefined : sessions.get(token);
+      return expires !== undefined && expires > Date.now();
+    };
+
     app.addHook('onRequest', async (request, reply) => {
       const pathname = pathnameOf(request.url);
-      if (pathname === '/healthz') return;
+      if (pathname === '/healthz' || pathname === '/login' || pathname === '/logout') return;
       if (webhooks !== null && request.method === 'POST' && WEBHOOK_PATHS.includes(pathname)) {
         return;
       }
-      if (checkBasicAuth(request.headers.authorization, basicAuth)) return;
-      return reply
-        .code(401)
-        .header('WWW-Authenticate', `Basic realm="${BASIC_REALM}"`)
-        .send({ error: 'Unauthorized' });
+      if (hasSession(request) || checkBasicAuth(request.headers.authorization, basicAuth)) return;
+      if (
+        request.method === 'GET' &&
+        !pathname.startsWith('/api/') &&
+        (request.headers.accept ?? '').includes('text/html')
+      ) {
+        // Relative, so it also works below a sub-path: climb to the app root first.
+        return reply.redirect(`${'../'.repeat(pathname.split('/').length - 2)}login`);
+      }
+      return reply.code(401).send({ error: 'Unauthorized' });
+    });
+
+    // Own scope, so the form parser does not reach the webhook routes.
+    void app.register((scope, _opts, done) => {
+      scope.addContentTypeParser(
+        'application/x-www-form-urlencoded',
+        { parseAs: 'string' },
+        (_request, body, parserDone) => parserDone(null, new URLSearchParams(body as string)),
+      );
+      scope.get('/login', async (_request, reply) =>
+        reply.type('text/html; charset=utf-8').send(loginPage(false)),
+      );
+
+      scope.post('/login', async (request, reply) => {
+        const form = request.body instanceof URLSearchParams ? request.body : new URLSearchParams();
+        const ok = credentialsMatch(
+          form.get('username') ?? '',
+          form.get('password') ?? '',
+          basicAuth,
+        );
+        if (!ok) return reply.code(401).type('text/html; charset=utf-8').send(loginPage(true));
+        const now = Date.now();
+        for (const [token, expires] of sessions) if (expires <= now) sessions.delete(token);
+        const token = randomBytes(32).toString('base64url');
+        sessions.set(token, now + SESSION_TTL_SECONDS * 1000);
+        return reply
+          .header('Set-Cookie', sessionCookie(request, token, SESSION_TTL_SECONDS))
+          .redirect('./', 303);
+      });
+
+      scope.post('/logout', async (request, reply) => {
+        const token = sessionToken(request.headers.cookie);
+        if (token !== null) sessions.delete(token);
+        return reply.header('Set-Cookie', sessionCookie(request, '', 0)).redirect('login', 303);
+      });
+
+      scope.get('/api/session', async () => ({ username: basicAuth.username }));
+      done();
     });
   }
 
