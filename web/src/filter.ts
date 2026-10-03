@@ -9,8 +9,8 @@ import { displayStatus, type DisplayStatus } from './format.js';
  *  - `#12`: issue number, in any repository; `owner/repo#12` or `repo#12`: issue key
  *  - `parent:#71`, `parent:71` or `parent:owner/repo#71`: the issue itself and every
  *    issue that names it in `parents`
- *  - `status:ready`: ready, in-progress, blocked, cycle (in-cycle), blocked-by-cycle,
- *    unschedulable (both cycle statuses), external
+ *  - `status:ready`: ready, in-progress, spec, map, blocked, cycle (in-cycle),
+ *    blocked-by-cycle, unschedulable (both cycle statuses), external
  *  - `priority:P0`, `priority:none`
  *  - `label:backend`, `label:"good first issue"`
  *  - `assignee:bob` or `@bob` (`-@bob` excludes)
@@ -138,6 +138,8 @@ export function parseQuery(q: string): Query {
 const STATUSES: Record<string, readonly DisplayStatus[]> = {
   ready: ['ready'],
   'in-progress': ['in-progress'],
+  spec: ['spec'],
+  map: ['map'],
   blocked: ['blocked'],
   cycle: ['in-cycle'],
   'in-cycle': ['in-cycle'],

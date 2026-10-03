@@ -55,18 +55,52 @@ export function plural(n: number, singular: string, pluralForm = `${singular}s`)
   return `${n} ${n === 1 ? singular : pluralForm}`;
 }
 
-export type DisplayStatus = NodeStatus | 'in-progress';
+export type DisplayStatus = NodeStatus | 'in-progress' | 'spec' | 'map';
 
-export function isClaimed(labels: readonly string[]): boolean {
-  return labels.some((label) => label.toLowerCase() === 'agent:claimed');
+/** Exact label match, case-insensitive, with either `:` or `/` as separator. */
+function hasLabel(labels: readonly string[], name: string, value: string): boolean {
+  return labels.some((label) => {
+    const lower = label.toLowerCase();
+    return lower === `${name}:${value}` || lower === `${name}/${value}`;
+  });
 }
 
-/** Workflow progress changes presentation, not the planner's dependency status. */
+export function isClaimed(labels: readonly string[]): boolean {
+  return hasLabel(labels, 'agent', 'claimed');
+}
+
+/** A decomposed spec carries `spec:decomposed` or `spec/decomposed`. */
+export function isSpec(labels: readonly string[]): boolean {
+  return hasLabel(labels, 'spec', 'decomposed');
+}
+
+/** A Wayfinder map carries `wayfinder:map` or `wayfinder/map`. */
+export function isMap(labels: readonly string[]): boolean {
+  return hasLabel(labels, 'wayfinder', 'map');
+}
+
+/**
+ * The workflow status a label implies, most specific first: Spec and Map take
+ * precedence over In progress. Null when no workflow label applies.
+ */
+export function workflowStatus(labels: readonly string[]): 'in-progress' | 'spec' | 'map' | null {
+  if (isSpec(labels)) return 'spec';
+  if (isMap(labels)) return 'map';
+  if (isClaimed(labels)) return 'in-progress';
+  return null;
+}
+
+/**
+ * Workflow labels change presentation, not the planner's dependency status:
+ * blocked and cycle statuses stay visible. Spec and Map hide Ready, and take
+ * precedence over In progress.
+ */
 export function displayStatus(node: {
   status: NodeStatus;
   labels: readonly string[];
 }): DisplayStatus {
-  return node.status === 'ready' && isClaimed(node.labels) ? 'in-progress' : node.status;
+  if (node.status !== 'ready') return node.status;
+  return workflowStatus(node.labels) ?? 'ready';
 }
 
 export function statusLabel(status: DisplayStatus): string {
@@ -75,6 +109,10 @@ export function statusLabel(status: DisplayStatus): string {
       return 'Ready';
     case 'in-progress':
       return 'In progress';
+    case 'spec':
+      return 'Spec';
+    case 'map':
+      return 'Map';
     case 'blocked':
       return 'Blocked';
     case 'in-cycle':

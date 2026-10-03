@@ -40,6 +40,10 @@
   --bbc-soft: #fbeadc;
   --ext: #687081;
   --ext-soft: #eceef2;
+  --spec: #8a2f9e;
+  --spec-soft: #f6e8f7;
+  --map: #0f6b73;
+  --map-soft: #e0f1f2;
 
   --edge: #b6bcc7;
   --edge-strong: #4f5664;
@@ -75,6 +79,10 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
+    --spec: #e0a3f0;
+    --spec-soft: rgb(224 163 240 / 0.14);
+    --map: #6fd3d8;
+    --map-soft: rgb(111 211 216 / 0.14);
     --bg: #0e1014;
     --surface: #161920;
     --surface-2: #1c2028;
@@ -125,6 +133,10 @@
 
 :root[data-theme='dark'] {
   color-scheme: dark;
+  --spec: #e0a3f0;
+  --spec-soft: rgb(224 163 240 / 0.14);
+  --map: #6fd3d8;
+  --map-soft: rgb(111 211 216 / 0.14);
   --bg: #0e1014;
   --surface: #161920;
   --surface-2: #1c2028;
@@ -180,6 +192,14 @@
 .st-in-progress {
   --c: var(--accent);
   --c-soft: var(--accent-soft);
+}
+.st-spec {
+  --c: var(--spec);
+  --c-soft: var(--spec-soft);
+}
+.st-map {
+  --c: var(--map);
+  --c-soft: var(--map-soft);
 }
 .st-blocked {
   --c: var(--blocked);
@@ -937,6 +957,12 @@ code {
 }
 .s-in-progress {
   background: var(--accent);
+}
+.s-spec {
+  background: var(--spec);
+}
+.s-map {
+  background: var(--map);
 }
 .s-blocked {
   background: var(--blocked);

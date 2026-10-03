@@ -2,9 +2,9 @@ import type { DependencySource, IssueKey, PlanNode } from '../../../src/core/typ
 import type { AppState, Store } from '../state.js';
 import {
   displayStatus,
-  isClaimed,
   sourceLabel,
   statusLabel,
+  workflowStatus,
   type DisplayStatus,
 } from '../format.js';
 import type { Tab } from '../route.js';
@@ -37,11 +37,12 @@ export interface View {
 export function statusBadges(node: PlanNode): HTMLElement {
   const badge = (status: DisplayStatus): HTMLElement =>
     h('span', { class: `badge st-${status}` }, statusLabel(status));
+  const workflow = workflowStatus(node.labels);
   return h(
     'span',
     { class: 'status-badges' },
     badge(displayStatus(node)),
-    node.status !== 'ready' && isClaimed(node.labels) ? badge('in-progress') : null,
+    node.status !== 'ready' && workflow !== null ? badge(workflow) : null,
   );
 }
 
