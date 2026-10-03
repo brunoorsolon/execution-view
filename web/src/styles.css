@@ -1166,6 +1166,9 @@ code {
   overflow: hidden;
   text-wrap: pretty;
 }
+.graph-pane:not(.compact) .card:has(.status-badges .badge + .badge) .card-title {
+  -webkit-line-clamp: 1;
+}
 .card-foot {
   display: flex;
   align-items: center;
