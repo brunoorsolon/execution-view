@@ -1,4 +1,5 @@
 import type { NodeStatus } from '../../src/core/types.js';
+import { displayStatus, type DisplayStatus } from './format.js';
 
 /**
  * The filter query language. One query drives every view; the filter menu only
@@ -6,7 +7,7 @@ import type { NodeStatus } from '../../src/core/types.js';
  *
  *  - free text: title or key contains it (case-insensitive)
  *  - `#12`: issue number, in any repository; `owner/repo#12` or `repo#12`: issue key
- *  - `status:ready`: ready, blocked, cycle (in-cycle), blocked-by-cycle,
+ *  - `status:ready`: ready, in-progress, blocked, cycle (in-cycle), blocked-by-cycle,
  *    unschedulable (both cycle statuses), external
  *  - `priority:P0`, `priority:none`
  *  - `label:backend`, `label:"good first issue"`
@@ -129,8 +130,9 @@ export function parseQuery(q: string): Query {
   return { include, exclude, text };
 }
 
-const STATUSES: Record<string, readonly NodeStatus[]> = {
+const STATUSES: Record<string, readonly DisplayStatus[]> = {
   ready: ['ready'],
+  'in-progress': ['in-progress'],
   blocked: ['blocked'],
   cycle: ['in-cycle'],
   'in-cycle': ['in-cycle'],
@@ -142,7 +144,7 @@ const STATUSES: Record<string, readonly NodeStatus[]> = {
 export function matchesQualifier(field: Field, value: string, t: FilterTarget): boolean {
   switch (field) {
     case 'status':
-      return value === 'external' ? t.external : (STATUSES[value] ?? []).includes(t.status);
+      return value === 'external' ? t.external : (STATUSES[value] ?? []).includes(displayStatus(t));
     case 'label':
       return t.labels.some((l) => l.toLowerCase() === value);
     case 'assignee':

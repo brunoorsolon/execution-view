@@ -47,10 +47,26 @@ export function plural(n: number, singular: string, pluralForm = `${singular}s`)
   return `${n} ${n === 1 ? singular : pluralForm}`;
 }
 
-export function statusLabel(status: NodeStatus): string {
+export type DisplayStatus = NodeStatus | 'in-progress';
+
+export function isClaimed(labels: readonly string[]): boolean {
+  return labels.some((label) => label.toLowerCase() === 'agent:claimed');
+}
+
+/** Workflow progress changes presentation, not the planner's dependency status. */
+export function displayStatus(node: {
+  status: NodeStatus;
+  labels: readonly string[];
+}): DisplayStatus {
+  return node.status === 'ready' && isClaimed(node.labels) ? 'in-progress' : node.status;
+}
+
+export function statusLabel(status: DisplayStatus): string {
   switch (status) {
     case 'ready':
       return 'Ready';
+    case 'in-progress':
+      return 'In progress';
     case 'blocked':
       return 'Blocked';
     case 'in-cycle':

@@ -53,6 +53,7 @@ describe('keys and labels', () => {
   });
   it('names statuses', () => {
     expect(statusLabel('ready')).toBe('Ready');
+    expect(statusLabel('in-progress')).toBe('In progress');
     expect(statusLabel('in-cycle')).toBe('In cycle');
     expect(statusLabel('blocked-by-cycle')).toBe('Blocked by cycle');
   });

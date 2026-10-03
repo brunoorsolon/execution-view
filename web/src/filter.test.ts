@@ -120,6 +120,28 @@ describe('compileFilter', () => {
     );
   });
 
+  it('separates claimed work from ready work without hiding dependency problems', () => {
+    const claimed = issue('acme/api#5', 'Claimed work', ['AGENT:CLAIMED'], { status: 'ready' });
+    expect(compileFilter('status:ready')!(claimed)).toBe(false);
+    expect(compileFilter('status:in-progress')!(claimed)).toBe(true);
+    expect(compileFilter('is:in-progress')!(claimed)).toBe(true);
+    expect(compileFilter('-status:in-progress')!(claimed)).toBe(false);
+    expect(compileFilter('status:ready,in-progress')!(claimed)).toBe(true);
+    expect(compileFilter('status:in-progress')!(schema)).toBe(false);
+    for (const labels of [[], ['agent:claimed-later'], ['claimed']]) {
+      const unclaimed = { ...claimed, labels, assignees: ['alice'] };
+      expect(compileFilter('status:ready')!(unclaimed)).toBe(true);
+      expect(compileFilter('status:in-progress')!(unclaimed)).toBe(false);
+    }
+    for (const status of ['blocked', 'in-cycle', 'blocked-by-cycle'] as const) {
+      const blocked = { ...claimed, status };
+      expect(compileFilter(`status:${status}`)!(blocked)).toBe(true);
+      expect(compileFilter('status:ready')!(blocked)).toBe(false);
+      expect(compileFilter('status:in-progress')!(blocked)).toBe(false);
+    }
+    expect(claimed.status).toBe('ready');
+  });
+
   it('treats values of one field as alternatives and different fields as AND', () => {
     const f = compileFilter('status:ready,cycle')!;
     expect(f(schema)).toBe(true);

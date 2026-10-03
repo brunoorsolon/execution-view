@@ -1,7 +1,7 @@
 import type { IssueKey } from '../../../src/core/types.js';
 import { clear, h } from '../dom.js';
 import { hasQualifier, toggleQualifier } from '../filter.js';
-import { shortKey } from '../format.js';
+import { displayStatus, shortKey } from '../format.js';
 import type { AppState } from '../state.js';
 import { getIndex, isVisible, visibleKeys, type View, type ViewCtx } from './shared.js';
 
@@ -82,7 +82,7 @@ export function createSummary(ctx: ViewCtx): View {
     const nodes = snapshot.plan.nodes.filter((n) => isVisible(visible, n.key));
     const ready = snapshot.plan.order
       .map((k) => index.nodes.get(k))
-      .filter((n) => n !== undefined && n.status === 'ready' && isVisible(visible, n.key));
+      .filter((n) => n !== undefined && displayStatus(n) === 'ready' && isVisible(visible, n.key));
 
     title.querySelector('.n')!.textContent = String(ready.length);
     clear(list);
@@ -113,9 +113,10 @@ export function createSummary(ctx: ViewCtx): View {
     list.append(...chips, more);
 
     const count = (pred: (s: string) => boolean): number =>
-      nodes.filter((n) => pred(n.status)).length;
+      nodes.filter((n) => pred(displayStatus(n))).length;
     const st = {
       ready: count((s) => s === 'ready'),
+      inProgress: count((s) => s === 'in-progress'),
       blocked: count((s) => s === 'blocked'),
       unsched: count((s) => s === 'in-cycle' || s === 'blocked-by-cycle'),
       external: nodes.filter((n) => n.external).length,
@@ -123,6 +124,7 @@ export function createSummary(ctx: ViewCtx): View {
     clear(stack);
     for (const s of [
       seg('s-ready', st.ready),
+      seg('s-in-progress', st.inProgress),
       seg('s-blocked', st.blocked),
       seg('s-unsched', st.unsched),
     ])
@@ -139,6 +141,8 @@ export function createSummary(ctx: ViewCtx): View {
       );
     }
     if (!filtered || st.ready > 0) legend.append(leg('s-ready', st.ready, 'ready'));
+    if (!filtered || st.inProgress > 0)
+      legend.append(leg('s-in-progress', st.inProgress, 'in progress'));
     if (!filtered || st.blocked > 0) legend.append(leg('s-blocked', st.blocked, 'blocked'));
     if (!filtered || st.unsched > 0) legend.append(leg('s-unsched', st.unsched, 'unschedulable'));
     if (st.external > 0) legend.append(leg('s-ext', st.external, 'external'));

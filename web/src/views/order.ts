@@ -13,7 +13,7 @@ import {
   labelChip,
   otherLabels,
   priorityTag,
-  statusBadge,
+  statusBadges,
   visibleKeys,
   type View,
   type ViewCtx,
@@ -118,7 +118,7 @@ export function createOrderView(ctx: ViewCtx): View {
         ),
         reason !== null ? h('div', { class: 'reason' }, reason) : null,
       ),
-      h('td', { class: 'c-status' }, statusBadge(n.status)),
+      h('td', { class: 'c-status' }, statusBadges(n)),
       h('td', { class: 'c-people' }, avatars(n.assignees)),
       h(
         'td',
