@@ -129,16 +129,73 @@ Images are tagged with the exact version (`1.1.0`), the minor (`1.1`), the major
 
 ### Several repositories, views or options: the config file
 
-Env-only mode gives one view. For several views, scope filters, GitHub Enterprise Server, webhooks or the wave-by-wave ordering, use a config file: copy [`config.example.yaml`](config.example.yaml) to `config.yaml` next to `docker-compose.yml` and edit it. In the compose file, keep only the token lines in `environment:` (the config refers to them with `tokenEnv: GITHUB_TOKEN` or `tokenEnv: GITEA_TOKEN`) and mount the file:
+Env-only mode gives one view on one tracker (`EV_REPOS` can still list several repositories, comma-separated). For several views, GitHub and Gitea together, scope filters, GitHub Enterprise Server, webhooks or the wave-by-wave ordering, use a config file: create `config.yaml` next to `docker-compose.yml` ([`config.example.yaml`](config.example.yaml) shows every option).
+
+The config never holds the tokens: `tokenEnv` names the environment variable that does, so you can commit `config.yaml` and keep only `.env` out of Git.
+
+**Several repositories on one tracker.** Every repository in a view is planned together, so dependencies between them are followed:
+
+```yaml
+sources:
+  - id: gt
+    kind: gitea
+    baseUrl: https://gitea.example.com
+    tokenEnv: GITEA_TOKEN
+
+views:
+  - id: platform
+    title: Platform
+    source: gt
+    repos:
+      - acme/api
+      - acme/web
+      - acme/infra
+    ordering:
+      priorityLabels: [P0, P1, P2]
+```
+
+For separate graphs on the same tracker, add more views with the same `source`. A prerequisite that lives in another view's repository still appears, as an external issue.
+
+**GitHub and Gitea together.** One source per tracker, and one view (or more) per source: a view plans repositories of a single source. Switch between views with the selector in the header.
+
+```yaml
+sources:
+  - id: gh
+    kind: github
+    tokenEnv: GITHUB_TOKEN
+  - id: gt
+    kind: gitea
+    baseUrl: https://gitea.example.com
+    tokenEnv: GITEA_TOKEN
+
+views:
+  - id: self-hosted
+    title: Self-hosted (Gitea)
+    source: gt
+    repos:
+      - acme/api
+      - acme/web
+  - id: open-source
+    title: Open source (GitHub)
+    source: gh
+    repos:
+      - acme/sdk
+      - acme/docs
+```
+
+The first view opens by default. Dependencies between a GitHub issue and a Gitea issue are not followed.
+
+**In the compose file**, remove the `EV_*` lines, keep one token line per source, and mount the config:
 
 ```yaml
 environment:
   - GITHUB_TOKEN=${GITHUB_TOKEN}
+  - GITEA_TOKEN=${GITEA_TOKEN}
 volumes:
   - ./config.yaml:/app/config.yaml:ro
 ```
 
-Create `config.yaml` **before** adding the mount: if the file does not exist, Docker creates a directory with that name. Every option is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md); deployment recipes (plain `docker run`, systemd, reverse proxy, basic auth, webhooks) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+with both tokens in `.env`. Create `config.yaml` **before** adding the mount: if the file does not exist, Docker creates a directory with that name. Then run `docker compose run --rm execution-view check`, which reports each view separately. Every option is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md); deployment recipes (plain `docker run`, systemd, reverse proxy, basic auth, webhooks) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Without Docker
 
