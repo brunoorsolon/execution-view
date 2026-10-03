@@ -159,7 +159,7 @@ function headingText(raw: string | undefined): string {
 
 export function parseBodyRelations(body: string, options: ParseOptions = {}): RawRelation[] {
   const keywords = buildKeywords(options.keywords ?? DEFAULT_KEYWORDS);
-  if (keywords.length === 0 || !body) return [];
+  if (!body) return [];
   const kindOf = new Map<string, Kind>(keywords.map((k) => [k.text, k.kind]));
   const hosts = new Set(
     (options.webHosts ?? []).map((h) => h.trim().toLowerCase()).filter((h) => h !== ''),
@@ -246,7 +246,7 @@ export function parseBodyRelations(body: string, options: ParseOptions = {}): Ra
         continue;
       }
     }
-    if (options.strict) continue;
+    if (options.strict || keywords.length === 0) continue;
 
     const heading = HEADING_RE.exec(line);
     if (heading) {

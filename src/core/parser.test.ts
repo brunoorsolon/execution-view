@@ -617,6 +617,18 @@ describe('custom keywords', () => {
       options: { keywords: { blockedBy: [], blocks: [] } },
     },
     {
+      name: 'relation lines are read even when both lists are empty',
+      body: 'Blocked by: [#1]\nParent: [#3]\nDepends on #2',
+      expected: ['b:#1', 'p:#3'],
+      options: { keywords: { blockedBy: [], blocks: [] } },
+    },
+    {
+      name: 'relation lines are read even when both lists are empty in strict mode',
+      body: 'Blocked by: [#1]\nParent: [#3]\nDepends on #2',
+      expected: ['b:#1', 'p:#3'],
+      options: { keywords: { blockedBy: [], blocks: [] }, strict: true },
+    },
+    {
       name: 'blank keywords never match',
       body: '#1\n  #2\n- #3',
       expected: [],
