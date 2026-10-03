@@ -48,7 +48,9 @@ The header has a view selector, the repositories, when the data was fetched, the
 
 ## Run it on your repo with docker compose
 
-Read [Before you start: prerequisites](#before-you-start-prerequisites) first: without declared dependencies the graph is empty. You need Docker with Compose 2.24 or newer (`docker compose version`).
+Read [Before you start: prerequisites](#before-you-start-prerequisites) first: without declared dependencies the graph is empty. You need Docker with Compose v2 (`docker compose version`).
+
+There is no database and nothing to persist: snapshots are cached in memory and fetched again from your tracker after a restart, so no data volume is needed.
 
 **1. Create a folder for it.**
 
@@ -56,40 +58,50 @@ Read [Before you start: prerequisites](#before-you-start-prerequisites) first: w
 mkdir execution-view && cd execution-view
 ```
 
-**2. Create `docker-compose.yml`** with this content (it is also [in the repository](docker-compose.yml)):
+**2. Create `docker-compose.yml`** with this content (it is also [in the repository](docker-compose.yml), with comments):
 
 ```yaml
 services:
   execution-view:
-    image: ghcr.io/brunoorsolon/execution-view:1
+    image: ghcr.io/brunoorsolon/execution-view:1.1.0
+    container_name: execution-view
+    restart: unless-stopped
     ports:
       - '8080:8080'
-    env_file:
-      - path: .env
-        required: false
-    restart: unless-stopped
+    environment:
+      - EV_PROVIDER=github
+      - EV_REPOS=owner/repo,owner/other-repo
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    labels:
+      - 'wud.tag.include=^v?\d+\.\d+\.\d+$$'
+      - 'wud.tag.exclude=.*(alpha|beta|rc|dev|nightly).*'
 ```
 
-**3. Create `.env`** next to it with your repositories and a read-only token ([which token?](docs/PREREQUISITES.md#7-tokens-and-permissions)).
+For Gitea or Forgejo, use these `environment:` lines instead (`EV_BASE_URL` is the instance root, without `/api/v1`):
 
-GitHub:
+```yaml
+- EV_PROVIDER=gitea
+- EV_BASE_URL=https://gitea.example.com
+- EV_REPOS=owner/repo
+- GITEA_TOKEN=${GITEA_TOKEN}
+```
+
+Optional: `- EV_PRIORITY_LABELS=P0,P1,P2` (highest first) and `- EV_BASIC_AUTH=${EV_BASIC_AUTH}` (`user:password`). Every variable is listed in [docs/CONFIGURATION.md](docs/CONFIGURATION.md#env-only-mode). The `wud.*` labels let [What's Up Docker](https://getwud.github.io/wud/) report new releases; drop them if you do not use it.
+
+If your Gitea runs on the same host behind a reverse proxy and the container cannot reach its public name, map that name to the host's address:
+
+```yaml
+extra_hosts:
+  - 'gitea.example.com:192.0.2.10'
+```
+
+**3. Create `.env`** next to it with the token ([which token?](docs/PREREQUISITES.md#7-tokens-and-permissions)). Docker Compose reads it on its own to fill in `${GITHUB_TOKEN}`; it is not mounted or passed to the container as a whole. Keep it out of Git.
 
 ```sh
-EV_PROVIDER=github
-EV_REPOS=owner/repo,owner/other-repo
 GITHUB_TOKEN=github_pat_xxx
 ```
 
-Gitea or Forgejo (`EV_BASE_URL` is the instance root, without `/api/v1`):
-
-```sh
-EV_PROVIDER=gitea
-EV_BASE_URL=https://gitea.example.com
-EV_REPOS=owner/repo
-GITEA_TOKEN=xxx
-```
-
-Optional: `EV_PRIORITY_LABELS=P0,P1,P2` (highest first) and `EV_BASIC_AUTH=user:password`. Every variable is listed in [docs/CONFIGURATION.md](docs/CONFIGURATION.md#env-only-mode). Keep `.env` out of Git.
+(`GITEA_TOKEN=xxx` for Gitea or Forgejo, and `EV_BASIC_AUTH=user:password` if you enabled it.)
 
 **4. Check the setup** (token, access, declared dependencies):
 
@@ -107,24 +119,83 @@ docker compose up -d
 
 Open <http://localhost:8080>.
 
-**6. Upgrade later:**
+**6. Upgrade later:** change the image tag to the new version, then:
 
 ```sh
 docker compose pull && docker compose up -d
 ```
 
-`:1` follows the newest 1.x release; pin an exact version such as `:1.0.0` if you prefer to upgrade by hand.
+Images are tagged with the exact version (`1.1.0`), the minor (`1.1`), the major (`1`) and `latest`. Use `:1` instead of a pinned version if you prefer to follow every 1.x release without editing the file.
 
 ### Several repositories, views or options: the config file
 
-Env-only mode gives one view. For several views, scope filters, GitHub Enterprise Server, webhooks or the wave-by-wave ordering, use a config file: copy [`config.example.yaml`](config.example.yaml) to `config.yaml` next to `docker-compose.yml`, edit it, remove the `EV_PROVIDER`/`EV_REPOS` lines from `.env` (keep the tokens), and add the mount to the service:
+Env-only mode gives one view on one tracker (`EV_REPOS` can still list several repositories, comma-separated). For several views, GitHub and Gitea together, scope filters, GitHub Enterprise Server, webhooks or the wave-by-wave ordering, use a config file: create `config.yaml` next to `docker-compose.yml` ([`config.example.yaml`](config.example.yaml) shows every option).
+
+The config never holds the tokens: `tokenEnv` names the environment variable that does, so you can commit `config.yaml` and keep only `.env` out of Git.
+
+**Several repositories on one tracker.** Every repository in a view is planned together, so dependencies between them are followed:
 
 ```yaml
+sources:
+  - id: gt
+    kind: gitea
+    baseUrl: https://gitea.example.com
+    tokenEnv: GITEA_TOKEN
+
+views:
+  - id: platform
+    title: Platform
+    source: gt
+    repos:
+      - acme/api
+      - acme/web
+      - acme/infra
+    ordering:
+      priorityLabels: [P0, P1, P2]
+```
+
+For separate graphs on the same tracker, add more views with the same `source`. A prerequisite that lives in another view's repository still appears, as an external issue.
+
+**GitHub and Gitea together.** One source per tracker, and one view (or more) per source: a view plans repositories of a single source. Switch between views with the selector in the header.
+
+```yaml
+sources:
+  - id: gh
+    kind: github
+    tokenEnv: GITHUB_TOKEN
+  - id: gt
+    kind: gitea
+    baseUrl: https://gitea.example.com
+    tokenEnv: GITEA_TOKEN
+
+views:
+  - id: self-hosted
+    title: Self-hosted (Gitea)
+    source: gt
+    repos:
+      - acme/api
+      - acme/web
+  - id: open-source
+    title: Open source (GitHub)
+    source: gh
+    repos:
+      - acme/sdk
+      - acme/docs
+```
+
+The first view opens by default. Dependencies between a GitHub issue and a Gitea issue are not followed.
+
+**In the compose file**, remove the `EV_*` lines, keep one token line per source, and mount the config:
+
+```yaml
+environment:
+  - GITHUB_TOKEN=${GITHUB_TOKEN}
+  - GITEA_TOKEN=${GITEA_TOKEN}
 volumes:
   - ./config.yaml:/app/config.yaml:ro
 ```
 
-Create `config.yaml` **before** adding the mount: if the file does not exist, Docker creates a directory with that name. Every option is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md); deployment recipes (plain `docker run`, systemd, reverse proxy, basic auth, webhooks) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+with both tokens in `.env`. Create `config.yaml` **before** adding the mount: if the file does not exist, Docker creates a directory with that name. Then run `docker compose run --rm execution-view check`, which reports each view separately. Every option is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md); deployment recipes (plain `docker run`, systemd, reverse proxy, basic auth, webhooks) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Without Docker
 

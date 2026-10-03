@@ -90,7 +90,7 @@ The repository also has `scripts/smoke-test.sh`, which builds the image and test
 
 ## docker-compose
 
-The step-by-step setup is in the README: [Run it on your repo with docker compose](../README.md#run-it-on-your-repo-with-docker-compose). In short, put `docker-compose.yml` (from the repository) and a `.env` (from `.env.example`) in one folder, then:
+The step-by-step setup is in the README: [Run it on your repo with docker compose](../README.md#run-it-on-your-repo-with-docker-compose). In short, put `docker-compose.yml` (from the repository) in a folder, set your repositories in its `environment:` block, put the token in a `.env` next to it (from `.env.example`), then:
 
 ```sh
 docker compose run --rm execution-view check
@@ -102,9 +102,12 @@ docker compose up -d
 
 What the compose file does:
 
-- runs `ghcr.io/brunoorsolon/execution-view:1`, publishes `8080:8080` and restarts `unless-stopped`;
-- loads `.env` with `env_file` (marked `required: false`, which needs Docker Compose 2.24 or newer). In env-only mode `.env` holds `EV_PROVIDER`, `EV_REPOS` (and `EV_BASE_URL` for Gitea) plus the token; with a config file it holds only the tokens, named `GITHUB_TOKEN` and `GITEA_TOKEN`, so `tokenEnv: GITHUB_TOKEN` in the config finds them;
-- has a commented-out `volumes:` entry that mounts `./config.yaml` at `/app/config.yaml` for config-file mode. Create the file before you uncomment it, otherwise Docker creates a directory with that name.
+- runs `ghcr.io/brunoorsolon/execution-view` pinned to an exact version, as `container_name: execution-view`, publishes `8080:8080` and restarts `unless-stopped`;
+- sets the env-only settings (`EV_PROVIDER`, `EV_REPOS`, and `EV_BASE_URL` for Gitea) in `environment:`, and passes the token as `GITHUB_TOKEN=${GITHUB_TOKEN}` (or `GITEA_TOKEN`). Docker Compose fills in `${...}` from `.env` in the same folder; nothing else from `.env` reaches the container. With a config file, keep only the token lines: `tokenEnv: GITHUB_TOKEN` in the config finds them;
+- has a commented-out `volumes:` entry that mounts `./config.yaml` at `/app/config.yaml` for config-file mode. Create the file before you uncomment it, otherwise Docker creates a directory with that name;
+- carries `wud.tag.include` / `wud.tag.exclude` labels so [What's Up Docker](https://getwud.github.io/wud/) reports new releases (exact `X.Y.Z` tags only). They do nothing without it.
+
+No data volume is needed: the app has no database, and snapshots are cached in memory (`EV_CACHE_TTL`) and fetched again after a restart.
 
 To build from source instead of pulling, replace the `image:` line with `build: .` and run `docker compose up -d --build` from the repository root. To publish only on localhost (when a reverse proxy runs on the same host), change the port mapping to `'127.0.0.1:8080:8080'`.
 

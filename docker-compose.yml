@@ -1,23 +1,40 @@
-# execution-view with the published image. Quick start: see "Run with docker compose"
-# in README.md. Settings and tokens come from .env (see .env.example).
+# execution-view with the published image. Step-by-step setup: README.md,
+# "Run it on your repo with docker compose".
+#
+# Settings live in `environment:` below. Secrets (tokens, passwords) go in a
+# .env file next to this one: Docker Compose reads it on its own to fill in the
+# ${...} references. Nothing else from .env reaches the container.
+#
+# There is no database and no data volume: snapshots are cached in memory and
+# fetched again from the tracker after a restart.
 services:
   execution-view:
-    # :1 follows the latest 1.x release. Pin a version (e.g. :1.0.0) for fully
-    # reproducible deployments. To build from source instead, replace this line
-    # with `build: .`.
-    image: ghcr.io/brunoorsolon/execution-view:1
+    # Pinned version; the What's Up Docker labels below report new releases.
+    # To build from source instead, replace this line with `build: .`.
+    image: ghcr.io/brunoorsolon/execution-view:1.1.0
+    container_name: execution-view
+    restart: unless-stopped
     ports:
       - '8080:8080'
-    # Env-only mode (EV_PROVIDER, EV_REPOS, ...) and tokens. Requires Compose >= 2.24
-    # for `required: false`.
-    env_file:
-      - path: .env
-        required: false
-    restart: unless-stopped
-
-    # Config-file mode (several repos or views, priority labels, scope filters,
-    # basic auth, webhooks): create config.yaml from config.example.yaml first,
-    # then uncomment. Do not uncomment before the file exists: Docker would
-    # create a directory named config.yaml instead.
+    environment:
+      # Env-only mode: one view over one or more repositories.
+      - EV_PROVIDER=github
+      - EV_REPOS=owner/repo,owner/other-repo
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      # Gitea or Forgejo instead (EV_BASE_URL is the instance root, without /api/v1):
+      # - EV_PROVIDER=gitea
+      # - EV_BASE_URL=https://gitea.example.com
+      # - EV_REPOS=owner/repo
+      # - GITEA_TOKEN=${GITEA_TOKEN}
+      # Optional: priority labels (highest first) and HTTP basic auth (user:password).
+      # - EV_PRIORITY_LABELS=P0,P1,P2
+      # - EV_BASIC_AUTH=${EV_BASIC_AUTH}
+    # Config-file mode (several views, scope filters, webhooks, ...): create
+    # config.yaml from config.example.yaml first, remove EV_PROVIDER/EV_REPOS
+    # above (keep the token lines), then uncomment. If the file does not exist,
+    # Docker creates a directory named config.yaml instead.
     # volumes:
     #   - ./config.yaml:/app/config.yaml:ro
+    labels:
+      - 'wud.tag.include=^v?\d+\.\d+\.\d+$$'
+      - 'wud.tag.exclude=.*(alpha|beta|rc|dev|nightly).*'
