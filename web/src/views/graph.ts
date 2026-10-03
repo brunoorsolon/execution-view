@@ -1,6 +1,6 @@
 import type { IssueKey, PlanNode, Point, Snapshot } from '../../../src/core/types.js';
 import { clear, h, icon, svg } from '../dom.js';
-import { shortKey, plural } from '../format.js';
+import { displayStatus, shortKey, plural } from '../format.js';
 import {
   GEOMETRY,
   computeHighlight,
@@ -26,7 +26,7 @@ import {
   getIndex,
   otherLabels,
   priorityTag,
-  statusBadge,
+  statusBadges,
   visibleKeys,
   type View,
   type ViewCtx,
@@ -126,6 +126,7 @@ export function createGraphView(ctx: ViewCtx): GraphView {
     'div',
     { class: 'graph-chrome legend', 'aria-hidden': 'true' },
     legItem('sq st-ready', 'Ready'),
+    legItem('sq st-in-progress', 'In progress'),
     legItem('sq st-blocked', 'Blocked'),
     legItem('sq st-in-cycle', 'In cycle'),
     legItem('sq st-blocked-by-cycle', 'Blocked by cycle'),
@@ -356,7 +357,7 @@ export function createGraphView(ctx: ViewCtx): GraphView {
     const card = h(
       'div',
       {
-        class: `card st-${n.status}${n.external ? ' external' : ''}`,
+        class: `card st-${displayStatus(n)}${n.external ? ' external' : ''}`,
         style: `width:${G.cardW}px;height:${G.cardH}px`,
         tabindex: 0,
         role: 'button',
@@ -378,7 +379,7 @@ export function createGraphView(ctx: ViewCtx): GraphView {
       h(
         'div',
         { class: 'card-foot' },
-        statusBadge(n.status),
+        statusBadges(n),
         h('span', { class: 'labels' }, labels.join(', ')),
         n.assignees.length > 0 ? avatars(n.assignees, 2) : null,
       ),

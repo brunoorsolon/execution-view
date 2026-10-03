@@ -1,8 +1,8 @@
-import type { IssueKey, NodeStatus, PlanNode, Snapshot } from '../../../src/core/types.js';
+import type { IssueKey, PlanNode, Snapshot } from '../../../src/core/types.js';
 import type { AppState, Store } from '../state.js';
 import { effectiveViewId, indexSnapshot, type SnapshotIndex } from '../state.js';
 import { compileFilter, type FilterTarget } from '../filter.js';
-import { statusLabel } from '../format.js';
+import { displayStatus, isClaimed, statusLabel, type DisplayStatus } from '../format.js';
 import { priorityName } from '../priority.js';
 import type { Tab } from '../route.js';
 import { h } from '../dom.js';
@@ -86,8 +86,15 @@ export function isVisible(keys: Set<IssueKey> | null, key: IssueKey): boolean {
   return keys === null || keys.has(key);
 }
 
-export function statusBadge(status: NodeStatus): HTMLElement {
-  return h('span', { class: `badge st-${status}` }, statusLabel(status));
+export function statusBadges(node: PlanNode): HTMLElement {
+  const badge = (status: DisplayStatus): HTMLElement =>
+    h('span', { class: `badge st-${status}` }, statusLabel(status));
+  return h(
+    'span',
+    { class: 'status-badges' },
+    badge(displayStatus(node)),
+    node.status !== 'ready' && isClaimed(node.labels) ? badge('in-progress') : null,
+  );
 }
 
 export function labelChip(label: string): HTMLElement {

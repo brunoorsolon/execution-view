@@ -11,7 +11,7 @@ import {
   otherLabels,
   priorityTag,
   safeUrl,
-  statusBadge,
+  statusBadges,
   type View,
   type ViewCtx,
 } from './shared.js';
@@ -44,7 +44,7 @@ export function createSidePanel(ctx: ViewCtx): View {
             },
             h('span', { class: 'card-key' }, shortKey(k, index.multiRepo)),
             h('span', { class: 't' }, n?.title ?? '(not in this snapshot)'),
-            n ? statusBadge(n.status) : null,
+            n ? statusBadges(n) : null,
           ),
         );
       }),
@@ -104,7 +104,7 @@ export function createSidePanel(ctx: ViewCtx): View {
         h(
           'div',
           { class: 'badges' },
-          statusBadge(n.status),
+          statusBadges(n),
           index.criticalNodes.has(n.key)
             ? h('span', { class: 'tag-crit' }, icon('critical', 13), 'On the critical path')
             : null,
