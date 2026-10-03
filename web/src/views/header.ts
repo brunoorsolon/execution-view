@@ -1,5 +1,5 @@
 import type { Snapshot } from '../../../src/core/types.js';
-import { exportUrl, type ExportFormat } from '../api.js';
+import { exportUrl, fetchSession, type ExportFormat } from '../api.js';
 import { clear, h, icon, type Child } from '../dom.js';
 import {
   hasQualifier,
@@ -176,6 +176,11 @@ export function createHeader(ctx: ViewCtx): View {
   });
 
   let theme = loadTheme();
+  let username: string | null = null;
+  fetchSession().then(
+    (s) => (username = s.username),
+    () => undefined, // no login configured
+  );
   const themeMenu = createMenu(
     h(
       'button',
@@ -205,6 +210,16 @@ export function createHeader(ctx: ViewCtx): View {
           label,
         ),
       ),
+      ...(username === null
+        ? []
+        : [
+            h('div', { class: 'menu-label' }, `Signed in as ${username}`),
+            h(
+              'form',
+              { method: 'post', action: 'logout' },
+              h('button', { class: 'menu-item', type: 'submit', role: 'menuitem' }, 'Log out'),
+            ),
+          ]),
     ],
   );
 

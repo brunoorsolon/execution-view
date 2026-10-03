@@ -10,7 +10,7 @@ Contents:
 - [Bare Node.js](#bare-nodejs)
 - [systemd](#systemd)
 - [Reverse proxy](#reverse-proxy)
-- [Basic auth](#basic-auth)
+- [Login](#login)
 - [Webhooks](#webhooks)
 - [Health check](#health-check)
 - [Resource needs](#resource-needs)
@@ -222,9 +222,9 @@ Notes:
 - Bind the app to loopback (`EV_HOST=127.0.0.1`, or publish `127.0.0.1:8080:8080` from Docker) so that only the proxy can reach it.
 - The proxy is a good place for authentication and TLS; see the next section.
 
-## Basic auth
+## Login
 
-The app has optional HTTP basic auth that protects **everything except `/healthz`** (web UI, API and exports). Enable it in the config:
+The app has an optional login that protects **everything except `/healthz`** (web UI, API and exports). Enable it in the config:
 
 ```yaml
 server:
@@ -235,7 +235,9 @@ server:
 
 or with the environment variable `EV_BASIC_AUTH=user:password`, which overrides the config block. Prefer `passwordEnv` (or an env file) over an inline `password`.
 
-Basic auth sends the password with every request in a **reversible encoding, not encrypted**. Only use it over **HTTPS**, i.e. behind a reverse proxy with TLS. For anything beyond a small team, prefer your proxy's own authentication (SSO, VPN, IP allow-list) in front of the app, with or without app-level basic auth. Password comparison is done in constant time.
+In a browser, the app shows a login page that password managers can fill. Logging in sets an HttpOnly session cookie that lasts 30 days, and **Log out** is in the theme menu. Sessions live in memory, so a restart (an upgrade, for example) means logging in again. Scripts send HTTP basic auth with the same credentials instead; they must send it **preemptively** (`curl -u` does), because the app does not answer with a `WWW-Authenticate` challenge.
+
+The password crosses the network in clear text on the login form and with basic auth, and the session cookie works like a password while it lasts. Only use the login over **HTTPS**, i.e. behind a reverse proxy with TLS; the cookie is marked `Secure` when the request came over HTTPS, directly or with `X-Forwarded-Proto: https`. There is no limit on failed login attempts, so use a long password. For anything beyond a small team, prefer your proxy's own authentication (SSO, VPN, IP allow-list) in front of the app, with or without the app's login. Password comparison is done in constant time.
 
 ## Webhooks
 
@@ -269,7 +271,7 @@ Only JSON is accepted. Organization-level or system-level webhooks also work if 
 Reverse proxy notes:
 
 - The proxy must forward the request **body unchanged** (no re-encoding, compression or rewriting). The signature is computed over the exact bytes the tracker sent, so any change makes the delivery fail with `401`. Forward the `X-Hub-Signature-256`, `X-Gitea-Signature`, `X-Forgejo-Signature` and `X-GitHub-Event`/`X-Gitea-Event`/`X-Forgejo-Event` headers (proxies do this by default).
-- Webhook requests are **not** subject to the app's basic auth (the signature is their authentication), so the tracker does not need credentials. If your proxy adds its own authentication in front of the app, let `/api/webhooks/*` through it.
+- Webhook requests are **not** subject to the app's login (the signature is their authentication), so the tracker does not need credentials. If your proxy adds its own authentication in front of the app, let `/api/webhooks/*` through it.
 - The body limit is 1 MiB (`413` above it); keep any proxy limit at least that large (nginx: `client_max_body_size`, default 1 MB).
 - The tracker must reach the app over the network: for a self-hosted app on a private network this means a tracker on the same network, or a publicly reachable URL restricted to the tracker's IP addresses.
 
@@ -294,9 +296,9 @@ Small. There is no database and no persistent state: the process keeps one snaps
 - **Use read-only tokens** with the minimum scope ([PREREQUISITES.md](PREREQUISITES.md#7-tokens-and-permissions)). The app only sends `GET` requests, but a token can do whatever its scopes allow.
 - **The token is never logged.** Error messages that could contain it are redacted, and the request log records the method, path and host but not headers. The HTTP client refuses to send the token to any host other than the configured `baseUrl`. API error responses redact the token too.
 - Keep tokens out of the image, the repository and the config file: use `tokenEnv`, `--env-file`, Docker or systemd secrets. `.env` and `config.yaml` are git-ignored, and `.env` is excluded from the Docker build context.
-- **What the app exposes:** issue titles, labels, assignees, milestones and URLs of the configured repositories (bodies are not exposed). Anyone who can reach the service can read those, including titles from **private** repositories your token can see. Use basic auth and/or the proxy's authentication, and TLS.
+- **What the app exposes:** issue titles, labels, assignees, milestones and URLs of the configured repositories (bodies are not exposed). Anyone who can reach the service can read those, including titles from **private** repositories your token can see. Use the login and/or the proxy's authentication, and TLS.
 - The process runs as a non-root user in the Docker image and listens on all interfaces by default (`0.0.0.0`): restrict `EV_HOST` or the published port when you do not want that.
-- Basic auth over plain HTTP is not confidential (see above).
+- The login over plain HTTP is not confidential (see above).
 - **Webhooks** are authenticated only by the HMAC signature (constant-time comparison); use a long random secret and keep it like a token. Anyone who has it can make the app drop its caches (the worst effect is extra tracker requests), nothing more.
 - `EV_BASIC_AUTH` and `-e TOKEN=value` are visible to anyone who can run `docker inspect` or read the process environment; prefer files and secrets on shared hosts.
 

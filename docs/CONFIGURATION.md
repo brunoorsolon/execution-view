@@ -37,7 +37,7 @@ The schema is **strict**: an unknown key is an error, and all errors are reporte
 | ------------------------------ | --------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `server.host`                  | string          | `0.0.0.0` | Address to listen on. Overridden by `EV_HOST`.                                                                                                  |
 | `server.port`                  | integer 1-65535 | `8080`    | Port to listen on. Overridden by `EV_PORT`.                                                                                                     |
-| `server.basicAuth`             | object          | none      | Enables HTTP basic auth for the whole app except `/healthz`. Overridden entirely by `EV_BASIC_AUTH`.                                            |
+| `server.basicAuth`             | object          | none      | Enables the login (login page and HTTP basic auth) for the whole app except `/healthz`. Overridden entirely by `EV_BASIC_AUTH`.                 |
 | `server.basicAuth.username`    | string          | required  | The user name (required when `basicAuth` is present).                                                                                           |
 | `server.basicAuth.passwordEnv` | string          | none      | Name of the environment variable that holds the password (recommended). Wins over `password` when the variable is set and not blank.            |
 | `server.basicAuth.password`    | string          | none      | Inline password (discouraged). Used when `passwordEnv` is absent or its variable is unset. One of the two is required, otherwise startup fails. |
@@ -249,7 +249,7 @@ views:
       priorityLabels: [priority/high, priority/medium]
 ```
 
-### Basic auth
+### Login
 
 ```yaml
 server:
@@ -269,7 +269,7 @@ views:
       - acme/app
 ```
 
-Or, without a file: `EV_BASIC_AUTH=admin:change-me`. Use TLS in front of the app: see [DEPLOYMENT.md](DEPLOYMENT.md#basic-auth).
+Or, without a file: `EV_BASIC_AUTH=admin:change-me`. Use TLS in front of the app: see [DEPLOYMENT.md](DEPLOYMENT.md#login).
 
 ### Webhooks
 

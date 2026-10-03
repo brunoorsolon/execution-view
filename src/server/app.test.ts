@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../config/load.js';
 import type { AppConfig, ResolvedSource } from '../config/schema.js';
 import type { FetchResult, Issue, IssueProvider, ListOptions, RepoRef } from '../core/types.js';
@@ -304,7 +304,7 @@ describe('basic auth', () => {
     const { app } = authed();
     const res = await app.inject('/api/views');
     expect(res.statusCode).toBe(401);
-    expect(res.headers['www-authenticate']).toBe('Basic realm="execution-view"');
+    expect(res.headers['www-authenticate']).toBeUndefined();
     for (const url of ['/api/views/demo/snapshot', '/api/views/demo/export.md', '/', '/x']) {
       expect((await app.inject(url)).statusCode, url).toBe(401);
     }
@@ -328,7 +328,7 @@ describe('basic auth', () => {
     for (const authorization of wrong) {
       const res = await app.inject({ url: '/api/views', headers: { authorization } });
       expect(res.statusCode, authorization).toBe(401);
-      expect(res.headers['www-authenticate']).toBe('Basic realm="execution-view"');
+      expect(res.headers['www-authenticate']).toBeUndefined();
     }
   });
 
@@ -362,6 +362,166 @@ describe('basic auth', () => {
   it('is off when basicAuth is null', async () => {
     const { app } = setup();
     expect((await app.inject('/api/views')).statusCode).toBe(200);
+    expect((await app.inject('/api/session')).statusCode).toBe(404);
+  });
+});
+
+describe('login page', () => {
+  function authed(webDir?: string) {
+    return setup({
+      config: demoConfig((c) => {
+        c.server.basicAuth = { username: 'admin', password: 's3cret' };
+      }),
+      ...(webDir !== undefined ? { webDir } : {}),
+    });
+  }
+
+  function login(app: FastifyInstance, form: string, headers: Record<string, string> = {}) {
+    return app.inject({
+      method: 'POST',
+      url: '/login',
+      payload: form,
+      headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+    });
+  }
+
+  /** The `name=value` part of the response's Set-Cookie header. */
+  function cookieOf(res: { headers: Record<string, unknown> }): string {
+    return String(res.headers['set-cookie']).split(';')[0] as string;
+  }
+
+  it('serves a form that password managers can fill', async () => {
+    const { app } = authed();
+    const res = await app.inject('/login');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('<form method="post" action="login">');
+    expect(res.body).toContain('name="username" autocomplete="username"');
+    expect(res.body).toMatch(/name="password"\s+type="password"\s+autocomplete="current-password"/);
+  });
+
+  it('redirects page loads to the login page, relative to the app root', async () => {
+    const { app } = authed(tempWebDir());
+    const html = { accept: 'text/html,application/xhtml+xml' };
+    for (const [url, location] of [
+      ['/', 'login'],
+      ['/?x=1', 'login'],
+      ['/some/deep/route', '../../login'],
+      ['/dir/', '../login'],
+    ]) {
+      const res = await app.inject({ url, headers: html });
+      expect(res.statusCode, url).toBe(302);
+      expect(res.headers.location, url).toBe(location);
+    }
+    // API calls and non-HTML requests get a 401 the browser does not turn into a dialog
+    for (const headers of [html, {}]) {
+      const api = await app.inject({ url: '/api/views', headers });
+      expect(api.statusCode).toBe(401);
+      expect(api.json()).toEqual({ error: 'Unauthorized' });
+      expect(api.headers['www-authenticate']).toBeUndefined();
+    }
+  });
+
+  it('logs in with the right credentials and the session cookie opens the app', async () => {
+    const { app } = authed(tempWebDir());
+    const res = await login(app, 'username=admin&password=s3cret');
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('./');
+    const setCookie = String(res.headers['set-cookie']);
+    expect(setCookie).toMatch(/^ev_session=[A-Za-z0-9_-]{43};/);
+    expect(setCookie).toContain('HttpOnly');
+    expect(setCookie).toContain('SameSite=Lax');
+    expect(setCookie).toContain(`Max-Age=${30 * 24 * 60 * 60}`);
+    expect(setCookie).not.toContain('Secure');
+    expect(setCookie).not.toContain('Path=');
+
+    const cookie = cookieOf(res);
+    expect((await app.inject({ url: '/api/views', headers: { cookie } })).statusCode).toBe(200);
+    const page = await app.inject({ url: '/', headers: { cookie, accept: 'text/html' } });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('INDEX');
+    const session = await app.inject({
+      url: '/api/session',
+      headers: { cookie: `a=b; ${cookie}` },
+    });
+    expect(session.json()).toEqual({ username: 'admin' });
+  });
+
+  it('marks the cookie Secure behind HTTPS', async () => {
+    const { app } = authed();
+    for (const proto of ['https', 'https, http']) {
+      const res = await login(app, 'username=admin&password=s3cret', {
+        'x-forwarded-proto': proto,
+      });
+      expect(String(res.headers['set-cookie']), proto).toContain('; Secure');
+    }
+  });
+
+  it('rejects wrong credentials and forged cookies', async () => {
+    const { app } = authed();
+    for (const form of [
+      'username=admin&password=wrong',
+      'username=root&password=s3cret',
+      'username=admin&password=',
+      'username=admin',
+      'password=s3cret',
+      '',
+    ]) {
+      const res = await login(app, form);
+      expect(res.statusCode, form).toBe(401);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.body).toContain('role="alert"');
+      expect(res.headers['set-cookie'], form).toBeUndefined();
+    }
+    const json = await app.inject({
+      method: 'POST',
+      url: '/login',
+      payload: { username: 'admin', password: 's3cret' },
+    });
+    expect(json.statusCode).toBe(401);
+    expect(json.headers['set-cookie']).toBeUndefined();
+
+    for (const cookie of ['ev_session=forged', 'ev_session=', 'other_ev_session=x']) {
+      const res = await app.inject({ url: '/api/views', headers: { cookie } });
+      expect(res.statusCode, cookie).toBe(401);
+    }
+  });
+
+  it('logs out: the old cookie stops working', async () => {
+    const { app } = authed();
+    const cookie = cookieOf(await login(app, 'username=admin&password=s3cret'));
+    const other = cookieOf(await login(app, 'username=admin&password=s3cret'));
+    const res = await app.inject({ method: 'POST', url: '/logout', headers: { cookie } });
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('login');
+    expect(String(res.headers['set-cookie'])).toMatch(/^ev_session=; Max-Age=0;/);
+    expect((await app.inject({ url: '/api/views', headers: { cookie } })).statusCode).toBe(401);
+    // other sessions survive, and logging out without a session is harmless
+    expect((await app.inject({ url: '/api/views', headers: { cookie: other } })).statusCode).toBe(
+      200,
+    );
+    expect((await app.inject({ method: 'POST', url: '/logout' })).statusCode).toBe(303);
+  });
+
+  it('expires a session after 30 days', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    cleanups.push(() => {
+      vi.useRealTimers();
+    });
+    const { app } = authed();
+    const cookie = cookieOf(await login(app, 'username=admin&password=s3cret'));
+    vi.setSystemTime(Date.now() + 30 * 24 * 60 * 60 * 1000 - 1000);
+    expect((await app.inject({ url: '/api/views', headers: { cookie } })).statusCode).toBe(200);
+    vi.setSystemTime(Date.now() + 2000);
+    expect((await app.inject({ url: '/api/views', headers: { cookie } })).statusCode).toBe(401);
+  });
+
+  it('keeps sessions per app instance (a restart logs out)', async () => {
+    const cookie = cookieOf(await login(authed().app, 'username=admin&password=s3cret'));
+    const restarted = authed().app;
+    expect((await restarted.inject({ url: '/api/views', headers: { cookie } })).statusCode).toBe(
+      401,
+    );
   });
 });
 
@@ -505,7 +665,7 @@ describe('static UI', () => {
     for (const url of ['/', '/app.js', '/assets/x.css', '/missing.js']) {
       const res = await app.inject(url);
       expect(res.statusCode, url).toBe(401);
-      expect(res.headers['www-authenticate']).toContain('Basic');
+      expect(res.headers['www-authenticate']).toBeUndefined();
     }
     const ok = await app.inject({ url: '/app.js', headers: { authorization: basic('u', 'p') } });
     expect(ok.statusCode).toBe(200);
@@ -694,6 +854,14 @@ describe('webhooks', () => {
     expect(bad.statusCode).toBe(401);
     expect(bad.json()).toEqual({ error: 'Invalid signature' });
     expect(bad.headers['www-authenticate']).toBeUndefined();
+    // the login form parser does not reach the webhook routes
+    const form = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/github',
+      payload: 'payload=%7B%7D',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    expect(form.statusCode).toBe(415);
 
     // nothing else is exempt: other methods and paths, including look-alikes
     for (const [method, url] of [
@@ -707,7 +875,7 @@ describe('webhooks', () => {
     ] as const) {
       const res = await app.inject({ method, url });
       expect(res.statusCode, `${method} ${url}`).toBe(401);
-      expect(res.headers['www-authenticate']).toContain('Basic');
+      expect(res.headers['www-authenticate']).toBeUndefined();
     }
   });
 
@@ -719,7 +887,7 @@ describe('webhooks', () => {
     });
     const res = await post(app, '/api/webhooks/github', payload(), {});
     expect(res.statusCode).toBe(401);
-    expect(res.headers['www-authenticate']).toContain('Basic');
+    expect(res.headers['www-authenticate']).toBeUndefined();
   });
 
   it('rejects a body over 1 MB with 413', async () => {

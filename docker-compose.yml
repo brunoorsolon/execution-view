@@ -26,7 +26,7 @@ services:
       # - EV_BASE_URL=https://gitea.example.com
       # - EV_REPOS=owner/repo
       # - GITEA_TOKEN=${GITEA_TOKEN}
-      # Optional: priority labels (highest first) and HTTP basic auth (user:password).
+      # Optional: priority labels (highest first) and the login (user:password).
       # - EV_PRIORITY_LABELS=P0,P1,P2
       # - EV_BASIC_AUTH=${EV_BASIC_AUTH}
     # Config-file mode (several views, scope filters, webhooks, ...): create
