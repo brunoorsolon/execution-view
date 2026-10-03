@@ -67,7 +67,9 @@ views:
   - id: platform # unique; ^[a-z0-9][a-z0-9-_]*$
     title: Platform roadmap # default: the id
     source: gh # must be one of the source ids above
-    repos: [acme/api, acme/web] # at least one owner/repo; lowercased, deduplicated, sorted
+    repos: # at least one owner/repo; lowercased, deduplicated, sorted
+      - acme/api
+      - acme/web
     dependencies:
       native: true # use the provider's native issue relations. default: true
       body: true # parse "Depends on #12" style lines in issue bodies. default: true
@@ -86,9 +88,11 @@ views:
 
   - id: self-hosted
     source: gt
-    repos: [team/app]
+    repos:
+      - team/app
 
   - id: demo
     title: Demo data
     source: demo
-    repos: [demo/app]
+    repos:
+      - demo/app

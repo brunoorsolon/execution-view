@@ -541,7 +541,9 @@ views:
   - id: platform
     title: Platform roadmap
     source: gh
-    repos: [acme/api, acme/web]
+    repos:
+      - acme/api
+      - acme/web
     dependencies:
       native: true # default true
       body: true # default true

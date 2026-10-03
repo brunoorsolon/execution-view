@@ -167,7 +167,8 @@ sources:
 views:
   - id: app
     source: gh
-    repos: [acme/app]
+    repos:
+      - acme/app
 ```
 
 Run with `GITHUB_TOKEN` set in the environment.
@@ -190,7 +191,10 @@ views:
   - id: platform
     title: Platform 1.0
     source: gh
-    repos: [acme/api, acme/web, acme/infra]
+    repos:
+      - acme/api
+      - acme/web
+      - acme/infra
     dependencies:
       subIssues: false
       keywords:
@@ -217,7 +221,8 @@ sources:
 views:
   - id: internal
     source: ghes
-    repos: [platform/core]
+    repos:
+      - platform/core
     dependencies:
       native: false # skip native dependencies on GHES versions without them; use body lines
 ```
@@ -237,7 +242,9 @@ views:
   - id: team
     title: Team backlog
     source: gt
-    repos: [team/app, team/lib]
+    repos:
+      - team/app
+      - team/lib
     ordering:
       priorityLabels: [priority/high, priority/medium]
 ```
@@ -258,7 +265,8 @@ sources:
 views:
   - id: app
     source: gh
-    repos: [acme/app]
+    repos:
+      - acme/app
 ```
 
 Or, without a file: `EV_BASIC_AUTH=admin:change-me`. Use TLS in front of the app: see [DEPLOYMENT.md](DEPLOYMENT.md#basic-auth).
@@ -277,7 +285,8 @@ sources:
 views:
   - id: app
     source: gh
-    repos: [acme/app]
+    repos:
+      - acme/app
 ```
 
 Or, without a file: `EV_WEBHOOK_SECRET=<a long random string>`. See [DEPLOYMENT.md](DEPLOYMENT.md#webhooks) for the tracker side.
@@ -315,7 +324,9 @@ views:
   - id: demo
     title: Acme demo roadmap
     source: demo
-    repos: [acme/api, acme/web]
+    repos:
+      - acme/api
+      - acme/web
     ordering:
       priorityLabels: [P0, P1, P2]
 ```

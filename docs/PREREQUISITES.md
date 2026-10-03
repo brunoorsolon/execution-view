@@ -182,7 +182,8 @@ For example, to also accept `needs` (as in `## Needs` or `Needs: #3`):
 views:
   - id: platform
     source: gh
-    repos: [acme/api]
+    repos:
+      - acme/api
     dependencies:
       keywords:
         blockedBy: [depends on, blocked by, requires, dependencies, needs]
