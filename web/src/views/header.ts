@@ -51,6 +51,8 @@ function facetGroups(snapshot: Snapshot, multiRepo: boolean): [string, Facet[]][
       [
         ['status', 'ready', 'Ready'],
         ['status', 'in-progress', 'In progress'],
+        ['status', 'spec', 'Spec'],
+        ['status', 'map', 'Map'],
         ['status', 'blocked', 'Blocked'],
         ['status', 'cycle', 'In cycle'],
         ['status', 'blocked-by-cycle', 'Blocked by cycle'],

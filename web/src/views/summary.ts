@@ -117,6 +117,8 @@ export function createSummary(ctx: ViewCtx): View {
     const st = {
       ready: count((s) => s === 'ready'),
       inProgress: count((s) => s === 'in-progress'),
+      spec: count((s) => s === 'spec'),
+      map: count((s) => s === 'map'),
       blocked: count((s) => s === 'blocked'),
       unsched: count((s) => s === 'in-cycle' || s === 'blocked-by-cycle'),
       external: nodes.filter((n) => n.external).length,
@@ -125,6 +127,8 @@ export function createSummary(ctx: ViewCtx): View {
     for (const s of [
       seg('s-ready', st.ready),
       seg('s-in-progress', st.inProgress),
+      seg('s-spec', st.spec),
+      seg('s-map', st.map),
       seg('s-blocked', st.blocked),
       seg('s-unsched', st.unsched),
     ])
@@ -143,6 +147,8 @@ export function createSummary(ctx: ViewCtx): View {
     if (!filtered || st.ready > 0) legend.append(leg('s-ready', st.ready, 'ready'));
     if (!filtered || st.inProgress > 0)
       legend.append(leg('s-in-progress', st.inProgress, 'in progress'));
+    if (!filtered || st.spec > 0) legend.append(leg('s-spec', st.spec, 'spec'));
+    if (!filtered || st.map > 0) legend.append(leg('s-map', st.map, 'map'));
     if (!filtered || st.blocked > 0) legend.append(leg('s-blocked', st.blocked, 'blocked'));
     if (!filtered || st.unsched > 0) legend.append(leg('s-unsched', st.unsched, 'unschedulable'));
     if (st.external > 0) legend.append(leg('s-ext', st.external, 'external'));

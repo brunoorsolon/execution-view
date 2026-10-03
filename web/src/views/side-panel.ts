@@ -165,7 +165,7 @@ export function createSidePanel(ctx: ViewCtx): View {
             'Parent',
             h('span', { class: 'n' }, String(n.parents.length)),
           ),
-          relList(n.parents, index),
+          relList(n.parents, index, n.key, 'up'),
         ),
         h(
           'section',
@@ -215,7 +215,7 @@ export function createSidePanel(ctx: ViewCtx): View {
             'Children',
             h('span', { class: 'n' }, String(n.children.length)),
           ),
-          relList(n.children, index),
+          relList(n.children, index, n.key, 'down'),
         ),
       ),
     );

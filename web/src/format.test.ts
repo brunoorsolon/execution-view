@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   displayKey,
+  displayStatus,
+  isClaimed,
+  isMap,
+  isSpec,
   keyNumber,
   plural,
   relativeTime,
   shortHash,
   shortKey,
   statusLabel,
+  workflowStatus,
 } from './format.js';
 
 const NOW = Date.parse('2026-01-10T12:00:00Z');
@@ -54,7 +59,54 @@ describe('keys and labels', () => {
   it('names statuses', () => {
     expect(statusLabel('ready')).toBe('Ready');
     expect(statusLabel('in-progress')).toBe('In progress');
+    expect(statusLabel('spec')).toBe('Spec');
+    expect(statusLabel('map')).toBe('Map');
     expect(statusLabel('in-cycle')).toBe('In cycle');
     expect(statusLabel('blocked-by-cycle')).toBe('Blocked by cycle');
+  });
+});
+
+describe('displayStatus', () => {
+  const node = (status: 'ready' | 'blocked', labels: string[]) => ({ status, labels });
+
+  it('recognizes both separators of every workflow label, case-insensitively', () => {
+    expect(isClaimed(['agent:claimed'])).toBe(true);
+    expect(isClaimed(['Agent/CLAIMED'])).toBe(true);
+    expect(isSpec(['spec:decomposed'])).toBe(true);
+    expect(isSpec(['SPEC/decomposed'])).toBe(true);
+    expect(isMap(['wayfinder:map'])).toBe(true);
+    expect(isMap(['Wayfinder/MAP'])).toBe(true);
+    for (const looser of [
+      'agent-claimed',
+      'agent:claim',
+      'xagent:claimed',
+      'spec-decomposed',
+      'spec:decompose',
+      'spec/decomposed:extra',
+      'wayfinder-maps',
+      'wayfinder:maps',
+    ]) {
+      expect(isClaimed([looser])).toBe(false);
+      expect(isSpec([looser])).toBe(false);
+      expect(isMap([looser])).toBe(false);
+    }
+  });
+
+  it('shows Spec and Map instead of Ready, and over In progress', () => {
+    expect(displayStatus(node('ready', []))).toBe('ready');
+    expect(displayStatus(node('ready', ['agent:claimed']))).toBe('in-progress');
+    expect(displayStatus(node('ready', ['spec/decomposed']))).toBe('spec');
+    expect(displayStatus(node('ready', ['wayfinder:map']))).toBe('map');
+    expect(displayStatus(node('ready', ['agent/claimed', 'spec:decomposed']))).toBe('spec');
+    expect(displayStatus(node('ready', ['agent:claimed', 'wayfinder/map']))).toBe('map');
+  });
+
+  it('keeps blocked and cycle precedence while still reporting the label', () => {
+    expect(displayStatus(node('blocked', ['spec/decomposed']))).toBe('blocked');
+    expect(displayStatus({ status: 'in-cycle', labels: ['wayfinder/map'] })).toBe('in-cycle');
+    expect(workflowStatus(['spec/decomposed'])).toBe('spec');
+    expect(workflowStatus(['wayfinder/map'])).toBe('map');
+    expect(workflowStatus(['agent/claimed'])).toBe('in-progress');
+    expect(workflowStatus([])).toBeNull();
   });
 });

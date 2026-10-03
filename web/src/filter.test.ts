@@ -142,6 +142,25 @@ describe('compileFilter', () => {
     expect(claimed.status).toBe('ready');
   });
 
+  it('accepts slash-form workflow labels and filters specs and maps', () => {
+    const claimed = issue('acme/api#5', 'Slash claimed', ['agent/claimed'], { status: 'ready' });
+    expect(compileFilter('status:in-progress')!(claimed)).toBe(true);
+    expect(compileFilter('status:ready')!(claimed)).toBe(false);
+
+    const spec = issue('acme/api#6', 'Spec', ['spec/decomposed'], { status: 'ready' });
+    const map = issue('acme/api#7', 'Map', ['wayfinder/map'], { status: 'ready' });
+    expect(compileFilter('status:spec')!(spec)).toBe(true);
+    expect(compileFilter('is:spec')!(spec)).toBe(true);
+    expect(compileFilter('status:ready')!(spec)).toBe(false);
+    expect(compileFilter('status:map')!(map)).toBe(true);
+    expect(compileFilter('is:map')!(map)).toBe(true);
+    expect(compileFilter('status:ready')!(map)).toBe(false);
+
+    const blockedSpec = { ...spec, status: 'blocked' as const };
+    expect(compileFilter('status:blocked')!(blockedSpec)).toBe(true);
+    expect(compileFilter('status:spec')!(blockedSpec)).toBe(false);
+  });
+
   it('treats values of one field as alternatives and different fields as AND', () => {
     const f = compileFilter('status:ready,cycle')!;
     expect(f(schema)).toBe(true);

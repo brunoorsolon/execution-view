@@ -127,6 +127,8 @@ export function createGraphView(ctx: ViewCtx): GraphView {
     { class: 'graph-chrome legend', 'aria-hidden': 'true' },
     legItem('sq st-ready', 'Ready'),
     legItem('sq st-in-progress', 'In progress'),
+    legItem('sq st-spec', 'Spec'),
+    legItem('sq st-map', 'Map'),
     legItem('sq st-blocked', 'Blocked'),
     legItem('sq st-in-cycle', 'In cycle'),
     legItem('sq st-blocked-by-cycle', 'Blocked by cycle'),
