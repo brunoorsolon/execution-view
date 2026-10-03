@@ -105,6 +105,8 @@ describe('buildPlan', () => {
       order: 0,
       blockedBy: [],
       blocks: [],
+      parents: [],
+      children: [],
       priority: 0,
       remainingDepth: 1,
     });
@@ -134,6 +136,42 @@ describe('buildPlan', () => {
     expect(node(plan, K(4)).blockedBy).toEqual([K(2), K(3)]);
     expect(node(plan, K(1)).blocks).toEqual([K(2), K(3)]);
     expect(plan.criticalPath).toEqual([K(1), K(2), K(4)]);
+  });
+
+  it('parent links fill parents and children without changing edges, waves or order', () => {
+    const keys = [K(1), K(2), K(3)];
+    const withEdges = input(keys, [edge(K(1), K(2)), edge(K(2), K(3))]);
+    const withParent: PlanInput = {
+      ...input(keys, [edge(K(1), K(2)), edge(K(2), K(3))]),
+      parentLinks: [
+        { parent: K(1), child: K(2) },
+        { parent: K(1), child: K(3) },
+      ],
+    };
+    const base = buildPlan(withEdges);
+    const plan = buildPlan(withParent);
+    expect(plan.edges).toEqual(base.edges);
+    expect(plan.order).toEqual(base.order);
+    expect(plan.waves).toEqual(base.waves);
+    expect(plan.criticalPath).toEqual(base.criticalPath);
+    expect(plan.stats).toEqual(base.stats);
+    expect(node(plan, K(1)).parents).toEqual([]);
+    expect(node(plan, K(1)).children).toEqual([K(2), K(3)]);
+    expect(node(plan, K(2)).parents).toEqual([K(1)]);
+    expect(node(plan, K(3)).parents).toEqual([K(1)]);
+  });
+
+  it('drops parent links that reference issues outside the plan and self-links', () => {
+    const plan = buildPlan({
+      ...input([K(1)], []),
+      parentLinks: [
+        { parent: K(99), child: K(1) },
+        { parent: K(1), child: K(98) },
+        { parent: K(1), child: K(1) },
+      ],
+    });
+    expect(node(plan, K(1)).parents).toEqual([]);
+    expect(node(plan, K(1)).children).toEqual([]);
   });
 
   it('puts independent nodes in wave 0 in key order', () => {

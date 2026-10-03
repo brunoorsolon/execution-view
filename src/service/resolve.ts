@@ -1,7 +1,7 @@
 import type { ResolvedSource, ResolvedView } from '../config/schema.js';
 import { compareKeys, makeKey, parseKey } from '../core/keys.js';
 import { parseBodyRelations } from '../core/parser.js';
-import type { PlanInput } from '../core/plan.js';
+import type { ParentLink, PlanInput } from '../core/plan.js';
 import { createLimiter } from '../providers/http.js';
 import type {
   DependencyEdge,
@@ -29,7 +29,7 @@ export interface ResolveResult {
 interface PendingRelation {
   declaring: IssueKey;
   refKey: IssueKey;
-  kind: RawRelation['kind'];
+  kind: 'blocked-by' | 'blocks';
   source: DependencySource;
 }
 
@@ -132,7 +132,13 @@ export async function resolveView(
       }
     }
     if (view.dependencies.body) {
-      out.push(...parseBodyRelations(issue.body, { keywords, webHosts }));
+      out.push(
+        ...parseBodyRelations(issue.body, {
+          keywords,
+          webHosts,
+          strict: view.dependencies.body === 'strict',
+        }),
+      );
     }
     return out;
   };
@@ -144,6 +150,7 @@ export async function resolveView(
 
   // Step 3: breadth-first resolution of references that are not in the open set.
   const pending: PendingRelation[] = [];
+  const parentLinks: ParentLink[] = [];
   const lookups = new Map<IssueKey, Lookup>();
   const unresolved: IssueKey[] = [];
   let fetches = 0;
@@ -155,6 +162,11 @@ export async function resolveView(
     for (const issue of level) {
       for (const rel of relationsOf(issue)) {
         const refKey = qualify(rel.ref, issue);
+        // A parent is hierarchy only: it is never fetched and never becomes an edge.
+        if (rel.kind === 'parent') {
+          parentLinks.push({ parent: refKey, child: issue.key });
+          continue;
+        }
         pending.push({ declaring: issue.key, refKey, kind: rel.kind, source: rel.source });
         if (!nodes.has(refKey) && !lookups.has(refKey)) unknown.add(refKey);
       }
@@ -281,6 +293,7 @@ export async function resolveView(
     issues: keys.map((k) => nodes.get(k)!),
     externalKeys: keys.filter((k) => !scoped.has(k)),
     edges: allEdges.filter((e) => included.has(e.from) && included.has(e.to)),
+    parentLinks,
     // Drop problems that concern issues which are not part of the plan.
     warnings: warnings.filter(
       (w) =>

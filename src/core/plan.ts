@@ -20,11 +20,19 @@ export interface PlanInput {
   externalKeys: IssueKey[];
   /** Edges between keys of `issues`. Edges referencing unknown keys are dropped. */
   edges: DependencyEdge[];
+  /** `Parent` hierarchies between keys of `issues`. Links referencing unknown keys are dropped. Never an edge. */
+  parentLinks?: ParentLink[];
   /** Warnings collected upstream; merged into the plan's warnings. */
   warnings: PlanWarning[];
   priorityLabels: string[];
   /** How the linear order is built; default 'priority'. */
   orderingMode?: OrderingMode;
+}
+
+/** A `Parent:` relation between two issues of the plan. A hierarchy link only. */
+export interface ParentLink {
+  parent: IssueKey;
+  child: IssueKey;
 }
 
 /** Plain code-unit comparison (never localeCompare). */
@@ -196,6 +204,21 @@ export function buildPlan(input: PlanInput): Plan {
   const indexOf = new Map<IssueKey, number>();
   for (let i = 0; i < n; i++) indexOf.set(issues[i]!.key, i);
   const keyOf = (i: number): IssueKey => issues[i]!.key;
+
+  // Parent hierarchy. Node indices follow key order, so sorting indices gives compareKeys order.
+  const parentIndices = new Map<number, Set<number>>(); // child -> its parents
+  const childIndices = new Map<number, Set<number>>(); // parent -> its children
+  for (const link of input.parentLinks ?? []) {
+    const parent = indexOf.get(link.parent);
+    const child = indexOf.get(link.child);
+    if (parent === undefined || child === undefined || parent === child) continue;
+    let parents = parentIndices.get(child);
+    if (parents === undefined) parentIndices.set(child, (parents = new Set()));
+    parents.add(parent);
+    let children = childIndices.get(parent);
+    if (children === undefined) childIndices.set(parent, (children = new Set()));
+    children.add(child);
+  }
 
   // Normalize edges. Node indices follow key order, so index order is compareKeys order.
   const selfLoops = new Set<number>();
@@ -418,6 +441,8 @@ export function buildPlan(input: PlanInput): Plan {
       order: isSchedulable ? orderPos[i]! : null,
       blockedBy: pred[i]!.map(keyOf),
       blocks: succ[i]!.map(keyOf),
+      parents: [...(parentIndices.get(i) ?? [])].sort((a, b) => a - b).map(keyOf),
+      children: [...(childIndices.get(i) ?? [])].sort((a, b) => a - b).map(keyOf),
       priority: priority[i]!,
       remainingDepth: isSchedulable ? depth[i]! : 0,
     });

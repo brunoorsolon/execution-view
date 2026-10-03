@@ -48,6 +48,10 @@
 >   not fetched; their body relations are.
 > - Gitea pagination uses `X-Total-Count` when the server sends it, and
 >   otherwise stops on an empty page or a page shorter than the first one.
+> - Body parsing accepts `Blocked by: [...]` and `Parent: [...]` relation lines
+>   in every mode, and `dependencies.body: 'strict'` reads only those. `parent`
+>   is a `RawRelation` kind and `PlanNode` carries `parents`/`children`, but a
+>   `parent` never becomes an edge, a warning or a fetch.
 > - CLI: `plan --format` also accepts `mmd` (alias of `mermaid`); `views` and
 >   `check` accept `--json`; `check` accepts several view ids. It exits `2`
 >   only for `cycle` and `dangling-reference`; other warnings do not change the
@@ -188,9 +192,10 @@ export type DependencySource = 'native' | 'body' | 'sub-issue';
  * A relation declared on an issue.
  * kind 'blocked-by': the issue that declares it cannot start before `ref` is closed.
  * kind 'blocks':     `ref` cannot start before the issue that declares it is closed.
+ * kind 'parent':     `ref` is the issue's parent. Hierarchy only: never an edge.
  */
 export interface RawRelation {
-  kind: 'blocked-by' | 'blocks';
+  kind: 'blocked-by' | 'blocks' | 'parent';
   ref: IssueRef;
   source: DependencySource;
 }
@@ -260,6 +265,10 @@ export interface PlanNode {
   blockedBy: IssueKey[];
   /** Keys of open direct dependents, sorted with compareKeys. */
   blocks: IssueKey[];
+  /** Keys of parent issues, sorted with compareKeys. Filled from `Parent:` relation lines. Never a dependency. */
+  parents: IssueKey[];
+  /** Keys of child issues, sorted with compareKeys. The inverse of `parents`. Never a dependency. */
+  children: IssueKey[];
   /** Index of the first matching entry of ordering.priorityLabels; priorityLabels.length when none match. Lower = more urgent. */
   priority: number;
   /** Number of nodes on the longest dependent chain starting at this node (1 = nothing depends on it). 0 when unschedulable. */
@@ -391,6 +400,8 @@ export interface ParseOptions {
   keywords?: KeywordConfig;
   /** Hostnames accepted in URL references (e.g. ['github.com']). Empty or undefined: URLs are ignored. */
   webHosts?: string[];
+  /** true: read only relation lines (rules 1 and 2 are ignored). Default false. */
+  strict?: boolean;
 }
 export function parseBodyRelations(body: string, options?: ParseOptions): RawRelation[];
 ```
@@ -410,21 +421,29 @@ Rules (these are the documented user contract, so tests must cover each one):
    and without a trailing `:`, equals a keyword (case-insensitive) starts a
    section. Every **list item** line under it, up to the next heading of any
    level, contributes its references with that keyword's kind.
-3. **Reference forms:** `#123`; `owner/repo#123`; and
+3. **Relation lines.** A line with the shape `<marker><checkbox>Blocked by: [<refs>]`
+   or `<marker><checkbox>Parent: [<refs>]` (keyword case-insensitive) declares
+   only the references inside the brackets; text after `]` is a note. The
+   keywords are fixed (not `KeywordConfig`). This rule applies whenever the
+   shape matches, in every `dependencies.body` mode, so a line such as
+   `- Blocked by: [#76] needs #99 first` reads only `#76`.
+4. **Reference forms:** `#123`; `owner/repo#123`; and
    `https://<host>/<owner>/<repo>/issues/<n>` when `<host>` is in `webHosts`
    (paths with extra segments before `/owner/repo`, such as Gitea sub-path
    installs, are not supported in v1). `#123` must not be preceded by a word
    character or `/`, and `owner/repo#123` must not be preceded by a word
    character. owner/repo are lowercased. Same-repo references have
    `owner: null, repo: null`.
-4. **Ignored regions:** fenced code blocks (``` or ~~~), inline code spans,
+5. **Ignored regions:** fenced code blocks (``` or ~~~), inline code spans,
    HTML comments (`<!-- -->`, including multi-line), and blockquote lines
    (starting with `>`).
-5. Prose anywhere else is ignored. "This depends on #3" in the middle of a
+6. Prose anywhere else is ignored. "This depends on #3" in the middle of a
    sentence is **not** a relation. This is deliberate: it is what keeps the
    parse explicit and predictable.
-6. Output: `source: 'body'`, unique, sorted by kind (`blocked-by` before
-   `blocks`) and then `compareRefs`.
+7. `strict: true` skips rules 1 and 2 (keyword lines and sections); rules 3
+   to 6 still apply. This is what `dependencies.body: 'strict'` selects.
+8. Output: `source: 'body'`, unique, sorted by kind (`blocked-by`, `blocks`,
+   then `parent`) and then `compareRefs`.
 
 ## 8. Plan engine (`src/core/plan.ts`)
 
@@ -437,9 +456,16 @@ export interface PlanInput {
   externalKeys: IssueKey[];
   /** Edges between keys of `issues`. Edges referencing unknown keys are dropped. */
   edges: DependencyEdge[];
+  /** `Parent:` hierarchies between keys of `issues`. Links referencing unknown keys are dropped. Never an edge. */
+  parentLinks?: ParentLink[];
   /** Warnings collected upstream; merged into the plan's warnings. */
   warnings: PlanWarning[];
   priorityLabels: string[];
+}
+/** A `Parent:` relation between two issues of the plan. A hierarchy link only. */
+export interface ParentLink {
+  parent: IssueKey;
+  child: IssueKey;
 }
 export function buildPlan(input: PlanInput): Plan;
 ```
@@ -546,7 +572,7 @@ views:
       - acme/web
     dependencies:
       native: true # default true
-      body: true # default true
+      body: true # true | 'strict' | false; default true
       subIssues: false # default false (github only)
       keywords: # default DEFAULT_KEYWORDS
         blockedBy: [depends on, blocked by, requires, dependencies]
@@ -692,7 +718,7 @@ Resolution (`resolve.ts`), deterministic:
    past the cap, emit `external-unresolved`. `getIssue` throwing → a
    `fetch-error` warning, and the ref is treated as open external with the
    title `(unavailable)`.
-4. Edges: `blocked-by` on X with ref Y gives `Y → X`. `blocks` on X with ref Y gives `X → Y`.
+4. Edges: `blocked-by` on X with ref Y gives `Y → X`. `blocks` on X with ref Y gives `X → Y`. A `parent` on X with ref Y gives a `parentLinks` entry `{ parent: Y, child: X }`, which never becomes an edge.
 5. Scope: an in-scope issue is an open issue of a view repo that passes
    `scope.labels` / `excludeLabels` / `milestones` (case-insensitive). Plan
    nodes = in-scope issues ∪ all their transitive open prerequisites.

@@ -94,6 +94,21 @@ describe('parseConfig defaults', () => {
     });
   });
 
+  it('accepts dependencies.body as a boolean or strict', () => {
+    expect(parseConfig(MIN, {}).views[0]!.dependencies.body).toBe(true);
+    expect(
+      parseConfig(`${MIN}    dependencies:\n      body: false\n`, {}).views[0]!.dependencies.body,
+    ).toBe(false);
+    expect(
+      parseConfig(`${MIN}    dependencies:\n      body: strict\n`, {}).views[0]!.dependencies.body,
+    ).toBe('strict');
+  });
+
+  it('rejects an invalid dependencies.body', () => {
+    const e = errorOf(() => parseConfig(`${MIN}    dependencies:\n      body: yes\n`, {}));
+    expect(e.message).toContain('body');
+  });
+
   it('uses an explicit title, scope and priority labels', () => {
     const cfg = parseConfig(
       `${MIN}    title: My view

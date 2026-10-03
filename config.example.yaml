@@ -73,7 +73,7 @@ views:
       - acme/web
     dependencies:
       native: true # use the provider's native issue relations. default: true
-      body: true # parse "Depends on #12" style lines in issue bodies. default: true
+      body: true # true: keyword lines, sections and relation lines; "strict": only "Blocked by: [...]" / "Parent: [...]"; false: none. default: true
       subIssues: false # treat sub-issues as dependencies (github only). default: false
       keywords: # matched at the start of a body line, case-insensitive
         # Each list is optional; a missing list uses its default shown here.

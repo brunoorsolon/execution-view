@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_KEYWORDS, parseBodyRelations, type ParseOptions } from './parser.js';
 import type { RawRelation } from './types.js';
 
-/** Compact relation notation: "b:#12", "k:o/r#3" (b = blocked-by, k = blocks). */
+/** Compact relation notation: "b:#12", "k:o/r#3", "p:#7" (b = blocked-by, k = blocks, p = parent). */
 function rel(spec: string): RawRelation {
-  const m = /^([bk]):(?:([^#/]+)\/([^#/]+))?#(\d+)$/.exec(spec);
+  const m = /^([bkp]):(?:([^#/]+)\/([^#/]+))?#(\d+)$/.exec(spec);
   if (!m) throw new Error(`bad spec ${spec}`);
   return {
-    kind: m[1] === 'b' ? 'blocked-by' : 'blocks',
+    kind: m[1] === 'b' ? 'blocked-by' : m[1] === 'k' ? 'blocks' : 'parent',
     ref: {
       owner: m[2] ?? null,
       repo: m[3] ?? null,
@@ -726,6 +726,87 @@ describe('default keyword: dependencies', () => {
       options: { keywords: { blockedBy: ['needs'], blocks: [] } },
     },
   ]);
+});
+
+describe('relation lines', () => {
+  run([
+    {
+      name: 'blocked by with a list marker and several refs',
+      body: '- Blocked by: [#76, #77]',
+      expected: ['b:#76', 'b:#77'],
+    },
+    {
+      name: 'parent with a task checkbox',
+      body: '* [x] Parent: [owner/repo#12]',
+      expected: ['p:owner/repo#12'],
+    },
+    {
+      name: 'keywords are case-insensitive',
+      body: 'BLOCKED BY: [#1]\nparent: [#2]',
+      expected: ['b:#1', 'p:#2'],
+    },
+    {
+      name: 'an issue URL on the source web host is accepted',
+      body: 'Parent: [https://github.com/o/r/issues/9]',
+      expected: ['p:o/r#9'],
+      options: HOSTS,
+    },
+    {
+      name: 'a note after the brackets is ignored, in every mode',
+      body: 'Blocked by: [puglab/cortex#12] needs the new API first (#99)',
+      expected: ['b:puglab/cortex#12'],
+    },
+    {
+      name: 'a reference outside the brackets is ignored',
+      body: 'Parent: [#71] and also #72',
+      expected: ['p:#71'],
+    },
+    {
+      name: 'a URL on another host is ignored',
+      body: 'Blocked by: [https://other.example/o/r/issues/9]',
+      expected: [],
+      options: HOSTS,
+    },
+    {
+      name: 'a heading section does not change a relation line',
+      body: '## Depends on\n- Blocked by: [#3]\n- #4',
+      expected: ['b:#3', 'b:#4'],
+    },
+    {
+      name: 'there is no Blocks relation keyword',
+      body: 'Blocks: [#3]',
+      expected: ['k:#3'],
+    },
+  ]);
+
+  it('keeps the legacy forms in non-strict mode', () => {
+    expect(parseBodyRelations('Depends on #12\n## Dependencies\n- #5')).toEqual(
+      ['b:#5', 'b:#12'].map(rel),
+    );
+  });
+
+  it('parses relation lines in strict mode', () => {
+    expect(parseBodyRelations('Blocked by: [#1]\nParent: [o/r#2]', { strict: true })).toEqual(
+      ['b:#1', 'p:o/r#2'].map(rel),
+    );
+  });
+
+  it('the false-positive bullet: strict drops it, the legacy section form still reads it', () => {
+    const body = '## Dependencies\n\n- No implementation dependency on #17 or #72\n';
+    expect(parseBodyRelations(body, { strict: true })).toEqual([]);
+    expect(parseBodyRelations(body)).toEqual(['b:#17', 'b:#72'].map(rel));
+  });
+
+  it('strict ignores keyword lines and section forms', () => {
+    const body = 'Depends on #12\n## Depends on\n- #13\nBlocks: #14\nBlocked by: [#15]';
+    expect(parseBodyRelations(body, { strict: true })).toEqual(['b:#15'].map(rel));
+    expect(parseBodyRelations(body)).toEqual(['b:#12', 'b:#13', 'b:#15', 'k:#14'].map(rel));
+  });
+
+  it('parent sorts after both dependency kinds', () => {
+    const body = 'Parent: [o/r#3]\nBlocks: #2\nDepends on #1';
+    expect(parseBodyRelations(body)).toEqual(['b:#1', 'k:#2', 'p:o/r#3'].map(rel));
+  });
 });
 
 describe('realistic bodies', () => {
