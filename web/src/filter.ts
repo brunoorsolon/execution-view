@@ -144,9 +144,7 @@ const STATUSES: Record<string, readonly DisplayStatus[]> = {
 export function matchesQualifier(field: Field, value: string, t: FilterTarget): boolean {
   switch (field) {
     case 'status':
-      return value === 'external'
-        ? t.external
-        : (STATUSES[value] ?? []).includes(displayStatus(t));
+      return value === 'external' ? t.external : (STATUSES[value] ?? []).includes(displayStatus(t));
     case 'label':
       return t.labels.some((l) => l.toLowerCase() === value);
     case 'assignee':
