@@ -14,11 +14,15 @@ import {
   edgeId,
   ensureVisible,
   fitTransform,
+  graphLines,
   indirectEdges,
+  lineId,
   packLayout,
+  parentLinks,
   upstreamOf,
   wheelZoomFactor,
   zoomAt,
+  type GraphLine,
 } from './graph-model.js';
 
 describe('bezierPath', () => {
@@ -301,5 +305,53 @@ describe('indirectEdges', () => {
 
   it('stops at the first visible issue on a path', () => {
     expect(indirectEdges(out, new Set(['a', 'h2', 'b']))).toEqual([{ from: 'a', to: 'h2' }]);
+  });
+});
+
+describe('graphLines', () => {
+  const edges = [
+    { from: 'r#1', to: 'r#2' },
+    { from: 'r#2', to: 'r#3' },
+  ];
+  const parents = [
+    { from: 'r#9', to: 'r#1' },
+    { from: 'r#1', to: 'r#4' },
+  ];
+  const ids = (lines: GraphLine[]): string[] => lines.map(lineId).sort();
+
+  it('dependencies draws every dependency edge, with and without a selection', () => {
+    const all = ['r#1->r#2', 'r#2->r#3'];
+    expect(ids(graphLines(edges, parents, 'dependencies', null))).toEqual(all);
+    expect(ids(graphLines(edges, parents, 'dependencies', 'r#1'))).toEqual(all);
+  });
+
+  it('all adds parent-to-child links to every dependency edge, with and without a selection', () => {
+    const all = ['parent:r#1->r#4', 'parent:r#9->r#1', 'r#1->r#2', 'r#2->r#3'];
+    expect(ids(graphLines(edges, parents, 'all', null))).toEqual(all);
+    expect(ids(graphLines(edges, parents, 'all', 'r#1'))).toEqual(all);
+  });
+
+  it('selected draws nothing without a selection', () => {
+    expect(graphLines(edges, parents, 'selected', null)).toEqual([]);
+  });
+
+  it('selected draws only the selected issue dependency and parent/child links', () => {
+    expect(ids(graphLines(edges, parents, 'selected', 'r#1'))).toEqual([
+      'parent:r#1->r#4',
+      'parent:r#9->r#1',
+      'r#1->r#2',
+    ]);
+    expect(ids(graphLines(edges, parents, 'selected', 'r#3'))).toEqual(['r#2->r#3']);
+  });
+});
+
+describe('parentLinks', () => {
+  it('turns each node parents into parent -> child links', () => {
+    expect(
+      parentLinks([
+        { key: 'r#1', parents: [] },
+        { key: 'r#2', parents: ['r#1'] },
+      ]),
+    ).toEqual([{ from: 'r#1', to: 'r#2' }]);
   });
 });
