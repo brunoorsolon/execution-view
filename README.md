@@ -220,6 +220,8 @@ The app can only show what your issues declare. In short:
 
 The full explanation, the accepted and rejected syntax, token permissions, API usage and a verification checklist are in **[docs/PREREQUISITES.md](docs/PREREQUISITES.md)**. Verify your setup at any time with `docker compose run --rm execution-view check` (or `node dist/cli/index.js check` from a source checkout).
 
+Agents that write your issues can be given the same rules: copy the [`skills/execution-view-issues/`](skills/execution-view-issues/SKILL.md) folder into the skill directory your agent reads. Claude Code reads `~/.claude/skills/` or `.claude/skills/`; Codex and Pi both read `~/.agents/skills/` or `.agents/skills/`. The skill teaches only the relation-line format that every `dependencies.body` mode reads.
+
 ## Documentation
 
 | Document                                       | What is in it                                                                                       |

@@ -287,6 +287,10 @@ For new templates, prefer a `## Relations` section made of relation lines (rule 
 
 Rules 1 and 2 are ignored by `body: strict`, so an issue template that keeps only `## Relations` needs no keyword lines or section headings at all.
 
+### Hand the format to your agents
+
+The same rules are packaged as a skill for coding agents: [`skills/execution-view-issues/SKILL.md`](../skills/execution-view-issues/SKILL.md). Copy the `skills/execution-view-issues/` folder into the skill directory your agent reads. Two copy targets cover Claude Code, Codex and Pi: Claude Code reads `~/.claude/skills/` or `.claude/skills/`, and Codex and Pi both read `~/.agents/skills/` or `.agents/skills/` (paths checked against each agent's documentation on 2026-10-03). Once copied, the agent can write the relation-line format on its own, so its issue bodies parse in both `body: true` and `body: strict`.
+
 ## 5. Cross-repository and external issues
 
 - **`owner/repo#N` and URL references** are looked up through the same source (same host, same token). The token therefore needs **read access to those repositories as well**, even when they are not listed in `repos`. Without access, the platform answers `404`, which the app cannot tell apart from a missing issue: you get a `dangling-reference` warning.
