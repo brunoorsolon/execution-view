@@ -291,7 +291,7 @@ GITHUB_TOKEN=ghp_your_token_here
 EV_PRIORITY_LABELS=P0,P1,P2
 ```
 
-(For example in a `.env` file used with docker-compose.) No config file is needed.
+(For example in the `environment:` block of `docker-compose.yml`, with the token written as `GITHUB_TOKEN=${GITHUB_TOKEN}` and its value in `.env`.) No config file is needed.
 
 ### Env-only, Gitea
 
