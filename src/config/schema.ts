@@ -36,6 +36,8 @@ export interface ResolvedView {
 export interface AppConfig {
   server: { host: string; port: number; basicAuth: { username: string; password: string } | null };
   cache: { ttlSeconds: number };
+  /** How often the web UI refreshes the open view; 0 turns the timer off. */
+  ui: { refreshMinutes: number };
   /** The webhook endpoints are enabled when a secret is configured; null otherwise. */
   webhooks: { secret: string } | null;
   sources: ResolvedSource[];
@@ -48,6 +50,8 @@ export interface AppConfig {
 // Raw YAML schema
 // ---------------------------------------------------------------------------
 
+/** A day. Also keeps the UI timer far below setInterval's ~24.8-day limit, past which it fires at once. */
+export const MAX_REFRESH_MINUTES = 1440;
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-_]*$/;
 export const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const HTTP_URL_PATTERN = /^https?:\/\/\S+$/i;
@@ -151,6 +155,10 @@ export const rawConfigSchema = z
       .optional(),
     cache: z
       .object({ ttlSeconds: z.number().int().min(0).optional() })
+      .strict()
+      .optional(),
+    ui: z
+      .object({ refreshMinutes: z.number().int().min(0).max(MAX_REFRESH_MINUTES).optional() })
       .strict()
       .optional(),
     webhooks: webhooksSchema.optional(),

@@ -139,6 +139,16 @@ describe('reducer', () => {
     expect(other.snapshot).toBeNull();
   });
 
+  it('shows a revisited view from its last snapshot, without loading', () => {
+    const latest = snapshot(['o/r#1', 'o/r#2', 'o/r#3']);
+    const refreshed = reducer(loaded(), { type: 'refresh-done', viewId: 'a', snapshot: latest });
+    const other = reducer(refreshed, { type: 'load-start', viewId: 'b' });
+    expect(other.status).toBe('loading');
+    const back = reducer(other, { type: 'load-start', viewId: 'a' });
+    expect(back.status).toBe('ready');
+    expect(back.snapshot).toBe(latest);
+  });
+
   it('shows and dismisses refresh errors without dropping the snapshot', () => {
     let s = reducer(loaded(), { type: 'refresh-start', viewId: 'a' });
     expect(s.refreshing).toBe(true);

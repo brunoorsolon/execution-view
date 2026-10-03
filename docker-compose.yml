@@ -29,6 +29,9 @@ services:
       # Optional: priority labels (highest first) and the login (user:password).
       # - EV_PRIORITY_LABELS=P0,P1,P2
       # - EV_BASIC_AUTH=${EV_BASIC_AUTH}
+      # Optional: how often the web UI refreshes the open view, in minutes
+      # (default 5; 0 = only the Refresh button).
+      # - EV_REFRESH_MINUTES=5
     # Config-file mode (several views, scope filters, webhooks, ...): create
     # config.yaml from config.example.yaml first, remove EV_PROVIDER/EV_REPOS
     # above (keep the token lines), then uncomment. If the file does not exist,

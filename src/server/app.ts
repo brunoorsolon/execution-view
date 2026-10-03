@@ -376,6 +376,8 @@ export function buildApp(
 
   app.get('/api/views', async () => service.listViews());
 
+  app.get('/api/settings', async () => ({ refreshMinutes: config.ui.refreshMinutes }));
+
   app.get<{ Params: { id: string }; Querystring: { refresh?: string } }>(
     '/api/views/:id/snapshot',
     async (request, reply) => {
