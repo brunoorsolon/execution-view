@@ -50,6 +50,8 @@ const PANEL_W = 404;
 const FIT_ON_OPEN = 0.85;
 /** Start/end x offset so an edge ends at the card border, not under it. */
 const EDGE_INSET = 1;
+/** Vertical shift of a parent link, keeping it clear of a mirrored dependency line. */
+const PARENT_OFFSET = 8;
 const MARKERS = ['default', 'crit', 'cyc', 'up', 'down', 'hover', 'indirect', 'parent'] as const;
 type Marker = (typeof MARKERS)[number];
 
@@ -200,6 +202,9 @@ export function createGraphView(ctx: ViewCtx): GraphView {
         ),
       ),
     ],
+    // The control sits on the pane's bottom edge, so the menu opens upward into
+    // view instead of overflowing the page and scrolling the graph away.
+    { className: 'up' },
   );
   zoomCtl.append(h('span', { class: 'divider' }), lineMenu.wrap);
 
@@ -478,11 +483,11 @@ export function createGraphView(ctx: ViewCtx): GraphView {
     }
   }
 
-  function edgeD(a: Point, b: Point): string {
+  function edgeD(a: Point, b: Point, dy = 0): string {
     return edgePath(
       [
-        { x: a.x + G.cardW, y: a.y + G.cardH / 2 },
-        { x: b.x - EDGE_INSET, y: b.y + G.cardH / 2 },
+        { x: a.x + G.cardW, y: a.y + G.cardH / 2 + dy },
+        { x: b.x - EDGE_INSET, y: b.y + G.cardH / 2 + dy },
       ],
       G.cardH / 2 + G.rowGap / 2,
     );
@@ -569,7 +574,9 @@ export function createGraphView(ctx: ViewCtx): GraphView {
       e.shown = active.has(e.id) && from !== undefined && to !== undefined;
       e.el.style.display = e.shown ? '' : 'none';
       if (e.shown && from !== undefined && to !== undefined) {
-        e.el.setAttribute('d', edgeD(from, to));
+        // Parent links run beside a dependency line covering the same pair, so
+        // the dashed hierarchy line stays readable instead of hiding in it.
+        e.el.setAttribute('d', edgeD(from, to, e.kind === 'parent' ? PARENT_OFFSET : 0));
         if (e.kind === 'parent') parentsDrawn++;
       }
     }
