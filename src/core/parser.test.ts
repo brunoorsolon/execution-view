@@ -777,6 +777,11 @@ describe('relation lines', () => {
       body: 'Blocks: [#3]',
       expected: ['k:#3'],
     },
+    {
+      name: 'an unterminated bracket falls back to the legacy forms',
+      body: 'Blocked by: [#3',
+      expected: ['b:#3'],
+    },
   ]);
 
   it('keeps the legacy forms in non-strict mode', () => {
@@ -797,10 +802,17 @@ describe('relation lines', () => {
     expect(parseBodyRelations(body)).toEqual(['b:#17', 'b:#72'].map(rel));
   });
 
-  it('strict ignores keyword lines and section forms', () => {
-    const body = 'Depends on #12\n## Depends on\n- #13\nBlocks: #14\nBlocked by: [#15]';
+  it('strict ignores keyword lines, bracketed or not, and sections', () => {
+    const body =
+      'Depends on #12\n## Depends on\n- #13\nBlocks: #14\nBlocks: [#16]\nBlocked by: [#15]';
     expect(parseBodyRelations(body, { strict: true })).toEqual(['b:#15'].map(rel));
-    expect(parseBodyRelations(body)).toEqual(['b:#12', 'b:#13', 'b:#15', 'k:#14'].map(rel));
+    expect(parseBodyRelations(body)).toEqual(
+      ['b:#12', 'b:#13', 'b:#15', 'k:#14', 'k:#16'].map(rel),
+    );
+  });
+
+  it('strict skips a relation line without a closing bracket', () => {
+    expect(parseBodyRelations('Blocked by: [#3', { strict: true })).toEqual([]);
   });
 
   it('parent sorts after both dependency kinds', () => {
