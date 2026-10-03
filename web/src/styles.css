@@ -1533,7 +1533,7 @@ code {
 }
 .rel-item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   width: calc(100% + 16px);
@@ -1555,6 +1555,11 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Own row: a long source label must not squeeze the relation title. */
+.rel-item .src-tag {
+  grid-column: 2 / -1;
+  justify-self: start;
 }
 .rel-empty {
   padding: 4px 0;
