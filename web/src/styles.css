@@ -1533,7 +1533,7 @@ code {
 }
 .rel-item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   width: calc(100% + 16px);
@@ -1560,6 +1560,14 @@ code {
   padding: 4px 0;
   font-size: 13px;
   color: var(--fg-3);
+}
+.src-tag {
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--fg-3);
+  white-space: nowrap;
 }
 .rel-note {
   margin: 6px 0 0;

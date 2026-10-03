@@ -1,10 +1,10 @@
 import type { IssueKey, PlanWarning, Snapshot } from '../../../src/core/types.js';
 import { clear, h, icon } from '../dom.js';
 import { plural, shortKey } from '../format.js';
-import { cyclePath } from '../graph-model.js';
+import { cyclePath, edgeId } from '../graph-model.js';
 import type { IconName } from '../icons.js';
 import { warningsByCode, type SnapshotIndex } from '../state.js';
-import { getIndex, type View, type ViewCtx } from './shared.js';
+import { getIndex, sourceTag, type View, type ViewCtx } from './shared.js';
 
 /**
  * Title and explanation per warning code. Cycles and blocked-by-cycle issues
@@ -127,13 +127,18 @@ export function createProblemsView(ctx: ViewCtx): View {
       const { path, extra } = cyclePath(scc, plan.edges);
       const loop = path.length > 0 ? path.slice(0, -1) : scc;
       const items: Node[] = [];
+      const pushLink = (from: IssueKey, to: IssueKey): void => {
+        items.push(icon('arrow', 16));
+        const tag = sourceTag(index.edgeSources.get(edgeId(from, to)) ?? []);
+        if (tag) items.push(tag);
+      };
       loop.forEach((k, j) => {
-        if (j > 0) items.push(icon('arrow', 16));
+        if (j > 0) pushLink(loop[j - 1]!, k);
         items.push(issuePill(k, index));
       });
       if (path.length > 0) {
+        pushLink(loop[loop.length - 1]!, loop[0]!);
         items.push(
-          icon('arrow', 16),
           h(
             'span',
             { class: 'issue-pill back', title: 'Back to the start of the loop' },

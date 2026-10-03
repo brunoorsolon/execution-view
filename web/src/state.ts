@@ -1,4 +1,5 @@
 import type {
+  DependencySource,
   IssueKey,
   LayoutNode,
   PlanNode,
@@ -7,7 +8,7 @@ import type {
 } from '../../src/core/types.js';
 import type { ViewSummary } from './api.js';
 import { compileFilter, type FilterTarget } from './filter.js';
-import { buildAdjacency, criticalPathEdges, type Adjacency } from './graph-model.js';
+import { buildAdjacency, criticalPathEdges, edgeId, type Adjacency } from './graph-model.js';
 import { priorityName } from './priority.js';
 import { DEFAULT_ROUTE, type Route, type Tab } from './route.js';
 
@@ -19,6 +20,8 @@ export interface SnapshotIndex {
   nodes: Map<IssueKey, PlanNode>;
   layout: Map<IssueKey, LayoutNode>;
   adjacency: Adjacency;
+  /** Declared source(s) per direct edge, keyed by `edgeId(from, to)`. */
+  edgeSources: Map<string, DependencySource[]>;
   /** More than one repository is involved: show `owner/repo#N` instead of `#N`. */
   multiRepo: boolean;
   criticalNodes: Set<IssueKey>;
@@ -37,6 +40,7 @@ export function indexSnapshot(
     nodes,
     layout: new Map(layout.nodes.map((n) => [n.key, n] as const)),
     adjacency: buildAdjacency(plan.edges),
+    edgeSources: new Map(plan.edges.map((e) => [edgeId(e.from, e.to), e.sources])),
     multiRepo: repos.size > 1 || viewRepos.length > 1,
     criticalNodes: new Set(plan.criticalPath),
     criticalEdges: criticalPathEdges(plan.criticalPath),

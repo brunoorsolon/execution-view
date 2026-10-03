@@ -1,7 +1,7 @@
 import type { IssueKey, PlanNode } from '../../../src/core/types.js';
 import { clear, h, icon } from '../dom.js';
 import { plural, shortKey } from '../format.js';
-import { downstreamOf, upstreamOf } from '../graph-model.js';
+import { downstreamOf, edgeId, upstreamOf } from '../graph-model.js';
 import { priorityName } from '../priority.js';
 import type { AppState, SnapshotIndex } from '../state.js';
 import {
@@ -11,6 +11,7 @@ import {
   otherLabels,
   priorityTag,
   safeUrl,
+  sourceTag,
   statusBadges,
   type View,
   type ViewCtx,
@@ -24,13 +25,20 @@ export function createSidePanel(ctx: ViewCtx): View {
   const el = h('aside', { class: 'panel', 'aria-label': 'Issue details' });
   let renderedFor: { key: IssueKey | null; snapshot: unknown } = { key: null, snapshot: null };
 
-  function relList(keys: readonly IssueKey[], index: SnapshotIndex): HTMLElement {
+  function relList(
+    keys: readonly IssueKey[],
+    index: SnapshotIndex,
+    self: IssueKey,
+    dir: 'up' | 'down',
+  ): HTMLElement {
     if (keys.length === 0) return h('div', { class: 'rel-empty' }, 'None');
     return h(
       'ul',
       { class: 'rel-list' },
       ...keys.map((k) => {
         const n = index.nodes.get(k);
+        const from = dir === 'up' ? k : self;
+        const to = dir === 'up' ? self : k;
         return h(
           'li',
           null,
@@ -45,6 +53,7 @@ export function createSidePanel(ctx: ViewCtx): View {
             h('span', { class: 'card-key' }, shortKey(k, index.multiRepo)),
             h('span', { class: 't' }, n?.title ?? '(not in this snapshot)'),
             n ? statusBadges(n) : null,
+            sourceTag(index.edgeSources.get(edgeId(from, to)) ?? []),
           ),
         );
       }),
@@ -156,7 +165,7 @@ export function createSidePanel(ctx: ViewCtx): View {
             'Blocked by',
             h('span', { class: 'n' }, String(n.blockedBy.length)),
           ),
-          relList(n.blockedBy, index),
+          relList(n.blockedBy, index, n.key, 'up'),
           up.size > n.blockedBy.length
             ? h(
                 'p',
@@ -175,7 +184,7 @@ export function createSidePanel(ctx: ViewCtx): View {
             'Blocks',
             h('span', { class: 'n' }, String(n.blocks.length)),
           ),
-          relList(n.blocks, index),
+          relList(n.blocks, index, n.key, 'down'),
           down.size > n.blocks.length
             ? h(
                 'p',
