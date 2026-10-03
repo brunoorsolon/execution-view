@@ -6,7 +6,9 @@ import type {
   Snapshot,
 } from '../../src/core/types.js';
 import type { ViewSummary } from './api.js';
+import { compileFilter, type FilterTarget } from './filter.js';
 import { buildAdjacency, criticalPathEdges, type Adjacency } from './graph-model.js';
+import { priorityName } from './priority.js';
 import { DEFAULT_ROUTE, type Route, type Tab } from './route.js';
 
 // ---------------------------------------------------------------------------
@@ -168,13 +170,92 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, refreshing: false, refreshError: action.error };
     case 'dismiss-refresh-error':
       return { ...state, refreshError: null };
-    case 'select':
-      return state.selected === action.key ? state : { ...state, selected: action.key };
+    case 'select': {
+      if (state.selected === action.key) return state;
+      const q = action.key === null ? null : revealQuery(state, action.key);
+      return {
+        ...state,
+        selected: action.key,
+        route: q === null ? state.route : { ...state.route, q },
+      };
+    }
   }
 }
 
 export function withTab(route: Route, tab: Tab): Route {
   return { ...route, tab };
+}
+
+// ---------------------------------------------------------------------------
+// Filter visibility
+// ---------------------------------------------------------------------------
+
+const indexCache = new WeakMap<Snapshot, SnapshotIndex>();
+
+/** Index of the snapshot of `state`, computed once per snapshot object. */
+export function getIndex(state: AppState): SnapshotIndex | null {
+  const snapshot = state.snapshot;
+  if (snapshot === null) return null;
+  let index = indexCache.get(snapshot);
+  if (index === undefined) {
+    const viewId = effectiveViewId(state);
+    const repos = state.views?.find((v) => v.id === viewId)?.repos ?? [];
+    index = indexSnapshot(snapshot, repos);
+    indexCache.set(snapshot, index);
+  }
+  return index;
+}
+
+export function nodeTarget(n: PlanNode, snapshot: Snapshot, index: SnapshotIndex): FilterTarget {
+  return {
+    key: n.key,
+    number: n.number,
+    title: n.title,
+    labels: n.labels,
+    assignees: n.assignees,
+    milestone: n.milestone,
+    repo: `${n.repo.owner}/${n.repo.repo}`,
+    status: n.status,
+    external: n.external,
+    priority: priorityName(snapshot, n),
+    critical: index.criticalNodes.has(n.key),
+  };
+}
+
+let visibleFor: { snapshot: Snapshot; q: string; keys: Set<IssueKey> | null } | null = null;
+
+/**
+ * Keys of the issues that match the filter, or null when nothing is filtered.
+ * Memoized per (snapshot, query): the same Set object is returned until either
+ * changes, so views can compare it by identity.
+ */
+export function visibleKeys(state: AppState, index: SnapshotIndex): Set<IssueKey> | null {
+  const snapshot = state.snapshot;
+  if (snapshot === null) return null;
+  if (visibleFor?.snapshot === snapshot && visibleFor.q === state.route.q) return visibleFor.keys;
+  const f = compileFilter(state.route.q);
+  let keys: Set<IssueKey> | null = null;
+  if (f !== null) {
+    keys = new Set();
+    for (const n of snapshot.plan.nodes) if (f(nodeTarget(n, snapshot, index))) keys.add(n.key);
+  }
+  visibleFor = { snapshot, q: state.route.q, keys };
+  return keys;
+}
+
+export function isVisible(keys: Set<IssueKey> | null, key: IssueKey): boolean {
+  return keys === null || keys.has(key);
+}
+
+/**
+ * The query that reveals `key` under the current filter, or null when the key
+ * is already visible. A hidden issue is revealed by narrowing to its repository.
+ */
+function revealQuery(state: AppState, key: IssueKey): string | null {
+  const index = getIndex(state);
+  if (index === null || isVisible(visibleKeys(state, index), key)) return null;
+  const node = index.nodes.get(key);
+  return node === undefined ? null : `repo:${node.repo.owner}/${node.repo.repo}`;
 }
 
 // ---------------------------------------------------------------------------
