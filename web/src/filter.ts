@@ -7,6 +7,8 @@ import { displayStatus, type DisplayStatus } from './format.js';
  *
  *  - free text: title or key contains it (case-insensitive)
  *  - `#12`: issue number, in any repository; `owner/repo#12` or `repo#12`: issue key
+ *  - `parent:#71`, `parent:71` or `parent:owner/repo#71`: the issue itself and every
+ *    issue that names it in `parents`
  *  - `status:ready`: ready, in-progress, blocked, cycle (in-cycle), blocked-by-cycle,
  *    unschedulable (both cycle statuses), external
  *  - `priority:P0`, `priority:none`
@@ -36,10 +38,12 @@ export interface FilterTarget {
   /** Configured priority label, null when none. */
   priority: string | null;
   critical: boolean;
+  /** Keys of the issues that name this one in `parents`. */
+  parents: readonly string[];
 }
 
 export type Field =
-  'status' | 'label' | 'assignee' | 'milestone' | 'repo' | 'priority' | 'is' | 'no';
+  'status' | 'label' | 'assignee' | 'milestone' | 'repo' | 'priority' | 'is' | 'no' | 'parent';
 
 const FIELDS: Record<string, Field> = {
   status: 'status',
@@ -50,6 +54,7 @@ const FIELDS: Record<string, Field> = {
   priority: 'priority',
   is: 'is',
   no: 'no',
+  parent: 'parent',
 };
 
 export type TextTerm =
@@ -159,6 +164,15 @@ export function matchesQualifier(field: Field, value: string, t: FilterTarget): 
       return value === 'none' ? t.priority === null : (t.priority ?? '').toLowerCase() === value;
     case 'is':
       return value === 'critical' ? t.critical : matchesQualifier('status', value, t);
+    case 'parent': {
+      // A parent is matched by the issue itself and by every issue it parents.
+      const num = /^#?(\d+)$/.exec(value);
+      if (num) {
+        const n = Number(num[1]);
+        return t.number === n || t.parents.some((p) => numberFromKey(p) === n);
+      }
+      return matchesKey(t.key, value) || t.parents.some((p) => matchesKey(p, value));
+    }
     case 'no':
       if (value === 'assignee') return t.assignees.length === 0;
       if (value === 'milestone') return t.milestone === null || t.milestone === '';
@@ -166,6 +180,16 @@ export function matchesQualifier(field: Field, value: string, t: FilterTarget): 
       if (value === 'priority') return t.priority === null;
       return false;
   }
+}
+
+function numberFromKey(key: string): number {
+  return Number(key.slice(key.lastIndexOf('#') + 1));
+}
+
+/** Whether a key matches a value as typed: exact, or with a bare repo name. */
+function matchesKey(key: string, value: string): boolean {
+  const k = key.toLowerCase();
+  return k === value || k.endsWith(`/${value}`);
 }
 
 function matchesText(term: TextTerm, t: FilterTarget): boolean {
