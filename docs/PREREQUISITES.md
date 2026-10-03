@@ -117,7 +117,7 @@ You can change them in the config (see [Custom keywords](#custom-keywords)).
 3. the keyword `Blocked by` or `Parent` (case-insensitive) and a colon,
 4. then `[`, the references, and `]`; any text after `]` is a note for humans.
 
-Only the references **inside the brackets** count. Unlike rules 1 and 2, the keywords are fixed (not configurable). When a line has this shape, only this rule applies to it, whatever `dependencies.body` is set to, so `- Blocked by: [#76] needs #99 first` reads only `#76`. There is no `Blocks:` form: the blocked issue declares its blocker.
+Only the references **inside the brackets** count. Unlike rules 1 and 2, the keywords are fixed (not configurable). When a line has this shape, only this rule applies to it in every mode that reads the body (`true` and `strict`; `false` reads no body line at all), so `- Blocked by: [#76] needs #99 first` reads only `#76`. There is no `Blocks:` form: the blocked issue declares its blocker.
 
 `Parent` is a hierarchy link, not a dependency: it creates no edge, does not change waves, order or the critical path, and never pulls an issue into the plan. See [Parent relations and `body: strict`](#parent-relations-and-body-strict).
 
@@ -199,6 +199,8 @@ Relation-line rows, for any `dependencies.body` setting unless stated otherwise:
 | `Blocks: [#3]`                                                        | Accepted as "blocks #3" with `body: true`; not accepted in `strict` | There is no `Blocks` relation keyword; only the legacy forms read it |
 | `` `Blocked by: [#3]` `` or inside a fence                            | **Not accepted**                                                    | Inline code and fenced code are ignored                              |
 | `> Blocked by: [#3]`                                                  | **Not accepted**                                                    | Quoted text is ignored                                               |
+| `Blocked by: [#3` (no closing `]`)                                    | `body: true`: blocked by #3; `strict`: **not accepted**             | The shape is incomplete, so `strict` skips the line                  |
+| `Blocked by: [#3]` with `body: false`                                 | **Not accepted**                                                    | `false` reads no body line                                           |
 
 ### Parent relations and `body: strict`
 
@@ -374,6 +376,7 @@ Before you run against a real repository:
 
 - [ ] Dependencies are declared **natively** and/or as **body lines** on the issue (not in comments), using the syntax of section 4.
 - [ ] Body lines start with a keyword (`Depends on`, `Blocked by`, `Requires`, `Dependencies`, `Blocks`, ...) and keep the references on the same line, or use a `## Depends on` (or `## Dependencies`) heading with list items.
+- [ ] For the strictest reading, use a `## Relations` section with `Blocked by: [#N]` and `Parent: [#N]` lines and set `dependencies.body: strict`, so keyword lines and section bullets cannot be misread.
 - [ ] For native dependencies: the feature exists on your platform version, and on Gitea it is enabled for the repository (and cross-repository dependencies are allowed if you use them).
 - [ ] The token is **read-only**, is stored in an environment variable, and can read **every repository** involved, including repositories that are only referenced.
 - [ ] Referenced issues are **issues, not pull requests**.

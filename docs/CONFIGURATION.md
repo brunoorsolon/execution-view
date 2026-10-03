@@ -132,7 +132,7 @@ Used when no config file is found and `EV_PROVIDER` is set. It builds one source
 | `EV_SUB_ISSUES`      | no          | `true` or `false`: sets `dependencies.subIssues`.                                                                                                |
 | `EV_ORDERING_MODE`   | no          | `priority` (default) or `waves`: sets `ordering.mode`. Anything else is a configuration error.                                                   |
 
-Env-only mode cannot express: several views or sources, scope filters, custom keywords, `native: false`, `body: false`, a `webUrl`. Use a config file for those.
+Env-only mode cannot express: several views or sources, scope filters, custom keywords, `native: false`, `body: false` or `body: strict`, a `webUrl`. Use a config file for those.
 
 ## Validation
 

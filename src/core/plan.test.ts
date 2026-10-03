@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalJson } from './hash.js';
+import { canonicalJson, contentHash } from './hash.js';
 import { buildPlan, type PlanInput } from './plan.js';
 import type {
   DependencyEdge,
@@ -172,6 +172,16 @@ describe('buildPlan', () => {
     });
     expect(node(plan, K(1)).parents).toEqual([]);
     expect(node(plan, K(1)).children).toEqual([]);
+  });
+
+  it('the content hash covers parents and children', () => {
+    const keys = [K(1), K(2)];
+    const without = buildPlan(input(keys, []));
+    const withParent = buildPlan({
+      ...input(keys, []),
+      parentLinks: [{ parent: K(1), child: K(2) }],
+    });
+    expect(contentHash(withParent)).not.toBe(contentHash(without));
   });
 
   it('puts independent nodes in wave 0 in key order', () => {

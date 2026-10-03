@@ -49,7 +49,8 @@
 > - Gitea pagination uses `X-Total-Count` when the server sends it, and
 >   otherwise stops on an empty page or a page shorter than the first one.
 > - Body parsing accepts `Blocked by: [...]` and `Parent: [...]` relation lines
->   in every mode, and `dependencies.body: 'strict'` reads only those. `parent`
+>   whenever the body is read (`body: true` or `'strict'`), and
+>   `dependencies.body: 'strict'` reads only those. `parent`
 >   is a `RawRelation` kind and `PlanNode` carries `parents`/`children`, but a
 >   `parent` never becomes an edge, a warning or a fetch.
 > - CLI: `plan --format` also accepts `mmd` (alias of `mermaid`); `views` and
