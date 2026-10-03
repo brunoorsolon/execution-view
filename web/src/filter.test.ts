@@ -25,6 +25,7 @@ const issue = (
   external: false,
   priority: null,
   critical: false,
+  parents: [],
   ...extra,
 });
 
@@ -181,6 +182,34 @@ describe('compileFilter', () => {
     expect(compileFilter('priority:p1')!(other)).toBe(true);
     expect(compileFilter('is:critical')!(auth)).toBe(true);
     expect(compileFilter('is:critical')!(login)).toBe(false);
+  });
+
+  it('matches a parent by number, in every form, together with its direct children', () => {
+    const spec = issue('acme/web#71', 'Router-first power plane spec', [], { status: 'ready' });
+    const child = issue('acme/web#72', 'Power plane implementation', [], {
+      parents: ['acme/web#71'],
+    });
+    const grandchild = issue('acme/web#73', 'Grandchild', [], { parents: ['acme/web#72'] });
+    for (const q of ['parent:#71', 'parent:71', 'parent:acme/web#71']) {
+      expect(compileFilter(q)!(spec)).toBe(true);
+      expect(compileFilter(q)!(child)).toBe(true);
+      expect(compileFilter(q)!(grandchild)).toBe(false);
+    }
+    expect(compileFilter('parent:api#71')!(child)).toBe(false);
+    expect(compileFilter('parent:71')!(issue('acme/api#71', 'Same number elsewhere'))).toBe(true);
+  });
+
+  it('excludes parents, lists alternatives and combines with other fields', () => {
+    const child = issue('acme/web#72', 'Child', [], { parents: ['acme/web#71'] });
+    const ready = issue('acme/web#74', 'Ready child', [], {
+      status: 'ready',
+      parents: ['acme/web#71'],
+    });
+    expect(compileFilter('-parent:71')!(child)).toBe(false);
+    expect(compileFilter('-parent:71')!(issue('acme/web#75', 'Lone'))).toBe(true);
+    expect(compileFilter('parent:70,71')!(child)).toBe(true);
+    expect(compileFilter('parent:71 status:ready')!(child)).toBe(false);
+    expect(compileFilter('parent:71 status:ready')!(ready)).toBe(true);
   });
 
   it('supports no: and exclusions', () => {

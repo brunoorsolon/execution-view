@@ -48,6 +48,7 @@ describe('serializeHash', () => {
       { viewId: 'a b/c', tab: 'graph', q: 'c++ "quoted" & more' },
       { viewId: 'x', tab: 'problems', q: '' },
       { viewId: null, tab: 'graph', q: 'only-query' },
+      { viewId: 'demo', tab: 'graph', q: 'parent:#71 label:P0' },
     ];
     for (const r of routes) expect(parseHash(serializeHash(r))).toEqual(r);
   });

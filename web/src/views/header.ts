@@ -367,7 +367,7 @@ export function createHeader(ctx: ViewCtx): View {
     type: 'search',
     placeholder: 'Search, or status:ready @bob label:P0',
     title:
-      'Text matches title or key. Qualifiers: status:, priority:, label:, @person, milestone:, repo:, is:critical, no:assignee; a leading - excludes. Press / to focus.',
+      'Text matches title or key. Qualifiers: status:, priority:, label:, @person, milestone:, repo:, parent:, is:critical, no:assignee; a leading - excludes. Press / to focus.',
     'aria-label': 'Filter issues',
     spellcheck: 'false',
     autocomplete: 'off',
