@@ -788,7 +788,7 @@ bundled at build time; nothing is loaded from a CDN.
   details panel.
 - The details panel (Graph and Execution order tabs) shows the title, link,
   status, critical-path flag, transitive prerequisite and dependent counts,
-  wave, position, priority, milestone, assignees, labels, blocked by and blocks.
+  wave, position, priority, milestone, assignees, labels, blocked by, blocks, parents and children.
 - The **Execution order** tab shows a table grouped by wave with order #,
   issue, title and labels, status, assignees and blocked by. Critical-path
   rows are marked.

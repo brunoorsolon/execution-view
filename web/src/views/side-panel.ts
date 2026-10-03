@@ -153,6 +153,18 @@ export function createSidePanel(ctx: ViewCtx): View {
             'h3',
             null,
             h('span', { class: 'sw' }),
+            'Parent',
+            h('span', { class: 'n' }, String(n.parents.length)),
+          ),
+          relList(n.parents, index),
+        ),
+        h(
+          'section',
+          { class: 'rel-section rel-up' },
+          h(
+            'h3',
+            null,
+            h('span', { class: 'sw' }),
             'Blocked by',
             h('span', { class: 'n' }, String(n.blockedBy.length)),
           ),
@@ -183,6 +195,18 @@ export function createSidePanel(ctx: ViewCtx): View {
                 `Plus ${plural(down.size - n.blocks.length, 'indirect dependent')}, highlighted in the graph.`,
               )
             : null,
+        ),
+        h(
+          'section',
+          { class: 'rel-section rel-down' },
+          h(
+            'h3',
+            null,
+            h('span', { class: 'sw' }),
+            'Children',
+            h('span', { class: 'n' }, String(n.children.length)),
+          ),
+          relList(n.children, index),
         ),
       ),
     );
