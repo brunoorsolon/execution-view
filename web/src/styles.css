@@ -503,6 +503,10 @@ a:hover {
   border-radius: var(--r);
   box-shadow: var(--shadow-lg);
 }
+.menu.up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
 .menu-label {
   padding: 6px 10px 4px;
   font-size: 11.5px;
@@ -1090,6 +1094,10 @@ code {
   stroke-dasharray: 2 5;
   stroke-linecap: round;
 }
+.edge.parent {
+  stroke-width: 1;
+  stroke-dasharray: 6 6;
+}
 .edge.up {
   stroke: var(--accent);
   stroke-width: 2.25;
@@ -1106,7 +1114,8 @@ code {
   opacity: 0.18;
 }
 .arrow-default,
-.arrow-indirect {
+.arrow-indirect,
+.arrow-parent {
   fill: var(--edge);
 }
 .arrow-crit {
@@ -1398,6 +1407,14 @@ code {
 .legend .ln-indirect {
   --c: var(--edge);
   border-top-style: dotted;
+}
+.legend .ln-parent {
+  --c: var(--edge);
+  border-top-width: 1px;
+  border-top-style: dashed;
+}
+.legend:not(.with-parent) .li:has(.ln-parent) {
+  display: none;
 }
 .legend .vr {
   width: 1px;

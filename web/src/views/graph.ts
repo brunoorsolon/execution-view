@@ -8,12 +8,18 @@ import {
   edgePath,
   ensureVisible,
   fitTransform,
+  graphLines,
   indirectEdges,
+  lineId,
   packLayout,
   panBy,
+  parentLinks,
   wheelZoomFactor,
   zoomAt,
+  type EdgeLike,
   type Highlight,
+  type LineKind,
+  type LineMode,
   type PackedLayout,
   type Transform,
 } from '../graph-model.js';
@@ -21,6 +27,7 @@ import { NARROW_HEADER_PX, compactTextScale, isCompact } from '../lod.js';
 import { priorityName } from '../priority.js';
 import type { AppState, SnapshotIndex } from '../state.js';
 import { effectiveViewId } from '../state.js';
+import { loadLineMode, saveLineMode } from '../theme.js';
 import {
   avatars,
   getIndex,
@@ -31,6 +38,7 @@ import {
   type View,
   type ViewCtx,
 } from './shared.js';
+import { createMenu } from './menu.js';
 
 const G = GEOMETRY;
 /** Height of the sticky wave header strip above the canvas. */
@@ -42,13 +50,16 @@ const PANEL_W = 404;
 const FIT_ON_OPEN = 0.85;
 /** Start/end x offset so an edge ends at the card border, not under it. */
 const EDGE_INSET = 1;
-const MARKERS = ['default', 'crit', 'cyc', 'up', 'down', 'hover', 'indirect'] as const;
+/** Vertical shift of a parent link, keeping it clear of a mirrored dependency line. */
+const PARENT_OFFSET = 8;
+const MARKERS = ['default', 'crit', 'cyc', 'up', 'down', 'hover', 'indirect', 'parent'] as const;
 type Marker = (typeof MARKERS)[number];
 
 interface EdgeEl {
   from: IssueKey;
   to: IssueKey;
   id: string;
+  kind: LineKind;
   el: SVGPathElement;
   base: Marker;
   shown: boolean;
@@ -59,6 +70,8 @@ interface Built {
   index: SnapshotIndex;
   cards: Map<IssueKey, HTMLElement>;
   edges: EdgeEl[];
+  /** Parent-to-child links of the plan. */
+  parents: EdgeLike[];
 }
 
 export interface GraphView extends View {
@@ -137,6 +150,7 @@ export function createGraphView(ctx: ViewCtx): GraphView {
     legItem('ln ln-up', 'Prerequisites'),
     legItem('ln ln-down', 'Dependents'),
     legItem('ln ln-indirect', 'Through hidden issues'),
+    legItem('ln ln-parent', 'Parent / child'),
   );
   pane.append(stage, heads, noMatch, legend, zoomCtl);
 
@@ -153,6 +167,48 @@ export function createGraphView(ctx: ViewCtx): GraphView {
   let highlightKey: IssueKey | null = null;
   let lastSelected: IssueKey | null = null;
   let reflowTimer: number | undefined;
+
+  // -------------------------------------------------------------- line mode
+
+  let lineMode = loadLineMode();
+  const LINE_MODES: { mode: LineMode; label: string; hint: string }[] = [
+    { mode: 'selected', label: 'Selected', hint: 'Only the selected issue’s links' },
+    { mode: 'dependencies', label: 'Dependencies', hint: 'Every dependency line' },
+    { mode: 'all', label: 'All', hint: 'Dependencies plus parent/child lines' },
+  ];
+  const lineMenu = createMenu(
+    h(
+      'button',
+      { class: 'btn btn-ghost btn-xs', type: 'button', title: 'Lines drawn' },
+      icon('graph', 13),
+      h('span', { class: 'btn-label' }, 'Lines'),
+    ),
+    () => [
+      h('div', { class: 'menu-label' }, 'Lines drawn'),
+      ...LINE_MODES.map(({ mode, label, hint }) =>
+        h(
+          'button',
+          {
+            class: 'menu-item',
+            type: 'button',
+            role: 'menuitemradio',
+            'aria-checked': String(lineMode === mode),
+            onclick: () => {
+              lineMode = mode;
+              saveLineMode(mode);
+              if (built !== null) applySelection(ctx.store.get(), built);
+            },
+          },
+          h('span', null, label),
+          h('span', { class: 'hint' }, hint),
+        ),
+      ),
+    ],
+    // The control sits on the pane's bottom edge, so the menu opens upward into
+    // view instead of overflowing the page and scrolling the graph away.
+    { className: 'up' },
+  );
+  zoomCtl.append(h('span', { class: 'divider' }), lineMenu.wrap);
 
   // ------------------------------------------------------------ transform
 
@@ -348,9 +404,23 @@ export function createGraphView(ctx: ViewCtx): GraphView {
         'marker-end': `url(#arrow-${base})`,
       });
       directG.append(el);
-      return { from: e.from, to: e.to, id, el, base, shown: true };
+      return { from: e.from, to: e.to, id, kind: 'dependency', el, base, shown: true };
     });
-    return { snapshot, index, cards, edges };
+    const parents = parentLinks(snapshot.plan.nodes);
+    for (const p of parents) {
+      const line = { ...p, kind: 'parent' as const };
+      const el = svg('path', { class: 'edge parent', 'marker-end': 'url(#arrow-parent)' });
+      el.append(
+        svg(
+          'title',
+          null,
+          `${shortKey(p.from, index.multiRepo)} is the parent of ${shortKey(p.to, index.multiRepo)}`,
+        ),
+      );
+      directG.append(el);
+      edges.push({ ...line, id: lineId(line), el, base: 'parent', shown: true });
+    }
+    return { snapshot, index, cards, edges, parents };
   }
 
   function buildCard(n: PlanNode, snapshot: Snapshot, index: SnapshotIndex): HTMLElement {
@@ -415,19 +485,19 @@ export function createGraphView(ctx: ViewCtx): GraphView {
     }
   }
 
-  function edgeD(a: Point, b: Point): string {
+  function edgeD(a: Point, b: Point, dy = 0): string {
     return edgePath(
       [
-        { x: a.x + G.cardW, y: a.y + G.cardH / 2 },
-        { x: b.x - EDGE_INSET, y: b.y + G.cardH / 2 },
+        { x: a.x + G.cardW, y: a.y + G.cardH / 2 + dy },
+        { x: b.x - EDGE_INSET, y: b.y + G.cardH / 2 + dy },
       ],
       G.cardH / 2 + G.rowGap / 2,
     );
   }
 
-  /** Places the visible cards, wave headers, bands and edges. */
+  /** Places the visible cards and wave headers. Card positions never depend on the line mode. */
   function relayout(b: Built, keys: Set<IssueKey> | null): void {
-    const { snapshot, index } = b;
+    const { snapshot } = b;
     const plan = snapshot.plan;
     packed = packLayout(snapshot.layout.nodes, keys, G);
     canvas.style.width = `${packed.width}px`;
@@ -471,35 +541,6 @@ export function createGraphView(ctx: ViewCtx): GraphView {
       card.hidden = p === undefined;
       if (p !== undefined) card.style.transform = `translate(${p.x}px, ${p.y}px)`;
     }
-    for (const e of b.edges) {
-      const from = packed.pos.get(e.from);
-      const to = packed.pos.get(e.to);
-      e.shown = from !== undefined && to !== undefined;
-      e.el.style.display = e.shown ? '' : 'none';
-      if (from !== undefined && to !== undefined) e.el.setAttribute('d', edgeD(from, to));
-    }
-
-    clear(indirectG);
-    indirect = [];
-    if (keys !== null) {
-      for (const e of indirectEdges(index.adjacency.out, keys)) {
-        const el = svg('path', {
-          class: 'edge indirect',
-          d: edgeD(packed.pos.get(e.from)!, packed.pos.get(e.to)!),
-          'marker-end': 'url(#arrow-indirect)',
-        });
-        el.append(
-          svg(
-            'title',
-            null,
-            `${shortKey(e.from, index.multiRepo)} to ${shortKey(e.to, index.multiRepo)}, through hidden issues`,
-          ),
-        );
-        indirectG.append(el);
-        indirect.push({ ...e, id: `${e.from}~${e.to}`, el, base: 'indirect', shown: true });
-      }
-    }
-    legend.classList.toggle('with-indirect', indirect.length > 0);
 
     noMatch.hidden = packed.columns.length > 0;
     if (packed.columns.length === 0) {
@@ -523,6 +564,79 @@ export function createGraphView(ctx: ViewCtx): GraphView {
 
   // --------------------------------------------------------- state -> DOM
 
+  /** Shows the lines the current mode and selection call for, at their packed positions. */
+  function applyLines(b: Built): void {
+    const active = new Set(
+      graphLines(b.snapshot.plan.edges, b.parents, lineMode, highlightKey).map(lineId),
+    );
+    let parentsDrawn = 0;
+    for (const e of b.edges) {
+      const from = packed?.pos.get(e.from);
+      const to = packed?.pos.get(e.to);
+      e.shown = active.has(e.id) && from !== undefined && to !== undefined;
+      e.el.style.display = e.shown ? '' : 'none';
+      if (e.shown && from !== undefined && to !== undefined) {
+        // Parent links run beside a dependency line covering the same pair, so
+        // the dashed hierarchy line stays readable instead of hiding in it.
+        e.el.setAttribute('d', edgeD(from, to, e.kind === 'parent' ? PARENT_OFFSET : 0));
+        if (e.kind === 'parent') parentsDrawn++;
+      }
+    }
+
+    // Dashed lines through hidden issues: every visible pair, or only the
+    // selected issue's pairs in `selected` mode.
+    const layout = packed;
+    clear(indirectG);
+    indirect = [];
+    if (layout !== null && packedFor != null) {
+      const through = indirectEdges(b.index.adjacency.out, packedFor).filter(
+        (e) => lineMode !== 'selected' || e.from === highlightKey || e.to === highlightKey,
+      );
+      for (const e of through) {
+        const el = svg('path', {
+          class: 'edge indirect',
+          d: edgeD(layout.pos.get(e.from)!, layout.pos.get(e.to)!),
+          'marker-end': 'url(#arrow-indirect)',
+        });
+        el.append(
+          svg(
+            'title',
+            null,
+            `${shortKey(e.from, b.index.multiRepo)} to ${shortKey(e.to, b.index.multiRepo)}, through hidden issues`,
+          ),
+        );
+        indirectG.append(el);
+        indirect.push({
+          ...e,
+          id: `${e.from}~${e.to}`,
+          kind: 'dependency',
+          el,
+          base: 'indirect',
+          shown: true,
+        });
+      }
+    }
+    legend.classList.toggle('with-indirect', indirect.length > 0);
+    legend.classList.toggle('with-parent', parentsDrawn > 0);
+  }
+
+  /**
+   * Role of a drawn line for the current selection: prerequisite (up), dependent
+   * (down), or neither. Hierarchy links are not part of the dependency closure,
+   * so their own direction to the selected issue decides.
+   */
+  function edgeRole(
+    e: EdgeEl,
+    selected: IssueKey | null,
+    hl: Highlight | null,
+  ): 'up' | 'down' | null {
+    if (hl === null || selected === null) return null;
+    if (e.kind === 'parent') return e.to === selected ? 'up' : e.from === selected ? 'down' : null;
+    const isUp = hl.up.has(e.from) && (hl.up.has(e.to) || e.to === selected);
+    const isDown = hl.down.has(e.to) && (hl.down.has(e.from) || e.from === selected);
+    return isUp ? 'up' : isDown ? 'down' : null;
+  }
+
   function applySelection(state: AppState, b: Built): void {
     const selected = state.selected;
     if (selected !== highlightKey) {
@@ -532,6 +646,7 @@ export function createGraphView(ctx: ViewCtx): GraphView {
           ? computeHighlight(b.index.adjacency, b.snapshot.plan.edges, selected)
           : null;
     }
+    applyLines(b);
     pane.classList.toggle('has-selection', highlight !== null);
     for (const [key, card] of b.cards) {
       const isSel = key === selected;
@@ -551,19 +666,14 @@ export function createGraphView(ctx: ViewCtx): GraphView {
     }
     for (const e of [...b.edges, ...indirect]) {
       if (!e.shown) continue;
-      let role: 'up' | 'down' | null = null;
-      if (highlight !== null && selected !== null) {
-        const isUp = highlight.up.has(e.from) && (highlight.up.has(e.to) || e.to === selected);
-        const isDown =
-          highlight.down.has(e.to) && (highlight.down.has(e.from) || e.from === selected);
-        role = isUp ? 'up' : isDown ? 'down' : null;
-      }
+      const role = edgeRole(e, selected, highlight);
       e.el.classList.remove('hover');
       e.el.classList.toggle('up', role === 'up');
       e.el.classList.toggle('down', role === 'down');
       e.el.classList.toggle('dim', highlight !== null && role === null);
+      const dimmed = highlight !== null && role === null;
       const marker: Marker =
-        role ?? (highlight !== null && e.base !== 'indirect' ? 'default' : e.base);
+        role ?? (dimmed && e.base !== 'indirect' && e.kind !== 'parent' ? 'default' : e.base);
       e.el.setAttribute('marker-end', `url(#arrow-${marker})`);
       if (role !== null && e.base !== 'indirect') directG.append(e.el);
     }

@@ -176,6 +176,57 @@ export interface EdgeLike {
   to: IssueKey;
 }
 
+// ---------------------------------------------------------------------------
+// Line display
+// ---------------------------------------------------------------------------
+
+/** Which lines the graph draws. */
+export type LineMode = 'selected' | 'dependencies' | 'all';
+
+export type LineKind = 'dependency' | 'parent';
+
+/** A line the graph can draw: a dependency edge or a parent-to-child link. */
+export interface GraphLine extends EdgeLike {
+  kind: LineKind;
+}
+
+/** Stable DOM id of a line. Parent links never collide with dependency edges. */
+export function lineId(line: Pick<GraphLine, 'from' | 'to' | 'kind'>): string {
+  return line.kind === 'parent' ? `parent:${line.from}->${line.to}` : edgeId(line.from, line.to);
+}
+
+/**
+ * Parent-to-child links of the plan (parent -> child). `PlanNode.parents` only
+ * names issues that are in the plan, so every link has two drawable ends.
+ */
+export function parentLinks(
+  nodes: readonly { key: IssueKey; parents: readonly IssueKey[] }[],
+): EdgeLike[] {
+  const links: EdgeLike[] = [];
+  for (const n of nodes) for (const p of n.parents) links.push({ from: p, to: n.key });
+  return links;
+}
+
+/**
+ * The lines drawn for a display mode. `dependencies` is every dependency edge
+ * (today's rendering). `all` adds the parent-to-child links. `selected` keeps
+ * only the lines incident to the selected issue, and nothing when none is
+ * selected.
+ */
+export function graphLines(
+  edges: readonly EdgeLike[],
+  parents: readonly EdgeLike[],
+  mode: LineMode,
+  selected: IssueKey | null,
+): GraphLine[] {
+  const deps = edges.map((e): GraphLine => ({ ...e, kind: 'dependency' }));
+  if (mode === 'dependencies') return deps;
+  const hierarchy = parents.map((e): GraphLine => ({ ...e, kind: 'parent' }));
+  if (mode === 'all') return [...deps, ...hierarchy];
+  if (selected === null) return [];
+  return [...deps, ...hierarchy].filter((l) => l.from === selected || l.to === selected);
+}
+
 export interface Adjacency {
   /** key -> direct dependents (from -> to). */
   out: Map<IssueKey, IssueKey[]>;
