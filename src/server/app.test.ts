@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,11 +89,14 @@ describe('health and views', () => {
     expect(res.json()).toEqual({ status: 'ok' });
   });
 
-  it('GET /api/settings reports the refresh interval', async () => {
+  it('GET /api/settings reports the refresh interval and the package version', async () => {
+    const pkg = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { version: string };
     const { app } = setup({ config: demoConfig((c) => (c.ui.refreshMinutes = 12)) });
     const res = await app.inject('/api/settings');
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ refreshMinutes: 12 });
+    expect(res.json()).toEqual({ refreshMinutes: 12, version: pkg.version });
   });
 
   it('GET /api/views lists the demo view with no-store', async () => {

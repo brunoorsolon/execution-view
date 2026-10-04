@@ -20,7 +20,7 @@ Contents:
 | ------ | ------------------------------- | ----------------------------------------------------------------------- | ------------------------------------- |
 | GET    | `/healthz`                      | Liveness check. **No authentication.**                                  | `200` `{"status":"ok"}`               |
 | GET    | `/api/views`                    | The configured views                                                    | `200` array of view summaries         |
-| GET    | `/api/settings`                 | Settings for the web UI                                                 | `200` `{"refreshMinutes":5}`          |
+| GET    | `/api/settings`                 | Settings for the web UI and the running version                         | `200` `{"refreshMinutes":5,...}`      |
 | GET    | `/api/views/:id/snapshot`       | The plan and layout of a view                                           | `200` snapshot with `ETag`, or `304`  |
 | POST   | `/api/views/:id/refresh`        | Force a refetch from the tracker, ignoring the cache                    | `200` snapshot with `ETag`            |
 | GET    | `/api/views/:id/export.:format` | The snapshot rendered as a file: `json`, `md`, `mmd` (Mermaid) or `dot` | `200` text with `Content-Disposition` |
@@ -55,10 +55,12 @@ Returns one summary per configured view:
 Returns the settings the web UI reads at startup:
 
 ```json
-{ "refreshMinutes": 5 }
+{ "refreshMinutes": 5, "version": "2.0.1" }
 ```
 
 `refreshMinutes` is `ui.refreshMinutes` (or `EV_REFRESH_MINUTES`): the UI calls `POST /api/views/:id/refresh` for the view it shows at that interval. `0` means no automatic refresh.
+
+`version` is the running server's version. The theme menu shows it at the bottom.
 
 ### `GET /api/views/:id/snapshot`
 

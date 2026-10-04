@@ -766,7 +766,8 @@ bundled at build time; nothing is loaded from a CDN.
 
 - A header with a view selector, the repo list, `fetchedAt`, a short content
   hash, a Refresh button, an export menu and a theme menu (system, light,
-  dark; stored in localStorage). Under it, the tabs, the Filter menu and the
+  dark; stored in localStorage; the login page reads the same choice; the
+  menu also shows the running version). Under it, the tabs, the Filter menu and the
   search box.
 - A summary strip (Graph and Execution order tabs): the ready issues in plan
   order, as many as fit plus "+N more" (which filters to `status:ready`), and a

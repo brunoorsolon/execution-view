@@ -58,9 +58,18 @@ export function fetchViews(): Promise<ViewSummary[]> {
   return request<ViewSummary[]>(`${API}/views`);
 }
 
-/** Server settings for the UI; `refreshMinutes` 0 means no automatic refresh. */
-export function fetchSettings(): Promise<{ refreshMinutes: number }> {
-  return request<{ refreshMinutes: number }>(`${API}/settings`);
+export interface Settings {
+  /** 0 means no automatic refresh. */
+  refreshMinutes: number;
+  /** The running server's package version. */
+  version: string;
+}
+
+let settings: Promise<Settings> | undefined;
+
+/** Server settings for the UI, fetched once per page load. */
+export function fetchSettings(): Promise<Settings> {
+  return (settings ??= request<Settings>(`${API}/settings`));
 }
 
 export function fetchSnapshot(viewId: string): Promise<Snapshot> {
