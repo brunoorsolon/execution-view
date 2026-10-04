@@ -1,5 +1,4 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Command, CommanderError, Option } from 'commander';
 import { ConfigError, loadConfig } from '../config/load.js';
@@ -8,6 +7,7 @@ import type { IssueProvider, PlanStats, PlanWarning, Snapshot } from '../core/ty
 import { exporters, type ExportFormat } from '../export/index.js';
 import { PlanService, UnknownViewError, type ViewSummary } from '../service/planService.js';
 import { startServer } from '../server/index.js';
+import { packageVersion } from '../version.js';
 
 export interface CliIo {
   stdout: (s: string) => void;
@@ -77,16 +77,6 @@ function painter(io: CliIo): Painter {
     dim: wrap(2, 22),
     bold: wrap(1, 22),
   };
-}
-
-function packageVersion(): string {
-  try {
-    const require = createRequire(import.meta.url);
-    const pkg = require('../../package.json') as { version?: unknown };
-    return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
 }
 
 function errorMessage(err: unknown): string {

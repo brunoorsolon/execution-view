@@ -9,6 +9,7 @@ import type { AppConfig } from '../config/schema.js';
 import type { Snapshot } from '../core/types.js';
 import { exporters, type ExportFormat } from '../export/index.js';
 import { UnknownViewError, type PlanService } from '../service/planService.js';
+import { packageVersion } from '../version.js';
 import { registerWebhooks, WEBHOOK_PATHS } from './webhooks.js';
 
 export interface BuildAppOptions {
@@ -44,7 +45,11 @@ const UI_NOT_BUILT_HTML = `<!doctype html>
 </html>
 `;
 
-/** Static login form. The script keeps a shared `#/view/...` link across the login redirect. */
+/**
+ * Static login form. The head script applies the theme saved by the app's theme menu (same key as
+ * `web/src/theme.ts`) before the first paint; the body script keeps a shared `#/view/...` link
+ * across the login redirect.
+ */
 function loginPage(failed: boolean): string {
   return `<!doctype html>
 <html lang="en">
@@ -53,8 +58,19 @@ function loginPage(failed: boolean): string {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>Log in · execution-view</title>
+    <script>
+      try {
+        var theme = localStorage.getItem('execution-view:theme');
+        if (theme === 'light' || theme === 'dark') {
+          document.documentElement.setAttribute('data-theme', theme);
+        }
+      } catch (e) {
+        // storage blocked: follow the system setting
+      }
+    </script>
     <style>
       :root {
+        color-scheme: light;
         --bg: #f3f4f6;
         --surface: #ffffff;
         --line: #c9ced6;
@@ -64,7 +80,8 @@ function loginPage(failed: boolean): string {
         --error: #b3261e;
       }
       @media (prefers-color-scheme: dark) {
-        :root {
+        :root:not([data-theme='light']) {
+          color-scheme: dark;
           --bg: #0e1014;
           --surface: #161920;
           --line: #353b46;
@@ -73,6 +90,16 @@ function loginPage(failed: boolean): string {
           --accent: #86a3ff;
           --error: #ff7a6e;
         }
+      }
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+        --bg: #0e1014;
+        --surface: #161920;
+        --line: #353b46;
+        --fg: #e9ebf0;
+        --fg-2: #b6bcc7;
+        --accent: #86a3ff;
+        --error: #ff7a6e;
       }
       body {
         display: grid;
@@ -376,7 +403,8 @@ export function buildApp(
 
   app.get('/api/views', async () => service.listViews());
 
-  app.get('/api/settings', async () => ({ refreshMinutes: config.ui.refreshMinutes }));
+  const version = packageVersion();
+  app.get('/api/settings', async () => ({ refreshMinutes: config.ui.refreshMinutes, version }));
 
   app.get<{ Params: { id: string }; Querystring: { refresh?: string } }>(
     '/api/views/:id/snapshot',
