@@ -1,6 +1,6 @@
 {
   "name": "execution-view",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Deterministic dependency graph and execution order for open issues",
   "private": true,
   "type": "module",
