@@ -37,12 +37,13 @@ export interface View {
 export function statusBadges(node: PlanNode): HTMLElement {
   const badge = (status: DisplayStatus): HTMLElement =>
     h('span', { class: `badge st-${status}` }, statusLabel(status));
+  const shown = displayStatus(node);
   const workflow = workflowStatus(node.labels);
   return h(
     'span',
     { class: 'status-badges' },
-    badge(displayStatus(node)),
-    node.status !== 'ready' && workflow !== null ? badge(workflow) : null,
+    badge(shown),
+    workflow !== null && workflow !== shown ? badge(workflow) : null,
   );
 }
 

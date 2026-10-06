@@ -69,6 +69,11 @@ export function isClaimed(labels: readonly string[]): boolean {
   return hasLabel(labels, 'agent', 'claimed');
 }
 
+/** Work an agent stopped on carries `agent:blocked` or `agent/blocked`. */
+export function isBlocked(labels: readonly string[]): boolean {
+  return hasLabel(labels, 'agent', 'blocked');
+}
+
 /** A decomposed spec carries `spec:decomposed` or `spec/decomposed`. */
 export function isSpec(labels: readonly string[]): boolean {
   return hasLabel(labels, 'spec', 'decomposed');
@@ -80,10 +85,14 @@ export function isMap(labels: readonly string[]): boolean {
 }
 
 /**
- * The workflow status a label implies, most specific first: Spec and Map take
- * precedence over In progress. Null when no workflow label applies.
+ * The workflow status a label implies, most specific first: Blocked wins over
+ * Spec and Map, which take precedence over In progress. Null when no workflow
+ * label applies.
  */
-export function workflowStatus(labels: readonly string[]): 'in-progress' | 'spec' | 'map' | null {
+export function workflowStatus(
+  labels: readonly string[],
+): 'blocked' | 'in-progress' | 'spec' | 'map' | null {
+  if (isBlocked(labels)) return 'blocked';
   if (isSpec(labels)) return 'spec';
   if (isMap(labels)) return 'map';
   if (isClaimed(labels)) return 'in-progress';
@@ -92,8 +101,8 @@ export function workflowStatus(labels: readonly string[]): 'in-progress' | 'spec
 
 /**
  * Workflow labels change presentation, not the planner's dependency status:
- * blocked and cycle statuses stay visible. Spec and Map hide Ready, and take
- * precedence over In progress.
+ * blocked and cycle statuses stay visible. Blocked, Spec and Map hide Ready,
+ * and Blocked takes precedence over Spec, Map and In progress.
  */
 export function displayStatus(node: {
   status: NodeStatus;

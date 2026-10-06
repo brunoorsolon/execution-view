@@ -143,6 +143,21 @@ describe('compileFilter', () => {
     expect(claimed.status).toBe('ready');
   });
 
+  it('separates agent-blocked work from ready work in both label forms', () => {
+    for (const label of ['agent:blocked', 'AGENT/BLOCKED']) {
+      const blocked = issue('acme/api#8', 'Blocked work', [label], { status: 'ready' });
+      expect(compileFilter('status:blocked')!(blocked)).toBe(true);
+      expect(compileFilter('is:blocked')!(blocked)).toBe(true);
+      expect(compileFilter('status:ready')!(blocked)).toBe(false);
+      expect(compileFilter('-status:blocked')!(blocked)).toBe(false);
+    }
+    const unblocked = issue('acme/api#9', 'Free work', ['agent:blocked-later'], {
+      status: 'ready',
+    });
+    expect(compileFilter('status:ready')!(unblocked)).toBe(true);
+    expect(compileFilter('status:blocked')!(unblocked)).toBe(false);
+  });
+
   it('accepts slash-form workflow labels and filters specs and maps', () => {
     const claimed = issue('acme/api#5', 'Slash claimed', ['agent/claimed'], { status: 'ready' });
     expect(compileFilter('status:in-progress')!(claimed)).toBe(true);
