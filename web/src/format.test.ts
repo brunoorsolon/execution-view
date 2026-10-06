@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   displayKey,
   displayStatus,
+  isBlocked,
   isClaimed,
   isMap,
   isSpec,
@@ -76,6 +77,8 @@ describe('displayStatus', () => {
     expect(isSpec(['SPEC/decomposed'])).toBe(true);
     expect(isMap(['wayfinder:map'])).toBe(true);
     expect(isMap(['Wayfinder/MAP'])).toBe(true);
+    expect(isBlocked(['agent:blocked'])).toBe(true);
+    expect(isBlocked(['Agent/BLOCKED'])).toBe(true);
     for (const looser of [
       'agent-claimed',
       'agent:claim',
@@ -85,11 +88,28 @@ describe('displayStatus', () => {
       'spec/decomposed:extra',
       'wayfinder-maps',
       'wayfinder:maps',
+      'agent-blocked',
+      'agent:block',
+      'xagent:blocked',
     ]) {
       expect(isClaimed([looser])).toBe(false);
       expect(isSpec([looser])).toBe(false);
       expect(isMap([looser])).toBe(false);
+      expect(isBlocked([looser])).toBe(false);
     }
+  });
+
+  it('shows Blocked instead of Ready for agent-blocked work', () => {
+    expect(displayStatus(node('ready', ['agent:blocked']))).toBe('blocked');
+    expect(displayStatus(node('ready', ['agent/blocked']))).toBe('blocked');
+    expect(displayStatus(node('ready', ['AGENT:BLOCKED']))).toBe('blocked');
+    expect(displayStatus({ status: 'in-cycle', labels: ['agent:blocked'] })).toBe('in-cycle');
+  });
+
+  it('lets Blocked take precedence over Spec, Map and In progress', () => {
+    expect(displayStatus(node('ready', ['agent:claimed', 'agent:blocked']))).toBe('blocked');
+    expect(displayStatus(node('ready', ['spec/decomposed', 'agent:blocked']))).toBe('blocked');
+    expect(displayStatus(node('ready', ['wayfinder/map', 'agent:blocked']))).toBe('blocked');
   });
 
   it('shows Spec and Map instead of Ready, and over In progress', () => {
@@ -107,6 +127,7 @@ describe('displayStatus', () => {
     expect(workflowStatus(['spec/decomposed'])).toBe('spec');
     expect(workflowStatus(['wayfinder/map'])).toBe('map');
     expect(workflowStatus(['agent/claimed'])).toBe('in-progress');
+    expect(workflowStatus(['agent/blocked'])).toBe('blocked');
     expect(workflowStatus([])).toBeNull();
   });
 });
