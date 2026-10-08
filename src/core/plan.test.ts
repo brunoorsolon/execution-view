@@ -23,6 +23,7 @@ function issue(key: IssueKey, extra: Partial<Issue> = {}): Issue {
     labels: [],
     assignees: [],
     milestone: null,
+    updatedAt: null,
     nativeRelations: [],
     ...extra,
   };
@@ -99,6 +100,7 @@ describe('buildPlan', () => {
       labels: ['a', 'b'],
       assignees: ['bob'],
       milestone: 'M1',
+      updatedAt: null,
       external: false,
       status: 'ready',
       wave: 0,

@@ -70,7 +70,7 @@ Returns the settings the web UI reads at startup:
 | `refresh`       | query  | `1` or `true` bypasses the cache and refetches (concurrent refreshes of a view share one fetch). Any other value is ignored.                     |
 | `If-None-Match` | header | An earlier `ETag`. When it matches the current content hash, the server answers `304` with no body. (`*` and weak `W/"..."` forms are accepted.) |
 
-Response headers: `ETag: "<contentHash>"`, `Content-Type: application/json; charset=utf-8`, `Cache-Control: no-store`. The `ETag` is the snapshot's [content hash](DETERMINISM.md#the-content-hash): it changes when the plan or layout changes, and **not** when only `fetchedAt` changes, so a refresh that finds nothing new still answers `304` to a client that sends the last `ETag`.
+Response headers: `ETag: "<contentHash>"`, `Content-Type: application/json; charset=utf-8`, `Cache-Control: no-store`. The `ETag` is the snapshot's [content hash](DETERMINISM.md#the-content-hash): it changes when the plan or layout changes, and **not** when only `fetchedAt` changes, so a refresh that finds nothing new still answers `304` to a client that sends the last `ETag`. A tracker-side edit changes a node's `updatedAt` and so the hash, even when the order does not change.
 
 ### `POST /api/views/:id/refresh`
 
@@ -188,7 +188,7 @@ A snapshot is the JSON document returned by the snapshot, refresh and `export.js
 | `warnings`      | `{ code, message, issues }`. Codes: `cycle`, `blocked-by-cycle`, `self-reference`, `dangling-reference`, `external-unresolved`, `native-unsupported`, `fetch-error` ([meaning and fixes](PREREQUISITES.md#warning-codes)) |
 | `stats`         | `total`, `ready`, `blocked`, `unschedulable`, `external`, `edges`, `waves`                                                                                                                                                |
 
-A node has: `key` (`owner/repo#number`, lowercase), `repo`, `number`, `title`, `url`, `labels`, `assignees`, `milestone` (or `null`), `external` (boolean), `status` (`ready`, `blocked`, `in-cycle` or `blocked-by-cycle`), `wave` and `order` (0-based, `null` when unschedulable), `blockedBy` and `blocks` (keys of open direct prerequisites and dependents), `parents` and `children` (keys of the `Parent:` hierarchy; never dependencies), `priority` (index in `priorityLabels`, or `priorityLabels.length`) and `remainingDepth`.
+A node has: `key` (`owner/repo#number`, lowercase), `repo`, `number`, `title`, `url`, `labels`, `assignees`, `milestone` (or `null`), `updatedAt` (the issue's last-update timestamp, or `null` when the provider does not report one), `external` (boolean), `status` (`ready`, `blocked`, `in-cycle` or `blocked-by-cycle`), `wave` and `order` (0-based, `null` when unschedulable), `blockedBy` and `blocks` (keys of open direct prerequisites and dependents), `parents` and `children` (keys of the `Parent:` hierarchy; never dependencies), `priority` (index in `priorityLabels`, or `priorityLabels.length`) and `remainingDepth`.
 
 ### `layout`
 
@@ -201,7 +201,7 @@ Abridged real output (a five-issue view):
   "viewId": "mini",
   "title": "mini",
   "fetchedAt": "2026-09-29T09:03:17.028Z",
-  "contentHash": "1097a5d86c6003c4a601af62bb6cb0f5ae620a5193dbe1c52612914607154907",
+  "contentHash": "de98c03f071976a7c072a1e71ac7f16c16d5b3fa43b90f65061d0f725e45ef8d",
   "priorityLabels": ["P0", "P1", "P2"],
   "orderingMode": "priority",
   "plan": {
@@ -216,6 +216,7 @@ Abridged real output (a five-issue view):
         "labels": [],
         "assignees": [],
         "milestone": null,
+        "updatedAt": null,
         "external": false,
         "status": "blocked",
         "wave": 1,
@@ -268,12 +269,12 @@ curl -sI http://localhost:8080/api/views/demo/snapshot
 Conditional request: only download when the plan changed. When the `ETag` still matches, the server answers `304` with no body (use the `ETag` of your own last response):
 
 ```sh
-curl -s -o /dev/null -D - -H 'If-None-Match: "e65915280f17fb5d65c72e4ea75d62cc77dd08b00268a9f820ecd2bfef3cb3b0"' http://localhost:8080/api/views/demo/snapshot
+curl -s -o /dev/null -D - -H 'If-None-Match: "1f532dbcf53112168cfe1903885c9b0bb3836b2ec6e75ae955ddaee5ecc6fae3"' http://localhost:8080/api/views/demo/snapshot
 ```
 
 ```text
 HTTP/1.1 304 Not Modified
-etag: "e65915280f17fb5d65c72e4ea75d62cc77dd08b00268a9f820ecd2bfef3cb3b0"
+etag: "1f532dbcf53112168cfe1903885c9b0bb3836b2ec6e75ae955ddaee5ecc6fae3"
 cache-control: no-store
 ```
 

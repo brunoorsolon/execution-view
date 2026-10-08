@@ -71,6 +71,9 @@ Priority labels, milestones and assignees are spread over the issues
 (`v0.1 Foundations`, `v0.2 Core API`, `v1.0 Launch`; alice, bob, carol, dave, erin,
 frank). `acme/api#16` only has the label `tech-debt`, so it has no priority.
 
+Every issue also carries an `updatedAt` timestamp, deliberately not in issue-number
+order, so the web UI's "Last updated" sort has data to order the demo by.
+
 `Wave` and `Order` are null for the five unschedulable issues (and their
 `remainingDepth` is 0). Closed issues are not part of the plan.
 

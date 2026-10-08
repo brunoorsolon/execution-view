@@ -25,6 +25,7 @@ import {
 } from '../graph-model.js';
 import { NARROW_HEADER_PX, compactTextScale, isCompact } from '../lod.js';
 import { priorityName } from '../priority.js';
+import { rankLayoutRows, type SortMode } from '../sort.js';
 import type { AppState, SnapshotIndex } from '../state.js';
 import { effectiveViewId } from '../state.js';
 import { loadLineMode, saveLineMode } from '../theme.js';
@@ -157,6 +158,7 @@ export function createGraphView(ctx: ViewCtx): GraphView {
   let built: Built | null = null;
   let packed: PackedLayout | null = null;
   let packedFor: Set<IssueKey> | null | undefined;
+  let packedSort: SortMode | undefined;
   let indirect: EdgeEl[] = [];
   let headEls: { el: HTMLElement; x: number }[] = [];
   let t: Transform = { x: 16, y: 0, k: 1 };
@@ -496,10 +498,10 @@ export function createGraphView(ctx: ViewCtx): GraphView {
   }
 
   /** Places the visible cards and wave headers. Card positions never depend on the line mode. */
-  function relayout(b: Built, keys: Set<IssueKey> | null): void {
+  function relayout(b: Built, keys: Set<IssueKey> | null, sort: SortMode): void {
     const { snapshot } = b;
     const plan = snapshot.plan;
-    packed = packLayout(snapshot.layout.nodes, keys, G);
+    packed = packLayout(rankLayoutRows(snapshot.layout.nodes, b.index.nodes, sort), keys, G);
     canvas.style.width = `${packed.width}px`;
     canvas.style.height = `${packed.height}px`;
     edgesSvg.setAttribute('width', String(packed.width));
@@ -699,16 +701,23 @@ export function createGraphView(ctx: ViewCtx): GraphView {
         highlightKey = null;
         highlight = null;
       }
-      if (rebuilt || packedFor !== keys) {
-        const filterChange = !rebuilt;
+      const sort = state.route.sort;
+      if (rebuilt || packedFor !== keys || packedSort !== sort) {
+        const filterChange = !rebuilt && packedFor !== keys;
         packedFor = keys;
+        packedSort = sort;
         if (filterChange) {
           pane.classList.add('reflow');
           window.clearTimeout(reflowTimer);
           reflowTimer = window.setTimeout(() => pane.classList.remove('reflow'), 360);
         }
-        relayout(built!, keys);
-        if (filterChange && visible) keepInView();
+        relayout(built!, keys, sort);
+        // relayout() recreates the sticky wave headers, which carry the current
+        // pan and zoom as inline styles, so reapply them here.
+        if (visible) {
+          if (filterChange) keepInView();
+          else applyTransform();
+        }
       }
     } else {
       built = null;

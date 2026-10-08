@@ -215,6 +215,8 @@ export interface Issue {
   /** Logins, sorted ascending, unique. */
   assignees: string[];
   milestone: string | null;
+  /** ISO 8601 timestamp of the last update, or null when the provider does not report one. */
+  updatedAt: string | null;
   /** Relations reported by the provider API (native dependencies, sub-issues). */
   nativeRelations: RawRelation[];
 }
@@ -254,6 +256,8 @@ export interface PlanNode {
   labels: string[];
   assignees: string[];
   milestone: string | null;
+  /** ISO 8601 timestamp of the last update, or null when the provider does not report one. */
+  updatedAt: string | null;
   /** True when the issue is outside the view's scope (another repo, or filtered out)
    *  but is pulled in because an in-scope issue (transitively) depends on it. */
   external: boolean;
@@ -664,7 +668,8 @@ small concurrency limiter. Error messages must never include the token.
   the same way as above.
 - getIssue: `GET /repos/{o}/{r}/issues/{n}`. 404/410 → null. Has `pull_request` → null.
 - Mapping: `url` = `html_url`, labels from `labels[].name`, assignees from
-  `assignees[].login`, milestone from `milestone.title`. Body null → `''`.
+  `assignees[].login`, milestone from `milestone.title`, timestamp from
+  `updated_at`. Body null → `''`; a missing `updated_at` → `null`.
 
 ### Gitea (API v1)
 
@@ -678,14 +683,16 @@ small concurrency limiter. Error messages must never include the token.
   stop (dependencies disabled on the repo or instance).
 - getIssue: `GET /api/v1/repos/{o}/{r}/issues/{n}`; 404 → null; `pull_request` set → null.
 - Mapping: `url` = `html_url`; labels `labels[].name`; assignees
-  `assignees[].login` (may be null); milestone `milestone.title`.
+  `assignees[].login` (may be null); milestone `milestone.title`; timestamp
+  `updated_at`.
 - `subIssues` is ignored.
 
 ### Fixture
 
 Reads a JSON file: `{ "issues": FixtureIssue[] }`, where `FixtureIssue` has
-`owner, repo, number, title, state, body?, labels?, assignees?, milestone?, blockedBy?: string[]`
-(the keys of native blocked-by relations, such as `"acme/api#3"`). No
+`owner, repo, number, title, state, body?, labels?, assignees?, milestone?, updatedAt?, blockedBy?: string[]`
+(`updatedAt` is an ISO 8601 timestamp; `blockedBy` holds the keys of native
+blocked-by relations, such as `"acme/api#3"`). No
 network access. Used for the demo, tests and the Docker smoke test.
 `test/fixtures/demo.json` must show every feature: several waves, a parallel
 branch, a cycle, a blocked-by-cycle node, a closed dependency (satisfied), a
@@ -767,13 +774,15 @@ bundled at build time; nothing is loaded from a CDN.
 - A header with a view selector, the repo list, `fetchedAt`, a short content
   hash, a Refresh button, an export menu and a theme menu (system, light,
   dark; stored in localStorage; the login page reads the same choice; the
-  menu also shows the running version). Under it, the tabs, the Filter menu and the
-  search box.
+  menu also shows the running version). Under it, the tabs, the Sort and Filter
+  menus and the search box.
 - A summary strip (Graph and Execution order tabs): the ready issues in plan
   order, as many as fit plus "+N more" (which filters to `status:ready`), and a
   status breakdown of the issues that match the filter.
 - The **Graph** tab draws HTML cards over an SVG edge layer. The column
-  (`layer`) and the order inside a column (`row`) come from `Layout`; the
+  (`layer`) comes from `Layout`; the order inside a column is the chosen Sort
+  (the issue number by default, `row` from `Layout` for the execution order);
+  the
   client places the cards itself (`packLayout` in `web/src/graph-model.ts`)
   so a filter can hide cards without leaving gaps, and drops waves with no
   visible card (wave numbers do not change). Edges are beziers; edges inside
@@ -796,6 +805,11 @@ bundled at build time; nothing is loaded from a CDN.
 - The **Problems** tab lists each cycle as a loop, the issues blocked by a
   cycle, and the other warnings (cycle and blocked-by-cycle warnings are not
   repeated). It is not filtered.
+- The **Sort** menu (`web/src/sort.ts`) orders the issues inside each wave on
+  the Graph and Execution order tabs by issue number (the default), last update,
+  prerequisite count or dependent count, or keeps the server's order. The choice
+  lives in the URL (`?sort=`, written only when it is not the default). The wave
+  itself, and a wave's position, never change.
 - One filter query (`web/src/filter.ts`) drives every tab and hides the
   issues that do not match. It takes free text, `#N`, keys and qualifiers
   (`status:`, `priority:`, `label:`, `assignee:`/`@`, `milestone:`, `repo:`,

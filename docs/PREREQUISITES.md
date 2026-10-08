@@ -24,6 +24,7 @@ Statements about the user interface or the settings of GitHub and Gitea are mark
 | **Open** issues of every repository listed in the view | Yes            | These are the issues that appear in the plan.                                                                                        |
 | Pull requests                                          | No             | Ignored in listings. A reference to a pull request number is treated as a reference to an issue that does not exist (see section 6). |
 | Title, state, URL, labels, assignees, milestone        | Yes            | Labels feed priority and scope filters; the rest is displayed.                                                                       |
+| Last-update timestamp                                  | Yes            | Used by the web UI's "Last updated" sort; not needed to build the plan.                                                              |
 | **Body** of each issue                                 | Yes            | Parsed for dependency lines (section 4). The body is used for parsing only; it is not part of the plan or of the API output.         |
 | Native dependency relations                            | Yes (default)  | GitHub "blocked by" relations, Gitea "dependencies". Switch off with `dependencies.native: false`.                                   |
 | Sub-issues (GitHub)                                    | Opt-in         | Only with `dependencies.subIssues: true` (section 3).                                                                                |

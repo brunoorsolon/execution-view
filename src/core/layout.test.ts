@@ -32,6 +32,7 @@ function makePlan(nodes: N[], edges: [IssueKey, IssueKey][], order?: IssueKey[])
         labels: [],
         assignees: [],
         milestone: null,
+        updatedAt: null,
         external: false,
         status: n.wave === null ? ('in-cycle' as const) : ('ready' as const),
         wave: n.wave,
