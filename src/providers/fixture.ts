@@ -29,6 +29,7 @@ const fixtureIssueSchema = z.object({
   labels: z.array(z.string()).nullish(),
   assignees: z.array(z.string()).nullish(),
   milestone: z.string().nullish(),
+  updatedAt: z.string().nullish(),
   blockedBy: z.array(z.string()).nullish(),
 });
 
@@ -119,6 +120,7 @@ function parseFixture(text: string, file: string): ParsedFixture {
       labels: sortedUnique(f.labels ?? []),
       assignees: sortedUnique(f.assignees ?? []),
       milestone: f.milestone ?? null,
+      updatedAt: f.updatedAt ?? null,
       nativeRelations,
     });
   });

@@ -53,6 +53,7 @@ describe('createFixtureProvider', () => {
           labels: ['b', 'a', 'b', 'B'],
           assignees: ['zed', 'amy', 'zed'],
           milestone: 'v1',
+          updatedAt: '2026-01-02T03:04:05Z',
         }),
         issue({ number: 8 }),
       ],
@@ -75,9 +76,16 @@ describe('createFixtureProvider', () => {
       labels: ['B', 'a', 'b'],
       assignees: ['amy', 'zed'],
       milestone: 'v1',
+      updatedAt: '2026-01-02T03:04:05Z',
       nativeRelations: [],
     });
-    expect(issues[1]).toMatchObject({ body: '', labels: [], assignees: [], milestone: null });
+    expect(issues[1]).toMatchObject({
+      body: '',
+      labels: [],
+      assignees: [],
+      milestone: null,
+      updatedAt: null,
+    });
   });
 
   it('honours a custom webUrl and strips trailing slashes', async () => {

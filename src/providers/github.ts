@@ -42,6 +42,7 @@ interface GhIssue {
   assignees?: unknown;
   assignee?: unknown;
   milestone?: { title?: unknown } | null;
+  updated_at?: unknown;
   pull_request?: unknown;
   repository_url?: unknown;
   issue_dependencies_summary?: { total_blocked_by?: unknown } | null;
@@ -98,6 +99,8 @@ function mapIssue(raw: GhIssue, repo: RepoRef): Issue {
   }
   const milestone =
     raw.milestone && typeof raw.milestone.title === 'string' ? raw.milestone.title : null;
+  const updatedAt =
+    typeof raw.updated_at === 'string' && raw.updated_at !== '' ? raw.updated_at : null;
   return {
     key: makeKey(repo, raw.number),
     repo,
@@ -109,6 +112,7 @@ function mapIssue(raw: GhIssue, repo: RepoRef): Issue {
     labels: sortedUnique(labels),
     assignees: sortedUnique(assignees),
     milestone,
+    updatedAt,
     nativeRelations: [],
   };
 }

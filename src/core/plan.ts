@@ -435,6 +435,7 @@ export function buildPlan(input: PlanInput): Plan {
       labels: [...issue.labels],
       assignees: [...issue.assignees],
       milestone: issue.milestone,
+      updatedAt: issue.updatedAt,
       external: isExternal,
       status,
       wave: isSchedulable ? wave[i]! : null,

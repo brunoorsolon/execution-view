@@ -4,6 +4,7 @@ import { plural, shortKey } from '../format.js';
 import { cyclePath } from '../graph-model.js';
 import { orderingExplanation } from '../ordering.js';
 import { priorityName } from '../priority.js';
+import { sortKeys, type SortMode } from '../sort.js';
 import type { SnapshotIndex } from '../state.js';
 import {
   avatars,
@@ -51,6 +52,7 @@ export function createOrderView(ctx: ViewCtx): View {
   );
 
   let builtFor: Snapshot | null = null;
+  let builtSort: SortMode | undefined;
   let filteredFor: Set<IssueKey> | null | undefined;
   let rows = new Map<IssueKey, HTMLTableRowElement>();
   let groups: Group[] = [];
@@ -192,11 +194,18 @@ export function createOrderView(ctx: ViewCtx): View {
       : 'Waits on a dependency cycle';
   }
 
-  function build(snapshot: Snapshot, index: SnapshotIndex): void {
+  function build(snapshot: Snapshot, index: SnapshotIndex, sort: SortMode): void {
     note.textContent = orderingExplanation(snapshot.orderingMode);
     rows = new Map();
     groups = [];
     const { plan } = snapshot;
+    /** One wave in the order shown: the server's row order, or the chosen sort. */
+    const arrange = (keys: readonly IssueKey[]): readonly IssueKey[] =>
+      sort === 'execution'
+        ? [...keys].sort(
+            (a, b) => (index.nodes.get(a)?.order ?? 0) - (index.nodes.get(b)?.order ?? 0),
+          )
+        : sortKeys(keys, index.nodes, sort);
     const tbody = h('tbody');
     plan.waves.forEach((wave, i) => {
       tbody.append(
@@ -207,10 +216,7 @@ export function createOrderView(ctx: ViewCtx): View {
           wave,
         ),
       );
-      const sorted = [...wave].sort(
-        (a, b) => (index.nodes.get(a)?.order ?? 0) - (index.nodes.get(b)?.order ?? 0),
-      );
-      for (const key of sorted) {
+      for (const key of arrange(wave)) {
         const n = index.nodes.get(key);
         if (n) tbody.append(row(n, snapshot, index, null));
       }
@@ -224,7 +230,7 @@ export function createOrderView(ctx: ViewCtx): View {
           plan.unschedulable,
         ),
       );
-      for (const key of plan.unschedulable) {
+      for (const key of arrange(plan.unschedulable)) {
         const n = index.nodes.get(key);
         if (n) tbody.append(row(n, snapshot, index, unschedulableReason(n, snapshot, index)));
       }
@@ -267,9 +273,10 @@ export function createOrderView(ctx: ViewCtx): View {
       root.hidden = !tabVisible;
       const index = getIndex(state);
       if (state.snapshot === null || index === null) return;
-      if (builtFor !== state.snapshot) {
-        build(state.snapshot, index);
+      if (builtFor !== state.snapshot || builtSort !== state.route.sort) {
+        build(state.snapshot, index, state.route.sort);
         builtFor = state.snapshot;
+        builtSort = state.route.sort;
         filteredFor = undefined;
         lastSelected = null;
       }
