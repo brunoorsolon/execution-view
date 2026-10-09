@@ -544,6 +544,10 @@ export function createGraphView(ctx: ViewCtx): GraphView {
       if (p !== undefined) card.style.transform = `translate(${p.x}px, ${p.y}px)`;
     }
 
+    // Freshly built wave headers carry no transform yet, and relayout can run
+    // without a later pan/zoom, so place them now instead of at left:0.
+    applyTransform();
+
     noMatch.hidden = packed.columns.length > 0;
     if (packed.columns.length === 0) {
       clear(noMatch);
