@@ -87,6 +87,7 @@ function placeholderIssue(key: IssueKey, webUrl: string): Issue {
     labels: [],
     assignees: [],
     milestone: null,
+    updatedAt: null,
     nativeRelations: [],
   };
 }

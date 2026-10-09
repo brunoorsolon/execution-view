@@ -106,6 +106,7 @@ describe('listOpenIssues: listing', () => {
           labels: ['zeta', { name: 'alpha' }, { name: 'zeta' }, { name: 'P1' }, { color: 'x' }],
           assignees: [{ login: 'bob' }, { login: 'alice' }, { login: 'bob' }],
           milestone: { title: 'v1', number: 2 },
+          updated_at: '2026-01-02T03:04:05Z',
         }),
         ghIssue(6),
       ]),
@@ -122,9 +123,16 @@ describe('listOpenIssues: listing', () => {
       labels: ['P1', 'alpha', 'zeta'],
       assignees: ['alice', 'bob'],
       milestone: 'v1',
+      updatedAt: '2026-01-02T03:04:05Z',
       nativeRelations: [],
     });
-    expect(res.issues[1]).toMatchObject({ body: '', labels: [], assignees: [], milestone: null });
+    expect(res.issues[1]).toMatchObject({
+      body: '',
+      labels: [],
+      assignees: [],
+      milestone: null,
+      updatedAt: null,
+    });
   });
 
   it('sends the GitHub headers and Bearer token', async () => {

@@ -92,6 +92,7 @@ const actions: Actions = {
   setTab: (tab: Tab) => navigate({ ...currentRoute(), tab }),
   setView: (viewId) => navigate({ ...currentRoute(), viewId }),
   setQuery: (q) => navigate({ ...currentRoute(), q }, true),
+  setSort: (sort) => navigate({ ...currentRoute(), sort }),
   refresh: () => void refresh(),
   reload: () => {
     const viewId = effectiveViewId(store.get());
@@ -164,7 +165,12 @@ window.addEventListener('hashchange', () => {
   const route = parseHash(location.hash);
   const current = store.get().route;
   // Skip the echo of our own navigate(); this only handles back/forward and manual edits.
-  if (current.viewId !== route.viewId || current.tab !== route.tab || current.q !== route.q) {
+  if (
+    current.viewId !== route.viewId ||
+    current.tab !== route.tab ||
+    current.q !== route.q ||
+    current.sort !== route.sort
+  ) {
     store.dispatch({ type: 'route', route });
   }
 });

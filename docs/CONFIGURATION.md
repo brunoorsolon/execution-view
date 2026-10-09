@@ -339,4 +339,4 @@ views:
       priorityLabels: [P0, P1, P2]
 ```
 
-This is [`config.demo.yaml`](../config.demo.yaml). The fixture format is `{ "issues": [ ... ] }` with `owner`, `repo`, `number`, `title`, `state`, and optional `body`, `labels`, `assignees`, `milestone` and `blockedBy` (native relations, as `owner/repo#N` keys). See [`test/fixtures/README.md`](../test/fixtures/README.md) for the demo dataset and its expected results.
+This is [`config.demo.yaml`](../config.demo.yaml). The fixture format is `{ "issues": [ ... ] }` with `owner`, `repo`, `number`, `title`, `state`, and optional `body`, `labels`, `assignees`, `milestone`, `updatedAt` (an ISO 8601 timestamp) and `blockedBy` (native relations, as `owner/repo#N` keys). See [`test/fixtures/README.md`](../test/fixtures/README.md) for the demo dataset and its expected results.

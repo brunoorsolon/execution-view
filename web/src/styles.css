@@ -702,7 +702,8 @@ a:hover {
   color: var(--cycle);
 }
 
-#filter-button.active {
+#filter-button.active,
+#sort-button.active {
   border-color: var(--fg);
 }
 #filter-button .fcount:not(:empty) {

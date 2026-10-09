@@ -8,6 +8,7 @@ import {
   type DisplayStatus,
 } from '../format.js';
 import type { Tab } from '../route.js';
+import type { SortMode } from '../sort.js';
 import { h } from '../dom.js';
 
 export { getIndex, isVisible, nodeTarget, visibleKeys } from '../state.js';
@@ -20,6 +21,8 @@ export interface Actions {
   setTab(tab: Tab): void;
   setView(viewId: string): void;
   setQuery(q: string): void;
+  /** Order the issues inside each wave; null keeps the server's order. */
+  setSort(sort: SortMode): void;
   refresh(): void;
   reload(): void;
 }

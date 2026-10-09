@@ -197,6 +197,7 @@ describe('listOpenIssues: listing', () => {
           labels: [{ name: 'zeta' }, { name: 'alpha' }, { name: 'zeta' }, { name: 'P1' }],
           assignees: [{ login: 'bob' }, { login: 'alice' }, { login: 'bob' }],
           milestone: { id: 3, title: 'v1' },
+          updated_at: '2026-01-02T03:04:05Z',
         }),
       ]),
     );
@@ -213,6 +214,7 @@ describe('listOpenIssues: listing', () => {
       labels: ['P1', 'alpha', 'zeta'],
       assignees: ['alice', 'bob'],
       milestone: 'v1',
+      updatedAt: '2026-01-02T03:04:05Z',
       nativeRelations: [],
     });
   });

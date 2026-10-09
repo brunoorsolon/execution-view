@@ -28,6 +28,7 @@ function node(spec: NodeSpec): PlanNode {
     labels: [],
     assignees: [],
     milestone: null,
+    updatedAt: null,
     external: spec.external ?? false,
     status: spec.status,
     wave: spec.wave,

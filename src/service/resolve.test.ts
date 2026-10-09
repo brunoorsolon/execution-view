@@ -50,6 +50,7 @@ function mk(key: string, opts: MakeOpts = {}): Issue {
     labels: opts.labels ?? [],
     assignees: [],
     milestone: opts.milestone ?? null,
+    updatedAt: null,
     nativeRelations,
   };
 }

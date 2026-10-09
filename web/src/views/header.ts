@@ -11,6 +11,8 @@ import {
 import { absoluteTime, relativeTime, shortHash } from '../format.js';
 import { priorityName } from '../priority.js';
 import type { Tab } from '../route.js';
+import type { SortMode } from '../sort.js';
+import { DEFAULT_SORT } from '../sort.js';
 import { effectiveViewId, problemCount, type AppState } from '../state.js';
 import { loadTheme, saveTheme, type ThemePref } from '../theme.js';
 import { createMenu } from './menu.js';
@@ -34,6 +36,14 @@ const THEMES: { pref: ThemePref; label: string }[] = [
   { pref: 'system', label: 'Match system' },
   { pref: 'light', label: 'Light' },
   { pref: 'dark', label: 'Dark' },
+];
+
+const SORTS: { mode: SortMode; label: string; hint: string }[] = [
+  { mode: 'number', label: 'Issue number', hint: 'Lowest first' },
+  { mode: 'updated', label: 'Last updated', hint: 'Newest first' },
+  { mode: 'prereq', label: 'Prerequisites', hint: 'Most first' },
+  { mode: 'dependents', label: 'Dependents', hint: 'Most first' },
+  { mode: 'execution', label: 'Execution order', hint: 'Priority and critical path' },
 ];
 
 type Facet = [field: Field, value: string, label: string];
@@ -277,6 +287,38 @@ export function createHeader(ctx: ViewCtx): View {
     tabs.append(btn);
   }
 
+  const sortBtn = h(
+    'button',
+    {
+      class: 'btn',
+      id: 'sort-button',
+      type: 'button',
+      title: 'Order the issues inside each wave',
+    },
+    icon('sort'),
+    h('span', { class: 'btn-label' }, 'Sort'),
+  );
+  const sortMenu = createMenu(sortBtn, () => {
+    const current = ctx.store.get().route.sort;
+    return [
+      h('div', { class: 'menu-label' }, 'Order inside each wave'),
+      ...SORTS.map(({ mode, label, hint }) =>
+        h(
+          'button',
+          {
+            class: 'menu-item',
+            type: 'button',
+            role: 'menuitemradio',
+            'aria-checked': String(current === mode),
+            onclick: () => ctx.actions.setSort(mode),
+          },
+          h('span', null, label),
+          h('span', { class: 'hint' }, hint),
+        ),
+      ),
+    ];
+  });
+
   const filterCount = h('span', { class: 'fcount' });
   const facetMenu = createMenu(
     h(
@@ -411,6 +453,7 @@ export function createHeader(ctx: ViewCtx): View {
     { class: 'tabbar', 'aria-label': 'Sections' },
     tabs,
     h('div', { class: 'spacer' }),
+    sortMenu.wrap,
     facetMenu.wrap,
     filter,
   );
@@ -481,6 +524,12 @@ export function createHeader(ctx: ViewCtx): View {
       if (visible !== null && snap !== null) {
         matchCount.textContent = `${visible.size} of ${snap.plan.nodes.length}`;
       }
+      const sort = state.route.sort;
+      sortBtn.classList.toggle('active', sort !== DEFAULT_SORT);
+      const sortLabel = SORTS.find((s) => s.mode === sort)?.label ?? '';
+      sortBtn.title =
+        sortLabel === '' ? 'Order the issues inside each wave' : `Ordered by ${sortLabel}`;
+
       const qc = qualifierCount(q);
       filterCount.textContent = qc > 0 ? String(qc) : '';
       facetMenu.wrap.firstElementChild?.classList.toggle('active', qc > 0);

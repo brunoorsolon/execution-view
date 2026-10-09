@@ -46,6 +46,7 @@ interface GtIssue {
   labels?: unknown;
   assignees?: unknown;
   milestone?: { title?: unknown } | null;
+  updated_at?: unknown;
   pull_request?: unknown;
   repository?: GtRepositoryMeta | null;
 }
@@ -96,6 +97,8 @@ function mapIssue(raw: GtIssue, repo: RepoRef): Issue {
   }
   const milestone =
     raw.milestone && typeof raw.milestone.title === 'string' ? raw.milestone.title : null;
+  const updatedAt =
+    typeof raw.updated_at === 'string' && raw.updated_at !== '' ? raw.updated_at : null;
   return {
     key: makeKey(repo, raw.number),
     repo,
@@ -107,6 +110,7 @@ function mapIssue(raw: GtIssue, repo: RepoRef): Issue {
     labels: sortedUnique(labels),
     assignees: sortedUnique(assignees),
     milestone,
+    updatedAt,
     nativeRelations: [],
   };
 }

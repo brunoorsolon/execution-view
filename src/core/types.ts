@@ -47,6 +47,8 @@ export interface Issue {
   /** Logins, sorted ascending, unique. */
   assignees: string[];
   milestone: string | null;
+  /** ISO 8601 timestamp of the last update, or null when the provider does not report one. */
+  updatedAt: string | null;
   /** Relations reported by the provider API (native dependencies, sub-issues). */
   nativeRelations: RawRelation[];
 }
@@ -86,6 +88,8 @@ export interface PlanNode {
   labels: string[];
   assignees: string[];
   milestone: string | null;
+  /** ISO 8601 timestamp of the last update, or null when the provider does not report one. */
+  updatedAt: string | null;
   /** True when the issue is outside the view's scope (another repo, or filtered out)
    *  but is pulled in because an in-scope issue (transitively) depends on it. */
   external: boolean;

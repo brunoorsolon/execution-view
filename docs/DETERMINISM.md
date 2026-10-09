@@ -97,7 +97,7 @@ Cycles are found with strongly connected components (Tarjan's algorithm, visitin
 
 `snapshot.contentHash` is the SHA-256 (hex) of the **canonical JSON** of `{ plan, layout }`. Canonical JSON has object keys sorted recursively (by code unit), no whitespace, and keeps array order.
 
-**Covered:** everything in `plan` and `layout`: the view id, each node's key, title, URL, labels, assignees, milestone, external flag, status, wave, order, priority and depth, the `parents` and `children` hierarchy, all edges and their sources, the order, waves, cycles, critical path, the stats and the **text of the warnings**, and all layout coordinates.
+**Covered:** everything in `plan` and `layout`: the view id, each node's key, title, URL, labels, assignees, milestone, last-update timestamp, external flag, status, wave, order, priority and depth, the `parents` and `children` hierarchy, all edges and their sources, the order, waves, cycles, critical path, the stats and the **text of the warnings**, and all layout coordinates.
 
 **Not covered:** `fetchedAt` (the only clock value), and the view's `title` (it is stored beside the plan, not in it).
 
@@ -106,7 +106,7 @@ Because titles, labels and assignees are part of the plan, the hash changes when
 ### Using the hash
 
 - **ETag.** The snapshot endpoint returns `ETag: "<contentHash>"` and answers `304 Not Modified` to a matching `If-None-Match`. A client can poll cheaply and only download when the plan changed (see [API.md](API.md)).
-- **Comparing runs.** The Markdown export shows the first 12 characters of the hash (`hash \`1097a5d86c60\``). Two runs with the same hash produced identical plans and layouts:
+- **Comparing runs.** The Markdown export shows the first 12 characters of the hash (`hash \`de98c03f0719\``). Two runs with the same hash produced identical plans and layouts:
 
 ```sh
 node dist/cli/index.js plan demo -f json | jq -r .contentHash
@@ -125,6 +125,7 @@ Note that the JSON and Markdown exports contain `fetchedAt`, so diff `.plan` (or
 | A `Parent: [...]` relation line is added or removed                                                            | `parents`/`children` and the hash change; edges, waves, order and critical path do not               |
 | A body reference is edited, or moved into or out of an ignored region                                          | Same as a relation                                                                                   |
 | An issue's title, labels, assignees, milestone or URL changes                                                  | The node fields and the hash change; the order changes only if a priority or scope label is involved |
+| The tracker reports a newer last-update time for an issue                                                      | `updatedAt` and the hash change; nothing else does                                                   |
 | A priority label is added or removed                                                                           | `priority` and, possibly, the order                                                                  |
 | `ordering.priorityLabels`, `ordering.mode`, `scope`, `repos`, `keywords`, `native`, `body`, `subIssues` change | Different nodes, edges or order                                                                      |
 | A referenced issue becomes inaccessible (token, permissions, deletion)                                         | A `dangling-reference` warning appears and the edge disappears                                       |
@@ -163,7 +164,7 @@ Real output of `plan mini -f md` for this data (fixture provider, so the URLs ar
 ```text
 # mini
 
-View `mini` · fetched 2026-09-29T08:55:15.554Z · hash `1097a5d86c60`
+View `mini` · fetched 2026-09-29T08:55:15.554Z · hash `de98c03f0719`
 
 5 issues · 2 ready · 3 blocked · 0 unschedulable · 0 external · 5 dependencies · 3 waves
 
@@ -192,7 +193,7 @@ Waves are numbered from 1. Issues in the same wave can be worked on in parallel 
 | 5 ★ | [#5](https://fixture.local/acme/app/issues/5) | Release |  | blocked | #2, #3, #4 |
 ```
 
-The "#" column is the position in the linear order (1-based in Markdown; `order` is 0-based in JSON). The full content hash of this plan is `1097a5d86c6003c4a601af62bb6cb0f5ae620a5193dbe1c52612914607154907`, and the layout is:
+The "#" column is the position in the linear order (1-based in Markdown; `order` is 0-based in JSON). The full content hash of this plan is `de98c03f071976a7c072a1e71ac7f16c16d5b3fa43b90f65061d0f725e45ef8d`, and the layout is:
 
 | Issue | Layer | Row | x   | y   |
 | ----- | ----- | --- | --- | --- |
