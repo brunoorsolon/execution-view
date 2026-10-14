@@ -543,6 +543,33 @@ a:hover {
   background: var(--accent);
 }
 
+/* An option whose hint is a sentence: the label takes the first row with the
+   radio dot, the hint spans the full width below it, so the labels stay in one
+   column and the dot stays beside its own option. */
+.menu-stacked {
+  min-width: 270px;
+}
+.menu-item-stacked {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 1px;
+}
+.menu-item-stacked > span:first-child {
+  grid-column: 1;
+  white-space: nowrap;
+}
+.menu-item-stacked .hint {
+  grid-column: 1 / -1;
+  line-height: 1.4;
+}
+.menu-item-stacked[aria-checked='true']::after {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
 /* ------------------------------------------------------------------ header */
 
 .app-header {
