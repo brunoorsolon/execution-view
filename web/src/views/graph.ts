@@ -179,7 +179,7 @@ export function createGraphView(ctx: ViewCtx): GraphView {
   const lineMenu = createMenu(
     h(
       'button',
-      { class: 'btn btn-ghost btn-xs', type: 'button', title: 'Lines drawn' },
+      { class: 'btn btn-ghost', type: 'button', title: 'Lines drawn' },
       icon('graph', 13),
       h('span', { class: 'btn-label' }, 'Lines'),
     ),
@@ -189,7 +189,7 @@ export function createGraphView(ctx: ViewCtx): GraphView {
         h(
           'button',
           {
-            class: 'menu-item',
+            class: 'menu-item menu-item-stacked',
             type: 'button',
             role: 'menuitemradio',
             'aria-checked': String(lineMode === mode),
@@ -206,7 +206,8 @@ export function createGraphView(ctx: ViewCtx): GraphView {
     ],
     // The control sits on the pane's bottom edge, so the menu opens upward into
     // view instead of overflowing the page and scrolling the graph away.
-    { className: 'up' },
+    // `menu-stacked` widens the panel so a full-sentence hint fits on one line.
+    { className: 'up menu-stacked' },
   );
   zoomCtl.append(h('span', { class: 'divider' }), lineMenu.wrap);
 
