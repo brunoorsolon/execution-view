@@ -29,6 +29,7 @@ export type ReleaseBlockerCode =
   | 'http-error'
   | 'network-error'
   | 'invalid-request'
+  | 'release-unavailable'
   | 'internal-error';
 
 /** Why a release capability check failed. Safe to log, return to a caller or persist. */

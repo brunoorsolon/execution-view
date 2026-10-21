@@ -10,6 +10,7 @@ import {
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ConfigError, parseConfig } from './load.js';
 import { loadReleaseRuntime } from './releaseRuntime.js';
@@ -296,6 +297,79 @@ describe('release runtime startup', () => {
     const response = await fetch(`http://127.0.0.1:${port}/healthz`);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: 'ok' });
+  });
+
+  /** A release repository whose forge is unreachable, plus a Planning view on a local fixture. */
+  function writeOutageConfig(f: Files): string {
+    const config = {
+      server: { host: '127.0.0.1', basicAuth: { username: 'admin', password: 'pw' } },
+      sources: [
+        {
+          id: 'demo',
+          kind: 'fixture',
+          path: fileURLToPath(new URL('../../test/fixtures/demo.json', import.meta.url)),
+        },
+        { id: 'gt', kind: 'gitea', baseUrl: 'http://127.0.0.1:1' },
+      ],
+      views: [{ id: 'v', source: 'demo', repos: ['acme/api'] }],
+      releases: {
+        enabled: true,
+        publicOrigin: 'https://forge-desk.example.com',
+        stateDir: f.stateDir,
+        repositories: [
+          {
+            id: 'app',
+            source: 'gt',
+            repo: 'example/app',
+            origin: 'ssh://git@gitea.example.com/example/app.git',
+            apiTokenFile: f.tokenFile,
+            expectedApiUser: 'release-bot',
+            ci: { workflowPath: '.gitea/workflows/validate.yaml' },
+            ssh: { privateKeyFile: f.key, knownHostsFile: f.knownHosts },
+            tagger: { name: 'Release Bot', email: 'releases@example.com' },
+          },
+        ],
+      },
+    };
+    const path = join(f.root, 'outage.json');
+    writeFileSync(path, JSON.stringify(config));
+    return path;
+  }
+
+  it('blocks release capability on a forge outage while Planning stays live', async () => {
+    const f = files();
+    const app = await startServer({
+      configPath: writeOutageConfig(f),
+      env: { EV_PORT: String(await freePort()) },
+    });
+    cleanups.push(() => app.close());
+    const authorization = `Basic ${Buffer.from('admin:pw').toString('base64')}`;
+
+    const capability = await app.inject({
+      url: '/api/releases/repositories',
+      headers: { authorization },
+    });
+    expect(capability.statusCode).toBe(200);
+    expect(capability.json()).toEqual([
+      {
+        id: 'app',
+        repo: 'example/app',
+        source: 'gt',
+        forge: 'http://127.0.0.1:1/',
+        capability: 'blocked',
+        blockers: [expect.objectContaining({ code: 'network-error' })],
+      },
+    ]);
+    expect(capability.body).not.toContain('release-token');
+
+    // The same process keeps serving Planning and liveness.
+    expect((await app.inject({ url: '/api/views', headers: { authorization } })).statusCode).toBe(
+      200,
+    );
+    expect(
+      (await app.inject({ url: '/api/views/v/snapshot', headers: { authorization } })).statusCode,
+    ).toBe(200);
+    expect((await app.inject('/healthz')).json()).toEqual({ status: 'ok' });
   });
 
   it('refuses a second application process owning the same release state directory', async () => {
