@@ -297,4 +297,27 @@ describe('release runtime startup', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: 'ok' });
   });
+
+  it('refuses a second application process owning the same release state directory', async () => {
+    const f = files();
+    const configPath = writeConfig(f);
+    const first = await startServer({
+      configPath,
+      env: { EV_PORT: String(await freePort()) },
+    });
+    cleanups.push(() => first.close());
+
+    await expect(
+      startServer({ configPath, env: { EV_PORT: String(await freePort()) } }),
+    ).rejects.toThrow(/owns release state directory/);
+
+    // Closing the first process releases ownership, so a restart can take over.
+    await first.close();
+    const restarted = await startServer({
+      configPath,
+      env: { EV_PORT: String(await freePort()) },
+    });
+    cleanups.push(() => restarted.close());
+    expect(restarted.server.listening).toBe(true);
+  });
 });
