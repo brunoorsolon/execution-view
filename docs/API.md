@@ -1,6 +1,6 @@
 # HTTP API
 
-The server (`execution-view serve`, or `npm start`) exposes a small JSON API next to the web UI (read-only, apart from the optional webhook receivers). All paths are at the root (there is no base-path option). The examples assume a local server on port 8080 started with the demo config:
+The Forge Desk server (`execution-view serve`, or `npm start`) exposes a small JSON API next to the web UI (read-only, apart from the optional webhook receivers). All paths are at the root (there is no base-path option). The examples assume a local server on port 8080 started with the demo config:
 
 ```sh
 EV_CONFIG=config.demo.yaml npm start

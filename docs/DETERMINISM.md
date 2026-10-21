@@ -1,6 +1,6 @@
 # Determinism
 
-execution-view is built so that **the same issue data and the same configuration always produce the same output, byte for byte**. This page states the guarantees, the exact rules that produce the order, the layout and the hash, and what can change the output.
+Forge Desk is built so that **the same issue data and the same configuration always produce the same output, byte for byte**. This page states the guarantees, the exact rules that produce the order, the layout and the hash, and what can change the output.
 
 Contents:
 

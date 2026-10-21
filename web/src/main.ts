@@ -158,7 +158,7 @@ store.subscribe((state) => {
 
 function titleFor(state: ReturnType<Store['get']>): string {
   const view = state.views?.find((v) => v.id === effectiveViewId(state));
-  return view ? `${view.title} · execution-view` : 'execution-view';
+  return view ? `${view.title} · Forge Desk` : 'Forge Desk';
 }
 
 window.addEventListener('hashchange', () => {

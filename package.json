@@ -8,6 +8,7 @@
     "node": ">=22"
   },
   "bin": {
+    "forge-desk": "dist/cli/index.js",
     "execution-view": "dist/cli/index.js"
   },
   "scripts": {

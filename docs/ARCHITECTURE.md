@@ -1,4 +1,6 @@
-# execution-view: architecture and contracts
+# Forge Desk: architecture and contracts
+
+> **Name.** The product is called **Forge Desk**. "execution-view" remains the package, image, repository and CLI alias name used throughout this document, and the image keeps its current registry path `ghcr.io/brunoorsolon/execution-view`.
 
 > **Status.** This document was the **implementation contract** for the first
 > version. The code follows it, with the deviations listed below; where they
@@ -756,7 +758,7 @@ Errors: unknown view → 404 `{ error }`; a provider error → 502 `{ error }`
 (no token in the message). Optional basic auth protects everything except
 `/healthz`.
 
-## 15. CLI (`src/cli/index.ts`, bin `execution-view`)
+## 15. CLI (`src/cli/index.ts`, bins `forge-desk` and `execution-view`)
 
 - `execution-view serve [--config p]` starts the server.
 - `execution-view views [--config p]` lists views.

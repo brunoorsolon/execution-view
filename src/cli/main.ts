@@ -22,6 +22,13 @@ export interface CliDeps {
   providerFor?: (source: ResolvedSource) => IssueProvider;
   now?: () => Date;
   startServer?: typeof startServer;
+  /** Name shown in help and usage. Default: the `execution-view` compatibility name. */
+  programName?: string;
+}
+
+/** The name this CLI was installed as: `forge-desk`, or its `execution-view` compatibility name. */
+export function programNameFor(invokedPath: string | undefined): string {
+  return path.basename(invokedPath ?? '') === 'forge-desk' ? 'forge-desk' : 'execution-view';
 }
 
 /** Exit codes. */
@@ -260,7 +267,7 @@ export async function main(argv: string[], io: CliIo, deps: CliDeps = {}): Promi
 
   const program = new Command();
   program
-    .name('execution-view')
+    .name(deps.programName ?? 'execution-view')
     .description('Deterministic dependency graph and execution order for open issues')
     .version(packageVersion())
     .option(
