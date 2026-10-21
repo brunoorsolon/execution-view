@@ -87,7 +87,7 @@ function payload(overrides: Partial<ReleasePlanPayload> = {}): ReleasePlanPayloa
       { kind: 'create-release', tag: 'v0.2.0' },
     ],
     warnings: [],
-    tag: { state: 'absent', name: 'v0.2.0', commit: null, objectId: null },
+    tag: { state: 'absent', name: 'v0.2.0', commit: null, objectId: null, tagger: null },
     release: {
       state: 'absent',
       tag: null,
@@ -96,6 +96,7 @@ function payload(overrides: Partial<ReleasePlanPayload> = {}): ReleasePlanPayloa
       draft: null,
       prerelease: null,
       author: null,
+      assets: null,
     },
     ...overrides,
   };

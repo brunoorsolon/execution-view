@@ -410,6 +410,11 @@ function checkPlanBody(body: Record<string, unknown>): void {
   stringAt(tag, 'name', `${at}.payload.tag`);
   nullableStringAt(tag, 'commit', `${at}.payload.tag`);
   nullableStringAt(tag, 'objectId', `${at}.payload.tag`);
+  if (tag.tagger !== null) {
+    const tagger = objectAt(tag.tagger, `${at}.payload.tag.tagger`);
+    stringAt(tagger, 'name', `${at}.payload.tag.tagger`);
+    stringAt(tagger, 'email', `${at}.payload.tag.tagger`);
+  }
   const release = objectAt(payload.release, `${at}.payload.release`);
   enumAt(REMOTE_STATES, release, 'state', `${at}.payload.release`);
   nullableStringAt(release, 'tag', `${at}.payload.release`);
@@ -418,6 +423,14 @@ function checkPlanBody(body: Record<string, unknown>): void {
   nullableBooleanAt(release, 'draft', `${at}.payload.release`);
   nullableBooleanAt(release, 'prerelease', `${at}.payload.release`);
   nullableStringAt(release, 'author', `${at}.payload.release`);
+  if (
+    release.assets !== null &&
+    (typeof release.assets !== 'number' ||
+      !Number.isSafeInteger(release.assets) ||
+      release.assets < 0)
+  ) {
+    throw malformed(`${at}.payload.release.assets: expected a non-negative integer or null`);
+  }
 }
 
 function checkJobBody(job: ReleaseJob): void {

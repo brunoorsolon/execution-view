@@ -30,6 +30,16 @@ export interface ReleaseCandidate {
   branch: string;
 }
 
+/** One tag as read from the verified remote origin. */
+export interface ReleaseRemoteTag {
+  /** Object id the remote tag ref points at: the tag object, or the commit of a lightweight tag. */
+  objectId: string;
+  /** Type Git reports for that object, so a lightweight tag is never mistaken for an annotated one. */
+  objectType: 'tag' | 'commit' | 'tree' | 'blob';
+  /** Raw annotated tag object bytes, or null when the ref points at a commit or other object. */
+  bytes: Buffer | null;
+}
+
 /** One committed tree entry. `mode` is Git's tree mode, so a caller can reject symlinks or files. */
 export interface ReleaseEntry {
   mode: string;
@@ -87,10 +97,18 @@ export interface ReleaseCheckout {
    * derived only for this commit, so a stale or caller-invented candidate is never substituted.
    */
   candidate(): ReleaseCandidate | null;
+  /**
+   * Reads one tag from the verified remote origin, or null when the remote authors an absence.
+   * Nothing is written to the remote, and no object outside this tag is fetched.
+   */
+  readRemoteTag(name: string): Promise<ReleaseGitResult<ReleaseRemoteTag | null>>;
 }
 
 /** The only ref this module writes: a private, container-owned view of the remote branch. */
 const CANDIDATE_REF = 'refs/forge-desk/candidate';
+
+/** A second private ref, so observing a remote tag never disturbs the sealed candidate. */
+const OBSERVED_TAG_REF = 'refs/forge-desk/observed-tag';
 
 /**
  * The cache's configuration is derived state, so it is rewritten before every read. A cache that
@@ -107,8 +125,10 @@ const CACHE_CONFIG = [
 ].join('\n');
 
 const SAFE_BRANCH = /^[A-Za-z0-9._/-]+$/;
+const SAFE_TAG = /^[A-Za-z0-9._+-]+$/;
 const SAFE_REPO_PATH = /^[A-Za-z0-9._/-]+$/;
 const COMMIT_ID = /^[0-9a-f]{40}$/;
+const OBJECT_ID = /^[0-9a-f]{40,64}$/;
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
 
 /** Neutralizes an echoed value before it can enter a diagnostic or a log line. */
@@ -155,6 +175,25 @@ function assertSafePath(path: string): string {
     );
   }
   return path;
+}
+
+/** A tag name becomes a refspec and a pattern, so it must be a plain tag name, not an option. */
+function assertSafeTag(name: string): string {
+  const unsafe =
+    name === '' ||
+    !SAFE_TAG.test(name) ||
+    name.startsWith('-') ||
+    name.includes('..') ||
+    name.includes('@{') ||
+    name.endsWith('.') ||
+    name.endsWith('.lock');
+  if (unsafe) {
+    throw new ReleaseGitError(
+      'git-unsafe-revision',
+      `the remote tag name "${bounded(name)}" is not a safe Git tag name`,
+    );
+  }
+  return name;
 }
 
 function assertSafeCommit(commit: string): string {
@@ -414,6 +453,89 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
           cache,
         );
         return { ok: true, value: { mode, type, bytes: blob.stdout } };
+      } catch (err) {
+        return { ok: false, blocker: releaseGitBlocker(err) };
+      }
+    },
+
+    async readRemoteTag(name: string): Promise<ReleaseGitResult<ReleaseRemoteTag | null>> {
+      try {
+        const tagName = assertSafeTag(name);
+        const origin = assertVerifiedOrigin(options.repository, options.identity);
+        await prepareCache();
+        // A successful listing of this exact ref is the authoritative remote answer: an empty
+        // result is absence, while a transport or access failure throws instead of reading as one.
+        const listed = await git(
+          ['ls-remote', '--tags', '--refs', origin, `refs/tags/${tagName}`],
+          'list the remote tag',
+          cache,
+        );
+        const lines = listed.stdout
+          .toString('utf8')
+          .split('\n')
+          .filter((line) => line !== '');
+        if (lines.length === 0) return { ok: true, value: null };
+        const match = /^([0-9a-f]{40,64})\t(.+)$/.exec(lines[0]!);
+        if (lines.length !== 1 || match === null || match[2] !== `refs/tags/${tagName}`) {
+          throw new ReleaseGitError(
+            'git-malformed-response',
+            `listing refs/tags/${tagName} on the verified origin did not answer with that one tag`,
+          );
+        }
+        const listedId = match[1]!;
+        await git(
+          [
+            'fetch',
+            '--quiet',
+            '--no-tags',
+            '--no-recurse-submodules',
+            '--no-write-fetch-head',
+            '--refmap=',
+            origin,
+            `+refs/tags/${tagName}:${OBSERVED_TAG_REF}`,
+          ],
+          'fetch the remote tag',
+          cache,
+        );
+        const resolved = await git(
+          ['rev-parse', '--verify', '--quiet', OBSERVED_TAG_REF],
+          'resolve the remote tag',
+          cache,
+        );
+        const objectId = firstLine(resolved.stdout);
+        if (!OBJECT_ID.test(objectId)) {
+          throw new ReleaseGitError(
+            'git-malformed-response',
+            'fetching the remote tag did not resolve a full object id',
+          );
+        }
+        if (objectId !== listedId) {
+          // The remote changed between the two reads, so neither answer can classify the tag.
+          throw new ReleaseGitError(
+            'git-malformed-response',
+            'the remote tag moved between listing and fetching it',
+          );
+        }
+        const typed = await git(['cat-file', '-t', objectId], 'read the remote tag type', cache);
+        const objectType = firstLine(typed.stdout);
+        if (
+          objectType !== 'tag' &&
+          objectType !== 'commit' &&
+          objectType !== 'tree' &&
+          objectType !== 'blob'
+        ) {
+          throw new ReleaseGitError(
+            'git-malformed-response',
+            'the remote tag resolved to an unsupported Git object type',
+          );
+        }
+        if (objectType !== 'tag') return { ok: true, value: { objectId, objectType, bytes: null } };
+        const object = await git(
+          ['cat-file', 'tag', objectId],
+          'read the remote tag object',
+          cache,
+        );
+        return { ok: true, value: { objectId, objectType, bytes: object.stdout } };
       } catch (err) {
         return { ok: false, blocker: releaseGitBlocker(err) };
       }

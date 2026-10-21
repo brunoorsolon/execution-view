@@ -58,7 +58,7 @@ function payload(overrides: Partial<ReleasePlanPayload> = {}): ReleasePlanPayloa
     warnings: [
       { code: 'recovered-attempt', message: 'Recovering the earlier interrupted attempt.' },
     ],
-    tag: { state: 'absent', name: 'v0.2.0', commit: null, objectId: null },
+    tag: { state: 'absent', name: 'v0.2.0', commit: null, objectId: null, tagger: null },
     release: {
       state: 'absent',
       tag: null,
@@ -67,6 +67,7 @@ function payload(overrides: Partial<ReleasePlanPayload> = {}): ReleasePlanPayloa
       draft: null,
       prerelease: null,
       author: null,
+      assets: null,
     },
     ...overrides,
   };
@@ -151,7 +152,13 @@ describe('releasePlanDigest', () => {
     expect(changed({ actions: [{ kind: 'create-release', tag: 'v0.2.0' }] })).not.toBe(base);
     expect(
       changed({
-        tag: { state: 'exact', name: 'v0.2.0', commit: 'a'.repeat(40), objectId: 'e'.repeat(40) },
+        tag: {
+          state: 'exact',
+          name: 'v0.2.0',
+          commit: 'a'.repeat(40),
+          objectId: 'e'.repeat(40),
+          tagger: { name: 'Forge Desk Release Bot', email: 'releases@example.test' },
+        },
       }),
     ).not.toBe(base);
     expect(changed({ release: { ...payload().release, state: 'conflict' } })).not.toBe(base);

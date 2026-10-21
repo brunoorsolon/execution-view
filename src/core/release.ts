@@ -92,6 +92,34 @@ export interface ReleaseTagObservation {
   commit: string | null;
   /** Annotated tag object id, when one exists or has been prepared. */
   objectId: string | null;
+  /**
+   * Tagger recorded by an observed annotated tag object. An existing compatible tag keeps its
+   * actual tagger, so a pre-existing tag is never attributed to the configured tagger.
+   */
+  tagger: ReleaseTagger | null;
+}
+
+/**
+ * The planned immutable tag content a remote tag must match to be `exact`.
+ *
+ * An existing compatible tag does not have to claim the configured tagger, so no tagger is
+ * expected here. `objectId` is the frozen prepared tag object, when the plan already has one.
+ */
+export interface ReleaseTagExpectation {
+  name: string;
+  /** Planned candidate commit the annotated tag must target. */
+  commit: string;
+  /** Exact annotation message the planned tag object records, without its trailing newline. */
+  message: string;
+  objectId: string | null;
+}
+
+/** The planned immutable release content a remote release must match to be `exact`. */
+export interface ReleaseObjectExpectation {
+  tag: string;
+  title: string;
+  /** sha256 hex of the exact notes bytes the release body must carry. */
+  notesDigest: string;
 }
 
 export interface ReleaseObservation {
@@ -104,6 +132,8 @@ export interface ReleaseObservation {
   prerelease: boolean | null;
   /** Observed release author login. Never attributed to the current job. */
   author: string | null;
+  /** Assets attached to the observed release, or null when the response did not prove the set. */
+  assets: number | null;
 }
 
 /** A remote mutation the approved plan permits. */

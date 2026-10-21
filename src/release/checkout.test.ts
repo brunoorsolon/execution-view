@@ -518,6 +518,7 @@ describe('release object reads', () => {
       'listPaths',
       'readCommitSubjects',
       'readEntry',
+      'readRemoteTag',
     ]);
     // Reads cannot precede a verified candidate fetch, and no candidate is exposed yet.
     expect(checkout.candidate()).toBeNull();
