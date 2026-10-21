@@ -8,7 +8,7 @@ Forge Desk is a small self-hosted app that reads the **open issues** of your Git
 
 The product is **Forge Desk**. It was previously called execution-view, and that name stays wherever tools and scripts depend on it: the npm package, the `execution-view` CLI alias, the Docker image, the repository, the HTTP `User-Agent`, the DOT export graph id, the `localStorage` keys and the server log lines.
 
-The CLI installs as both `forge-desk` and `execution-view`, and both run the same commands with the same output and exit codes. The image keeps its current registry path, `ghcr.io/brunoorsolon/execution-view`; a new registry identity is a separate decision. Config syntax, `EV_*` variables, API paths, shared planning URLs, exports and planning login are unchanged, so upgrading needs no rename, environment-variable change or registry migration.
+The CLI installs as both `forge-desk` and `execution-view`, and both run the same commands with the same output and exit codes; only the help and usage text follows the name you invoked. The image keeps its current registry path, `ghcr.io/brunoorsolon/execution-view`; a new registry identity is a separate decision. Config syntax, `EV_*` variables, API paths, shared planning URLs, exports and planning login are unchanged, so upgrading needs no rename, environment-variable change or registry migration.
 
 ## Features
 
