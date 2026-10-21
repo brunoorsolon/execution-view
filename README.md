@@ -1,8 +1,14 @@
-# execution-view
+# Forge Desk
 
-execution-view is a small self-hosted app that reads the **open issues** of your GitHub, GitHub Enterprise Server or Gitea repositories, builds a **dependency graph** from the relations you already declare (native issue dependencies and simple `Depends on #12` lines in issue bodies), and turns it into an **execution order**: what can start now, what can run in parallel, and what blocks everything else. The output is fully deterministic: the same issues always give the same order, the same layout and the same content hash. It has a web UI, a REST API, exports (JSON, Markdown, Mermaid, DOT) and a CLI that checks your setup.
+Forge Desk is a small self-hosted app that reads the **open issues** of your GitHub, GitHub Enterprise Server or Gitea repositories, builds a **dependency graph** from the relations you already declare (native issue dependencies and simple `Depends on #12` lines in issue bodies), and turns it into an **execution order**: what can start now, what can run in parallel, and what blocks everything else. The output is fully deterministic: the same issues always give the same order, the same layout and the same content hash. It has a web UI, a REST API, exports (JSON, Markdown, Mermaid, DOT) and a CLI that checks your setup. Planning is the existing execution-view capability: the same planner, relation format, configuration, URLs and exports.
 
 ![Dependency graph of the demo roadmap](docs/screenshots/graph.png)
+
+## The name
+
+The product is **Forge Desk**. It was previously called execution-view, and that name stays wherever tools and scripts depend on it: the npm package, the `execution-view` CLI alias, the Docker image, the repository, the HTTP `User-Agent`, the DOT export graph id, the `localStorage` keys and the server log lines.
+
+The CLI installs as both `forge-desk` and `execution-view`, and both run the same commands with the same output and exit codes; only the help and usage text follows the name you invoked. The image keeps its current registry path, `ghcr.io/brunoorsolon/execution-view`; a new registry identity is a separate decision. Config syntax, `EV_*` variables, API paths, shared planning URLs, exports and planning login are unchanged, so upgrading needs no rename, environment-variable change or registry migration.
 
 ## Features
 
@@ -236,7 +242,7 @@ Agents that write your issues can be given the same rules: copy the [`skills/exe
 
 ## CLI
 
-The CLI reads the same config as the server (`--config <path>`, then `EV_CONFIG`, then `./config.yaml`, then env-only mode). After `npm run build` it is `node dist/cli/index.js` (also installed as the `execution-view` bin; the Docker image uses it as its entrypoint).
+The CLI reads the same config as the server (`--config <path>`, then `EV_CONFIG`, then `./config.yaml`, then env-only mode). After `npm run build` it is `node dist/cli/index.js` (also installed as the `forge-desk` and `execution-view` bins; the Docker image uses it as its entrypoint).
 
 | Command                                                      | What it does                                                                                       |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |

@@ -1,6 +1,6 @@
 # Prerequisites
 
-execution-view does not guess. It shows the order implied by the dependencies **you declared** in your issue tracker. If nothing is declared, you get a flat list with no edges. This page explains every prerequisite, exactly, so that you can prepare your repositories and your token before you run the app.
+Forge Desk does not guess. It shows the order implied by the dependencies **you declared** in your issue tracker. If nothing is declared, you get a flat list with no edges. This page explains every prerequisite, exactly, so that you can prepare your repositories and your token before you run the app.
 
 Contents:
 

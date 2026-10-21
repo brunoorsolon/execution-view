@@ -1,6 +1,6 @@
 # Deployment
 
-execution-view is a single stateless Node.js process: no database, no disk state. It listens on one port and serves the web UI and the API. Pick one of the setups below.
+Forge Desk is a single stateless Node.js process: no database, no disk state. It listens on one port and serves the web UI and the API. Pick one of the setups below. The image keeps its current registry path, `ghcr.io/brunoorsolon/execution-view` (see [the name](../README.md#the-name)).
 
 Contents:
 

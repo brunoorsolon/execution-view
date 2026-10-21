@@ -1,4 +1,4 @@
-# execution-view example configuration.
+# Forge Desk example configuration.
 #
 # Copy this file to config.yaml (the default location), or point to another
 # file with `--config <path>` or the EV_CONFIG environment variable. Without a

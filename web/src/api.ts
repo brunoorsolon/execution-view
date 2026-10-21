@@ -28,7 +28,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(path, { ...init, headers: { accept: 'application/json' } });
   } catch {
-    throw new ApiError('Network error: could not reach the execution-view server.', 0);
+    throw new ApiError('Network error: could not reach the Forge Desk server.', 0);
   }
   if (res.status === 401) {
     // The session ended (logout or a server restart): log in again, keeping the shared link.

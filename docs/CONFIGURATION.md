@@ -1,6 +1,6 @@
 # Configuration
 
-execution-view is configured with a YAML file, with environment variables only ("env-only mode"), or with a file plus environment overrides. The annotated reference file is [`config.example.yaml`](../config.example.yaml); this page documents every option.
+Forge Desk is configured with a YAML file, with environment variables only ("env-only mode"), or with a file plus environment overrides. The annotated reference file is [`config.example.yaml`](../config.example.yaml); this page documents every option.
 
 Contents:
 

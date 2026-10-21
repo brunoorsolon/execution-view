@@ -406,6 +406,8 @@ describe('login page', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/html');
     expect(res.body).toContain('<form method="post" action="login">');
+    expect(res.body).toContain('<title>Log in · Forge Desk</title>');
+    expect(res.body).toContain('<h1>Forge Desk</h1>');
     expect(res.body).toContain('name="username" autocomplete="username"');
     expect(res.body).toMatch(/name="password"\s+type="password"\s+autocomplete="current-password"/);
   });
@@ -688,6 +690,8 @@ describe('static UI', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/html');
     expect(res.body).toContain('not built');
+    expect(res.body).toContain('<title>Forge Desk</title>');
+    expect(res.body).toContain('<h1>Forge Desk</h1>');
     expect(res.body).toContain('href="/api/views"');
     const other = await app.inject({ url: '/deep', headers: { accept: 'text/html' } });
     expect(other.statusCode).toBe(404);

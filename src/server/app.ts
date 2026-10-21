@@ -35,10 +35,10 @@ const UI_NOT_BUILT_HTML = `<!doctype html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>execution-view</title>
+    <title>Forge Desk</title>
   </head>
   <body>
-    <h1>execution-view</h1>
+    <h1>Forge Desk</h1>
     <p>The web UI is not built. Run <code>npm run build</code> to create it.</p>
     <p>The API is available: <a href="/api/views">/api/views</a></p>
   </body>
@@ -57,7 +57,7 @@ function loginPage(failed: boolean): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>Log in · execution-view</title>
+    <title>Log in · Forge Desk</title>
     <script>
       try {
         var theme = localStorage.getItem('execution-view:theme');
@@ -156,7 +156,7 @@ function loginPage(failed: boolean): string {
   </head>
   <body>
     <form method="post" action="login">
-      <h1>execution-view</h1>
+      <h1>Forge Desk</h1>
       ${failed ? '<p class="error" role="alert">Wrong user name or password.</p>' : ''}
       <label for="username">User name</label>
       <input id="username" name="username" autocomplete="username" required autofocus />

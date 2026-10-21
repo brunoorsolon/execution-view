@@ -1,15 +1,19 @@
 #!/usr/bin/env node
-import { main } from './main.js';
+import { main, programNameFor } from './main.js';
 
 // Setting exitCode (instead of calling process.exit) lets `serve` keep running:
 // the listening server holds the event loop open.
-main(process.argv.slice(2), {
-  stdout: (s) => void process.stdout.write(s),
-  stderr: (s) => void process.stderr.write(s),
-  env: process.env,
-  cwd: process.cwd(),
-  isTTY: process.stdout.isTTY === true,
-}).then(
+main(
+  process.argv.slice(2),
+  {
+    stdout: (s) => void process.stdout.write(s),
+    stderr: (s) => void process.stderr.write(s),
+    env: process.env,
+    cwd: process.cwd(),
+    isTTY: process.stdout.isTTY === true,
+  },
+  { programName: programNameFor(process.argv[1]) },
+).then(
   (code) => {
     process.exitCode = code;
   },

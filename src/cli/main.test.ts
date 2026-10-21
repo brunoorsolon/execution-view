@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../config/load.js';
 import { exporters, type ExportFormat } from '../export/index.js';
 import { PlanService } from '../service/planService.js';
-import { main, type CliDeps, type CliIo } from './main.js';
+import { main, programNameFor, type CliDeps, type CliIo } from './main.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const FIXED_NOW = new Date('2026-01-02T03:04:05.000Z');
@@ -411,6 +411,35 @@ describe('help and version', () => {
     const r = await run(['frobnicate']);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('frobnicate');
+  });
+});
+
+describe('executable names', () => {
+  it('installs forge-desk as the same CLI as the execution-view alias', async () => {
+    const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as {
+      bin: Record<string, string>;
+    };
+    expect(pkg.bin).toEqual({
+      'forge-desk': 'dist/cli/index.js',
+      'execution-view': 'dist/cli/index.js',
+    });
+    expect(programNameFor('/usr/local/bin/forge-desk')).toBe('forge-desk');
+    expect(programNameFor('/usr/local/bin/execution-view')).toBe('execution-view');
+    expect(programNameFor('dist/cli/index.js')).toBe('execution-view');
+
+    // The renamed executable runs the same commands with the same output and exit code.
+    const legacy = await run(['views', '--config', 'config.demo.yaml']);
+    const renamed = await run(['views', '--config', 'config.demo.yaml'], {
+      programName: programNameFor('/usr/local/bin/forge-desk'),
+    });
+    expect(legacy.code).toBe(0);
+    expect(renamed).toEqual(legacy);
+
+    // Help and usage follow the invoked name; the alias name stays unchanged.
+    expect((await run(['--help'])).stdout).toContain('Usage: execution-view');
+    expect((await run(['--help'], { programName: 'forge-desk' })).stdout).toContain(
+      'Usage: forge-desk',
+    );
   });
 });
 

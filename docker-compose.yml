@@ -1,4 +1,4 @@
-# execution-view with the published image. Step-by-step setup: README.md,
+# Forge Desk with the published image (the service name stays execution-view). Step-by-step setup: README.md,
 # "Run it on your repo with docker compose".
 #
 # Settings live in `environment:` below. Secrets (tokens, passwords) go in a

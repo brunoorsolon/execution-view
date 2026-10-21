@@ -238,7 +238,7 @@ export function createHeader(ctx: ViewCtx): View {
               h('button', { class: 'menu-item', type: 'submit', role: 'menuitem' }, 'Log out'),
             ),
           ]),
-      ...(version === null ? [] : [h('div', { class: 'menu-label' }, `execution-view ${version}`)]),
+      ...(version === null ? [] : [h('div', { class: 'menu-label' }, `Forge Desk ${version}`)]),
     ],
   );
 
@@ -249,7 +249,7 @@ export function createHeader(ctx: ViewCtx): View {
       'div',
       { class: 'brand' },
       h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, icon('graph', 15)),
-      h('span', { class: 'brand-name' }, 'execution-view'),
+      h('span', { class: 'brand-name' }, 'Forge Desk'),
     ),
     h('span', { class: 'crumb-sep', 'aria-hidden': 'true' }, '/'),
     h('div', { class: 'view-switch' }, select, icon('chevron', 13), repos),
