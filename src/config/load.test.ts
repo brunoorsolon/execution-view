@@ -683,3 +683,270 @@ describe('config.example.yaml', () => {
     expect(cfg.sources[2]!.path).toBe('/repo/test/fixtures/demo.json');
   });
 });
+
+describe('release configuration', () => {
+  type Json = Record<string, any>;
+
+  function rawConfig(): Json {
+    return {
+      server: { basicAuth: { username: 'admin', password: 'pw' } },
+      sources: [
+        {
+          id: 'gt',
+          kind: 'gitea',
+          baseUrl: 'https://gitea.example.com',
+          tokenEnv: 'GITEA_READ_TOKEN',
+        },
+      ],
+      views: [{ id: 'v', source: 'gt', repos: ['example/app'] }],
+      releases: {
+        enabled: true,
+        publicOrigin: 'https://forge-desk.example.com/',
+        stateDir: '/var/lib/forge-desk',
+        repositories: [
+          {
+            id: 'app',
+            source: 'gt',
+            repo: 'Example/App',
+            origin: 'ssh://git@gitea.example.com/example/app.git',
+            apiTokenFile: '/run/secrets/forge_desk_release_token',
+            expectedApiUser: 'release-bot',
+            ci: { workflowPath: '.gitea/workflows/validate.yaml' },
+            ssh: {
+              privateKeyFile: '/run/secrets/forge_desk_release_key',
+              knownHostsFile: '/run/secrets/forge_desk_known_hosts',
+            },
+            tagger: { name: 'Forge Desk Release Bot', email: 'releases@example.com' },
+          },
+        ],
+      },
+    };
+  }
+
+  function withReleases(mutate?: (releases: Json, config: Json) => void): Json {
+    const config = rawConfig();
+    mutate?.(config['releases'], config);
+    return config;
+  }
+
+  function releaseError(mutate?: (releases: Json, config: Json) => void): ConfigError {
+    return errorOf(() => parseConfig(JSON.stringify(withReleases(mutate)), {}));
+  }
+
+  it('is disabled by default and keeps planning-only configs unchanged', () => {
+    expect(parseConfig(MIN, {}).releases).toEqual({ enabled: false });
+    const withoutLogin = withReleases((r) => {
+      r['enabled'] = false;
+    });
+    delete withoutLogin['server'];
+    expect(parseConfig(JSON.stringify(withoutLogin), {}).releases).toEqual({ enabled: false });
+    expect(
+      parseConfig(
+        JSON.stringify({ sources: withoutLogin['sources'], views: withoutLogin['views'] }),
+        {},
+      ).releases,
+    ).toEqual({ enabled: false });
+    // A stale, partial release block left behind after disabling must not stop Planning.
+    const partial = withReleases((r) => {
+      r['enabled'] = false;
+      r['repositories'] = [{ id: 'app' }];
+    });
+    delete partial['server'];
+    expect(parseConfig(JSON.stringify(partial), {}).releases).toEqual({ enabled: false });
+  });
+
+  it('leaves environment-only deployments without release configuration', () => {
+    const cfg = configFromEnv({
+      EV_PROVIDER: 'gitea',
+      EV_REPOS: 'example/app',
+      EV_BASE_URL: 'https://gitea.example.com',
+    });
+    expect(cfg.releases).toEqual({ enabled: false });
+  });
+
+  it('resolves a valid opt-in release repository', () => {
+    const cfg = parseConfig(JSON.stringify(withReleases()), {});
+    expect(cfg.releases).toEqual({
+      enabled: true,
+      publicOrigin: 'https://forge-desk.example.com',
+      stateDir: '/var/lib/forge-desk',
+      repositories: [
+        {
+          id: 'app',
+          source: 'gt',
+          repo: { owner: 'example', repo: 'app' },
+          origin: 'ssh://git@gitea.example.com/example/app.git',
+          token: { kind: 'file', path: '/run/secrets/forge_desk_release_token' },
+          expectedApiUser: 'release-bot',
+          ci: { workflowPath: '.gitea/workflows/validate.yaml' },
+          ssh: {
+            privateKeyFile: '/run/secrets/forge_desk_release_key',
+            knownHostsFile: '/run/secrets/forge_desk_known_hosts',
+          },
+          tagger: { name: 'Forge Desk Release Bot', email: 'releases@example.com' },
+        },
+      ],
+    });
+  });
+
+  it('accepts either token selector and loopback HTTP only for a test origin', () => {
+    const envToken = withReleases((r) => {
+      const repo = r['repositories'][0];
+      delete repo.apiTokenFile;
+      repo.apiTokenEnv = 'RELEASE_TOKEN';
+      r['publicOrigin'] = 'http://127.0.0.1:8080';
+    });
+    const cfg = parseConfig(JSON.stringify(envToken), {});
+    expect(cfg.releases).toMatchObject({
+      enabled: true,
+      publicOrigin: 'http://127.0.0.1:8080',
+      repositories: [{ token: { kind: 'env', name: 'RELEASE_TOKEN' } }],
+    });
+    expect(
+      parseConfig(
+        JSON.stringify(withReleases((r) => (r['publicOrigin'] = 'http://localhost:3000'))),
+        {},
+      ).releases,
+    ).toMatchObject({ publicOrigin: 'http://localhost:3000' });
+    // The stored origin is what a browser serializes, not the raw spelling.
+    expect(
+      parseConfig(
+        JSON.stringify(withReleases((r) => (r['publicOrigin'] = 'HTTPS://DESK.EXAMPLE:443'))),
+        {},
+      ).releases,
+    ).toMatchObject({ publicOrigin: 'https://desk.example' });
+  });
+
+  it('requires the application login', () => {
+    expect(releaseError((_r, c) => delete c['server']).message).toContain('application login');
+  });
+
+  it('rejects an unsafe public origin', () => {
+    expect(
+      releaseError((r) => (r['publicOrigin'] = 'http://forge-desk.example.com')).message,
+    ).toContain('loopback');
+    expect(
+      releaseError((r) => (r['publicOrigin'] = 'https://forge-desk.example.com/app')).message,
+    ).toContain('without a path');
+    expect(releaseError((r) => (r['publicOrigin'] = 'ftp://example.com')).message).toContain(
+      'http://',
+    );
+    // A dotted prefix is a public name, not loopback.
+    expect(releaseError((r) => (r['publicOrigin'] = 'http://127.evil.com')).message).toContain(
+      'loopback',
+    );
+  });
+
+  it('does not echo release values that may hold a credential', () => {
+    const secret = 'super-secret-value';
+    expect(
+      releaseError(
+        (r) =>
+          (r['repositories'][0].origin = `ssh://git:${secret}@gitea.example.com/example/app.git`),
+      ).message,
+    ).not.toContain(secret);
+    expect(releaseError((r) => (r['repositories'][0].apiTokenFile = secret)).message).not.toContain(
+      secret,
+    );
+    expect(
+      releaseError((r) => (r['publicOrigin'] = `https://user:${secret}@example.com`)).message,
+    ).not.toContain(secret);
+  });
+
+  it('requires private absolute paths for state and secrets', () => {
+    expect(releaseError((r) => delete r['stateDir']).message).toContain('stateDir');
+    expect(releaseError((r) => (r['stateDir'] = 'relative/state')).message).toContain(
+      'absolute path',
+    );
+    expect(releaseError((r) => (r['stateDir'] = '/var/lib/../lib/forge-desk')).message).toContain(
+      'normalized',
+    );
+    expect(
+      releaseError((r) => (r['repositories'][0].ssh.privateKeyFile = 'keys/release')).message,
+    ).toContain('absolute path');
+    expect(
+      releaseError((r) => (r['repositories'][0].ssh.knownHostsFile = '/run/secrets/../x')).message,
+    ).toContain('normalized');
+  });
+
+  it('requires unique repository ids bound to existing Gitea sources', () => {
+    expect(releaseError((r) => (r['repositories'][0].id = 'Bad Id')).message).toContain('id');
+    expect(
+      releaseError((r) => r['repositories'].push({ ...r['repositories'][0] })).message,
+    ).toContain('duplicate release repository id');
+    expect(releaseError((r) => (r['repositories'][0].source = 'gh')).message).toContain(
+      'unknown source',
+    );
+    expect(
+      releaseError((_r, c) => {
+        c['sources'][0].kind = 'github';
+      }).message,
+    ).toContain('gitea source');
+  });
+
+  it('requires at least one repository when enabled', () => {
+    expect(releaseError((r) => (r['repositories'] = [])).message).toContain(
+      'at least one release repository',
+    );
+  });
+
+  it('accepts only a safe SSH origin for the configured repository', () => {
+    expect(
+      releaseError((r) => (r['repositories'][0].origin = 'git@gitea.example.com:example/app.git'))
+        .message,
+    ).toContain('ssh://');
+    expect(
+      releaseError(
+        (r) => (r['repositories'][0].origin = 'ssh://git:pw@gitea.example.com/example/app.git'),
+      ).message,
+    ).toContain('password');
+    expect(
+      releaseError(
+        (r) => (r['repositories'][0].origin = 'ssh://git@gitea.example.com/other/app.git'),
+      ).message,
+    ).toContain('must be /example/app');
+    expect(
+      releaseError((r) => (r['repositories'][0].origin = 'ssh://git@gitea.example.com/a/b/c.git'))
+        .message,
+    ).toContain('/owner/repo');
+  });
+
+  it('requires exactly one private token selector', () => {
+    expect(
+      releaseError((r) => (r['repositories'][0].apiTokenEnv = 'RELEASE_TOKEN')).message,
+    ).toContain('exactly one of apiTokenFile or apiTokenEnv');
+    expect(releaseError((r) => delete r['repositories'][0].apiTokenFile).message).toContain(
+      'exactly one of apiTokenFile or apiTokenEnv',
+    );
+    expect(releaseError((r) => (r['repositories'][0].token = 'inline-secret')).message).toContain(
+      'token',
+    );
+  });
+
+  it('requires a designated repository workflow path', () => {
+    expect(
+      releaseError((r) => (r['repositories'][0].ci.workflowPath = '/etc/validate.yaml')).message,
+    ).toContain('relative path');
+    expect(
+      releaseError((r) => (r['repositories'][0].ci.workflowPath = '../validate.yaml')).message,
+    ).toContain('..');
+    expect(
+      releaseError((r) => (r['repositories'][0].ci.workflowPath = 'workflows/validate.sh')).message,
+    ).toContain('.yml');
+  });
+
+  it('requires an explicit expected API user and a valid tagger', () => {
+    expect(releaseError((r) => delete r['repositories'][0].expectedApiUser).message).toContain(
+      'expectedApiUser',
+    );
+    expect(
+      releaseError((r) => (r['repositories'][0].tagger.email = 'not-an-email')).message,
+    ).toContain('email');
+    expect(
+      releaseError((r) => (r['repositories'][0].tagger.name = 'Bot\nInjected')).message,
+    ).toContain('control characters');
+    expect(
+      releaseError((r) => (r['repositories'][0].tagger.email = 'bot\u0000@example.com')).message,
+    ).toContain('control characters');
+  });
+});

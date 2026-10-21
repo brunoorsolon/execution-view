@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { ConfigError, loadConfig } from '../config/load.js';
+import { loadReleaseRuntime } from '../config/releaseRuntime.js';
 import { PlanService } from '../service/planService.js';
 import { buildApp } from './app.js';
 
@@ -18,12 +19,20 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Fastif
     env,
   });
   for (const warning of config.warnings ?? []) console.warn(`warning: ${warning}`);
+  // Fail closed on unsafe local release prerequisites before serving; no forge call happens here,
+  // so a temporary forge outage cannot keep Planning down.
+  const releaseRuntime = loadReleaseRuntime(config.releases, config.sources, env);
 
   const service = new PlanService(config);
   const app = buildApp(config, service, {
     logger: true,
     ...(opts.webDir !== undefined ? { webDir: opts.webDir } : {}),
   });
+  if (releaseRuntime !== null) {
+    app.log.info(
+      `releases enabled: ${releaseRuntime.repositories.length} repository(ies), state dir ${releaseRuntime.stateDir}`,
+    );
+  }
 
   const { host, port } = config.server;
   await app.listen({ host, port });

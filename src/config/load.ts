@@ -6,17 +6,29 @@ import type { OrderingMode, ProviderKind } from '../core/types.js';
 import {
   DEFAULT_KEYWORDS,
   MAX_REFRESH_MINUTES,
+  enabledReleasesSchema,
   rawConfigSchema,
   type AppConfig,
   type RawConfig,
   type RawSource,
   type RawView,
+  type ReleaseTokenSelector,
+  type ResolvedReleaseRepository,
+  type ResolvedReleases,
   type ResolvedSource,
   type ResolvedView,
 } from './schema.js';
 
 export { DEFAULT_KEYWORDS } from './schema.js';
-export type { AppConfig, KeywordConfig, ResolvedSource, ResolvedView } from './schema.js';
+export type {
+  AppConfig,
+  KeywordConfig,
+  ReleaseTokenSelector,
+  ResolvedReleaseRepository,
+  ResolvedReleases,
+  ResolvedSource,
+  ResolvedView,
+} from './schema.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -240,6 +252,89 @@ function resolveWebhooks(
   return null;
 }
 
+/**
+ * Resolve the opt-in `releases` block. Everything is optional while releases are disabled, so an
+ * existing planning-only file keeps working; an enabled block must be complete and safe.
+ */
+function resolveReleases(
+  raw: RawConfig['releases'],
+  kindById: Map<string, ProviderKind>,
+  hasLogin: boolean,
+): ResolvedReleases {
+  if (raw === undefined) return { enabled: false };
+  const parsed = enabledReleasesSchema.safeParse(raw);
+  if (!parsed.success) {
+    // A disabled or partial block must not keep an existing planning deployment from starting.
+    if (raw.enabled !== true) return { enabled: false };
+    const issues = parsed.error.issues.map((issue) => ({
+      ...issue,
+      path: ['releases', ...issue.path],
+    }));
+    throw new ConfigError(formatIssues(issues));
+  }
+  const enabled = parsed.data;
+
+  const errors: string[] = [];
+  if (!hasLogin) {
+    errors.push(
+      'releases.enabled: the application login (server.basicAuth or EV_BASIC_AUTH) is required when releases are enabled',
+    );
+  }
+
+  const ids = new Set<string>();
+  const repositories = enabled.repositories.map((r, i): ResolvedReleaseRepository => {
+    const at = `releases.repositories[${i}]`;
+    if (ids.has(r.id)) errors.push(`${at}.id: duplicate release repository id "${r.id}"`);
+    ids.add(r.id);
+    const kind = kindById.get(r.source);
+    if (kind === undefined) {
+      errors.push(`${at}.source: unknown source "${r.source}"`);
+    } else if (kind !== 'gitea') {
+      errors.push(
+        `${at}.source: release repositories require a gitea source ("${r.source}" is ${kind})`,
+      );
+    }
+    const slash = r.repo.indexOf('/');
+    const repo = {
+      owner: r.repo.slice(0, slash).toLowerCase(),
+      repo: r.repo.slice(slash + 1).toLowerCase(),
+    };
+    const originPath = new URL(r.origin).pathname.replace(/\.git$/i, '').toLowerCase();
+    if (originPath !== `/${repo.owner}/${repo.repo}`) {
+      errors.push(
+        `${at}.origin: path must be /${repo.owner}/${repo.repo}(.git) to match repo "${r.repo}"`,
+      );
+    }
+    const token: ReleaseTokenSelector =
+      r.apiTokenFile !== undefined
+        ? { kind: 'file', path: r.apiTokenFile }
+        : { kind: 'env', name: r.apiTokenEnv as string };
+    return {
+      id: r.id,
+      source: r.source,
+      repo,
+      origin: r.origin,
+      token,
+      expectedApiUser: r.expectedApiUser,
+      ci: { workflowPath: r.ci.workflowPath },
+      ssh: { privateKeyFile: r.ssh.privateKeyFile, knownHostsFile: r.ssh.knownHostsFile },
+      tagger: { name: r.tagger.name, email: r.tagger.email },
+    };
+  });
+
+  if (errors.length > 0) {
+    throw new ConfigError(`Invalid configuration:\n  - ${errors.join('\n  - ')}`);
+  }
+  return {
+    enabled: true,
+    // Store the browser's serialized origin, so later request-origin comparisons cannot differ in
+    // case, default port or dot segments.
+    publicOrigin: new URL(enabled.publicOrigin).origin,
+    stateDir: enabled.stateDir,
+    repositories,
+  };
+}
+
 /** Validate an already-parsed raw config object and resolve it into an AppConfig. */
 function resolveConfig(input: unknown, env: Env, baseDir: string): AppConfig {
   const parsed = rawConfigSchema.safeParse(input);
@@ -294,13 +389,17 @@ function resolveConfig(input: unknown, env: Env, baseDir: string): AppConfig {
       ? parseIntEnv('EV_REFRESH_MINUTES', refreshEnv, 0, MAX_REFRESH_MINUTES)
       : (raw.ui?.refreshMinutes ?? DEFAULT_REFRESH_MINUTES);
 
+  const basicAuth = resolveBasicAuth(raw.server?.basicAuth, env);
+  const releases = resolveReleases(raw.releases, kindById, basicAuth !== null);
+
   return {
-    server: { host, port, basicAuth: resolveBasicAuth(raw.server?.basicAuth, env) },
+    server: { host, port, basicAuth },
     cache: { ttlSeconds },
     ui: { refreshMinutes },
     webhooks: resolveWebhooks(raw.webhooks, env, warnings),
     sources,
     views,
+    releases,
     warnings,
   };
 }
