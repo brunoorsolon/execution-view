@@ -18,12 +18,15 @@ import {
   type ReleaseBlocker,
   type ReleaseForgeFetch,
 } from './forgeClient.js';
+import { parseSshEndpoint, sameSshEndpoint, type SshEndpoint } from './sshEndpoint.js';
 
 export interface VerifiedReleaseIdentity {
   /** Exact forge version that proved the supported publication target. */
   serverVersion: string;
   account: ReleaseAccountIdentity;
   repository: ReleaseRepositoryIdentity;
+  /** SSH endpoint proven to be the one the authenticated repository reports. */
+  ssh: SshEndpoint;
 }
 
 export type ReleaseIdentityCheck =
@@ -74,63 +77,22 @@ function exactField(value: unknown, field: string, maxLength: number): string {
   return value;
 }
 
-interface SshEndpoint {
-  host: string;
-  /** Effective port, "22" when the form does not name one. */
-  port: string;
-  path: string;
-}
-
-/** Parses the configured `ssh://` origin and Gitea's `ssh_url`, which may be scp-style. */
-function parseSshEndpoint(raw: string): SshEndpoint | null {
-  if (/^ssh:\/\//i.test(raw)) {
-    let url: URL;
-    try {
-      url = new URL(raw);
-    } catch {
-      return null;
-    }
-    if (url.hostname === '') return null;
-    return {
-      host: url.hostname.toLowerCase(),
-      port: url.port === '' ? '22' : url.port,
-      path: url.pathname,
-    };
-  }
-  const scp = /^(?:[^@/\s]+@)?(\[[^\]]+\]|[^:/\s]+):(.+)$/.exec(raw);
-  if (scp === null) return null;
-  return { host: scp[1]!.toLowerCase(), port: '22', path: scp[2]! };
-}
-
-function sshPath(path: string): string {
-  return path
-    .replace(/^\/+/, '')
-    .replace(/\/+$/, '')
-    .replace(/\.git$/i, '')
-    .toLowerCase();
-}
-
 /**
  * The configured push endpoint must be the endpoint the authenticated repository reports:
  * another SSH service on the same host, or another port, would push to a different repository.
  * The reported endpoint is untrusted and may carry a URL password, so it never enters the message.
  */
-function assertSshEndpoint(configured: ResolvedReleaseRepository, reported: string): void {
+function assertSshEndpoint(configured: ResolvedReleaseRepository, reported: string): SshEndpoint {
   const wanted = parseSshEndpoint(configured.origin);
   const actual = parseSshEndpoint(reported);
   const at = `releases.repositories[${configured.id}].origin`;
-  if (
-    wanted === null ||
-    actual === null ||
-    wanted.host !== actual.host ||
-    wanted.port !== actual.port ||
-    sshPath(wanted.path) !== sshPath(actual.path)
-  ) {
+  if (wanted === null || actual === null || !sameSshEndpoint(wanted, actual)) {
     throw new ReleaseForgeError(
       'ssh-origin-mismatch',
       `${at}: "${configured.origin}" is not the SSH endpoint the authenticated repository reports`,
     );
   }
+  return actual;
 }
 
 function parseAccount(raw: unknown, baseUrl: string): ReleaseAccountIdentity {
@@ -163,7 +125,7 @@ function parseVersion(raw: unknown): string {
 function parseRepository(
   raw: unknown,
   configured: ResolvedReleaseRepository,
-): { forgeRepositoryId: number; defaultBranch: string } {
+): { forgeRepositoryId: number; defaultBranch: string; ssh: SshEndpoint } {
   if (!isRecord(raw)) throw malformed('/repos/{owner}/{repo} did not return a JSON object');
   const id = positiveId(raw['id']);
   if (id === null) throw malformed('/repos/{owner}/{repo} did not return a numeric repository id');
@@ -177,8 +139,8 @@ function parseRepository(
   }
   const defaultBranch = exactField(raw['default_branch'], 'repository default_branch', 200);
   const sshUrl = exactField(raw['ssh_url'], 'repository ssh_url', 300);
-  assertSshEndpoint(configured, sshUrl);
-  return { forgeRepositoryId: id, defaultBranch };
+  const ssh = assertSshEndpoint(configured, sshUrl);
+  return { forgeRepositoryId: id, defaultBranch, ssh };
 }
 
 /** A planning credential must never satisfy a release identity check. */
@@ -258,6 +220,7 @@ async function prove(
       forgeRepositoryId: repository.forgeRepositoryId,
       defaultBranch: repository.defaultBranch,
     },
+    ssh: repository.ssh,
   };
 }
 
