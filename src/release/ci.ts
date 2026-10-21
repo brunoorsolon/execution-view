@@ -10,6 +10,10 @@
  * Every request here is a read through the release forge client: no run is triggered, no write
  * path exists, and nothing is retried. A mismatch, outage or malformed response becomes a stable
  * blocker; there is no manual attestation and no "any successful workflow" fallback.
+ *
+ * The run fields below are what the supported Gitea 1.26.1 API returns: `ToActionWorkflowRun`
+ * reports GitHub-style `status`/`conclusion` (from `ToActionsStatus`), `path` as
+ * `<WorkflowID>@<Ref>`, and the run's repository object, and the run list filters by `head_sha`.
  */
 
 import { workflowPathProblem } from '../config/schema.js';
@@ -56,6 +60,12 @@ export const DEFAULT_CI_PAGE_SIZE = 50;
 
 /** Gitea's own maximum page size; asking for more would silently skip runs between pages. */
 export const MAX_CI_PAGE_SIZE = 50;
+
+/** Hard ceiling for the page bound, so no caller can turn bounded pagination unbounded. */
+export const MAX_CI_MAX_PAGES = 100;
+
+/** Hard ceiling for the run bound, so a huge bound cannot outgrow the response budget. */
+export const MAX_CI_MAX_RUNS = 5_000;
 
 /** Most run-list pages one discovery may read before it fails closed as incomplete. */
 export const DEFAULT_CI_MAX_PAGES = 20;
@@ -263,6 +273,22 @@ function boundedOption(
   return resolved;
 }
 
+/**
+ * Evidence must be read from the forge origin whose repository identity was verified: the same
+ * slug can exist on another instance, so a client pointed elsewhere would prove the wrong runs.
+ */
+function assertVerifiedClient(
+  client: ReleaseForgeClient,
+  identity: ReleaseRepositoryIdentity,
+): void {
+  if (client.baseUrl !== identity.baseUrl) {
+    throw new CiEvidenceError(
+      'invalid-request',
+      'release CI evidence must be read through the client for the verified release forge origin',
+    );
+  }
+}
+
 function expectedRun(
   identity: ReleaseRepositoryIdentity,
   candidate: ReleaseCandidate,
@@ -384,8 +410,13 @@ async function enumerateRuns(
     'pageSize',
     MAX_CI_PAGE_SIZE,
   );
-  const maxPages = boundedOption(options.maxPages, DEFAULT_CI_MAX_PAGES, 'maxPages');
-  const maxRuns = boundedOption(options.maxRuns, DEFAULT_CI_MAX_RUNS, 'maxRuns');
+  const maxPages = boundedOption(
+    options.maxPages,
+    DEFAULT_CI_MAX_PAGES,
+    'maxPages',
+    MAX_CI_MAX_PAGES,
+  );
+  const maxRuns = boundedOption(options.maxRuns, DEFAULT_CI_MAX_RUNS, 'maxRuns', MAX_CI_MAX_RUNS);
   const seen = new Map<number, ParsedRun>();
   let totalCount: number | null = null;
 
@@ -504,6 +535,7 @@ export async function discoverReleaseCi(
   options: DiscoverReleaseCiOptions,
 ): Promise<ReleaseCiResult> {
   try {
+    assertVerifiedClient(options.client, options.identity);
     const expected = expectedRun(options.identity, options.candidate, options.workflowPath);
     const runs = await enumerateRuns(options, expected);
     const counts = new Map<Rejection, number>();
@@ -530,6 +562,7 @@ export async function discoverReleaseCi(
  */
 export async function verifyReleaseCi(options: VerifyReleaseCiOptions): Promise<ReleaseCiResult> {
   try {
+    assertVerifiedClient(options.client, options.identity);
     assertBoundEvidence(options.evidence, options.identity, options.workflowPath);
     const expected = expectedRun(
       options.identity,

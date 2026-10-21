@@ -326,6 +326,69 @@ describe('discoverReleaseCi', () => {
     }
   });
 
+  it('accepts the last run when the page bound is filled exactly and refuses unbounded bounds', async () => {
+    const listed = [run({ id: 2 }), run({ id: 9 })];
+    const exact = forge(pagedRuns(2, listed));
+    const exactResult = await discoverReleaseCi({
+      client: client(exact.fetch),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: WORKFLOW,
+      pageSize: 1,
+      maxPages: 2,
+    });
+    expect(exactResult.ok).toBe(true);
+    if (!exactResult.ok) throw new Error('expected evidence');
+    expect(exactResult.evidence.runId).toBe(9);
+
+    for (const bounds of [{ maxPages: 1e9 }, { maxRuns: 1e9 }]) {
+      const unbounded = forge(() => runList(1, [run()]));
+      const result = await discoverReleaseCi({
+        client: client(unbounded.fetch),
+        identity: IDENTITY,
+        candidate: CANDIDATE,
+        workflowPath: WORKFLOW,
+        ...bounds,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected a blocker');
+      expect(result.blocker.code).toBe('invalid-request');
+      expect(unbounded.requests).toHaveLength(0);
+    }
+  });
+
+  it('refuses a client for another forge origin before any request', async () => {
+    const fixture = forge(() => runList(1, [run()]));
+    const otherOrigin = createReleaseForgeClient({
+      baseUrl: 'https://gitea-other.example.test',
+      token: RELEASE_TOKEN,
+      fetch: fixture.fetch,
+    });
+
+    for (const call of [
+      () =>
+        discoverReleaseCi({
+          client: otherOrigin,
+          identity: IDENTITY,
+          candidate: CANDIDATE,
+          workflowPath: WORKFLOW,
+        }),
+      () =>
+        verifyReleaseCi({
+          client: otherOrigin,
+          identity: IDENTITY,
+          workflowPath: WORKFLOW,
+          evidence: BOUND,
+        }),
+    ]) {
+      const result = await call();
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected a blocker');
+      expect(result.blocker.code).toBe('invalid-request');
+    }
+    expect(fixture.requests).toHaveLength(0);
+  });
+
   it('blocks a page larger than the requested page size', async () => {
     const fixture = forge(() => runList(3, [run({ id: 1 }), run({ id: 2 }), run({ id: 3 })]));
     const result = await discoverReleaseCi({
@@ -632,6 +695,42 @@ describe('verifyReleaseCi', () => {
       expect(result.blocker.code, name).toBe(code);
       expect(result.blocker.message).not.toContain(RELEASE_TOKEN);
     }
+  });
+
+  it('blocks an unreadable, malformed or oversized re-read with a stable error', async () => {
+    const failing = forge(() => json({ message: 'internal' }, 500));
+    const failingResult = await verifyReleaseCi({
+      client: client(failing.fetch),
+      identity: IDENTITY,
+      workflowPath: WORKFLOW,
+      evidence: BOUND,
+    });
+    expect(failingResult.ok).toBe(false);
+    if (failingResult.ok) throw new Error('expected a blocker');
+    expect(failingResult.blocker.code).toBe('http-error');
+    expect(failingResult.blocker.message).not.toContain(RELEASE_TOKEN);
+
+    const malformed = forge(() => json({ ...run({ id: 40 }), head_sha: undefined }));
+    const malformedResult = await verifyReleaseCi({
+      client: client(malformed.fetch),
+      identity: IDENTITY,
+      workflowPath: WORKFLOW,
+      evidence: BOUND,
+    });
+    expect(malformedResult.ok).toBe(false);
+    if (malformedResult.ok) throw new Error('expected a blocker');
+    expect(malformedResult.blocker.code).toBe('malformed-response');
+
+    const oversized = forge(() => json({ ...run({ id: 40 }), pad: 'x'.repeat(500) }));
+    const oversizedResult = await verifyReleaseCi({
+      client: client(oversized.fetch, 200),
+      identity: IDENTITY,
+      workflowPath: WORKFLOW,
+      evidence: BOUND,
+    });
+    expect(oversizedResult.ok).toBe(false);
+    if (oversizedResult.ok) throw new Error('expected a blocker');
+    expect(oversizedResult.blocker.code).toBe('response-too-large');
   });
 
   it('never rewrites bound evidence it cannot prove', async () => {

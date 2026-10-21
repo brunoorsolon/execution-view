@@ -73,6 +73,8 @@ export interface ReleaseForgeClientOptions {
 }
 
 export interface ReleaseForgeClient {
+  /** Forge origin this client reads from, so a caller can bind it to a verified identity. */
+  readonly baseUrl: string;
   /** GETs `<baseUrl>/api/v1<path>` with the release token. Only a path starting with "/" is accepted. */
   getJson<T>(path: string): Promise<T>;
 }
@@ -282,5 +284,5 @@ export function createReleaseForgeClient(opts: ReleaseForgeClientOptions): Relea
     }
   }
 
-  return { getJson };
+  return { baseUrl, getJson };
 }
