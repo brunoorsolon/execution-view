@@ -9,6 +9,12 @@
 /** Version of this shared contract. Consumers must reject records they do not support. */
 export const RELEASE_CONTRACT_VERSION = 1;
 
+/**
+ * Version of the durable state record envelope written under `releases.stateDir`.
+ * A reader that does not know this exact version must refuse the record, never migrate it.
+ */
+export const RELEASE_STATE_SCHEMA_VERSION = 1;
+
 /** Publication target. Only Gitea is supported by this contract version. */
 export type ReleaseForge = 'gitea';
 
@@ -189,6 +195,40 @@ export interface ReleaseJob {
   /** Remote truth, which can stay `exact` while a storage failure makes the job `internal-error`. */
   remote: ReleaseRemoteClassification;
   errorCode: ReleaseErrorCode | null;
+}
+
+/**
+ * Durable approval intent: one authenticated operator's acceptance of one stored plan.
+ *
+ * It is written exclusively before the first remote mutation, so an interrupted attempt still
+ * shows what was approved. One intent exists per plan; a duplicate approval returns its job.
+ */
+export interface ReleaseIntent {
+  intentId: string;
+  planId: string;
+  planDigest: string;
+  /** Durable job created for this approval. */
+  jobId: string;
+  /** Authenticated application operator/approver identity, not the forge or SSH identity. */
+  operator: string;
+  approvedActions: ReleaseIntendedAction[];
+  /** ISO timestamp of acceptance. */
+  approvedAt: string;
+  contractVersion: number;
+  stateSchemaVersion: number;
+}
+
+/**
+ * One durable observation recorded while a job runs: what independent reads saw at a step.
+ *
+ * `observedAt` is volatile read time, which is why it can never enter a plan digest.
+ */
+export interface ReleaseStepObservation {
+  observationId: string;
+  jobId: string;
+  step: ReleaseJobStep;
+  remote: ReleaseRemoteClassification;
+  observedAt: string;
 }
 
 /** Durable receipt identity and outcome. The full receipt body belongs to the storage slice. */
