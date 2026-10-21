@@ -29,7 +29,7 @@ Rules:
 
 ## Config file reference
 
-The schema is **strict**: an unknown key is an error, and all errors are reported together. Top level keys: `server`, `cache`, `ui`, `webhooks`, `sources` (required), `views` (required).
+The schema is **strict**: an unknown key is an error, and all errors are reported together. Top level keys: `server`, `cache`, `ui`, `webhooks`, `releases`, `sources` (required), `views` (required).
 
 ### `server`
 
@@ -103,6 +103,52 @@ A list (at least one). A view is a set of repositories of one source that are pl
 | `views[].ordering.mode`                   | `priority` or `waves`           | `priority`                                         | How the linear order (the `#` numbers) is built. `priority`: by priority, then critical path, which can number an issue of a later wave before one of an earlier wave. `waves`: wave by wave, and within a wave by priority and critical path. |
 
 Scope filters combine with AND, are case-insensitive, and only choose the roots of the plan: out-of-scope prerequisites still appear, as external nodes. See [PREREQUISITES.md](PREREQUISITES.md#9-scope-filters). Keyword semantics are in [PREREQUISITES.md](PREREQUISITES.md#custom-keywords). The exact ordering rules for `priorityLabels` and `mode`, with a worked example, are in [DETERMINISM.md](DETERMINISM.md).
+
+### `releases`
+
+Optional and disabled by default. Planning-only YAML and env-only mode need no release configuration, credentials or writable state; they keep their existing behavior. Enabling releases adds release publication to the same server and requires the application login (`server.basicAuth` or `EV_BASIC_AUTH`).
+
+```yaml
+releases:
+  enabled: true
+  publicOrigin: https://forge-desk.example.com
+  stateDir: /var/lib/forge-desk
+  repositories:
+    - id: app
+      source: gt # an existing gitea source
+      repo: example/app
+      origin: ssh://git@gitea.example.com/example/app.git
+      apiTokenFile: /run/secrets/forge_desk_release_token
+      expectedApiUser: release-bot
+      ci:
+        workflowPath: .gitea/workflows/validate.yaml
+      ssh:
+        privateKeyFile: /run/secrets/forge_desk_release_key
+        knownHostsFile: /run/secrets/forge_desk_known_hosts
+      tagger:
+        name: Forge Desk Release Bot
+        email: releases@example.com
+```
+
+| Key                                          | Type                      | Default  | Description                                                                                                                                                                                                       |
+| -------------------------------------------- | ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `releases.enabled`                           | boolean                   | `false`  | Turns release publication on. The remaining fields are only required when enabled.                                                                                                                                |
+| `releases.publicOrigin`                      | URL origin                | required | The operator-approved external origin used to validate browser requests. HTTPS only, without a path, query or fragment; plain HTTP is accepted only for a loopback test deployment (`localhost`, `127.x`, `::1`). |
+| `releases.stateDir`                          | absolute path             | required | Private release state directory. Must exist as a real directory (not a symlink), be owned by the runtime user, and be `0700`.                                                                                     |
+| `releases.repositories`                      | list (at least one)       | required | The explicit release allowlist. Repository ids are unique; each entry references an existing `gitea` source and an explicit `owner/repo`. Browser input can only use these ids, never arbitrary URLs or paths.    |
+| `releases.repositories[].origin`             | `ssh://` URL              | required | Push origin for tags. Must be `ssh://user@host[:port]/owner/repo[.git]` with no password, query, fragment or option-bearing parts, and its path must match `repo`.                                                |
+| `releases.repositories[].apiTokenFile`       | absolute path             | one of   | A read-only file holding the dedicated release API token. Exactly one of `apiTokenFile` or `apiTokenEnv` is required; inline tokens are rejected.                                                                 |
+| `releases.repositories[].apiTokenEnv`        | environment variable name | one of   | The variable holding the dedicated release API token. Exactly one of the two selectors is required, and the value must not be a planning source token.                                                            |
+| `releases.repositories[].expectedApiUser`    | string                    | required | The API account the release token must belong to. Prevents silently adopting whatever account a supplied token happens to use.                                                                                    |
+| `releases.repositories[].ci.workflowPath`    | relative path             | required | The designated successful push workflow, for example `.gitea/workflows/validate.yaml`. Must be a relative `.yml`/`.yaml` path inside the repository.                                                              |
+| `releases.repositories[].ssh.privateKeyFile` | absolute path             | required | Dedicated SSH private key. Must be readable and owned by the runtime user, and not readable by group or others (`0600`).                                                                                          |
+| `releases.repositories[].ssh.knownHostsFile` | absolute path             | required | Trusted host keys for the SSH origin. Must be readable by the runtime user and not writable by group or others (`0600` or `0644`).                                                                                |
+| `releases.repositories[].tagger.name`        | string                    | required | Name on the annotated tag object.                                                                                                                                                                                 |
+| `releases.repositories[].tagger.email`       | email                     | required | Email on the annotated tag object.                                                                                                                                                                                |
+
+Only Gitea sources can be release repositories; the initial publication target is Gitea 1.26.1, and the release client verifies the server identity before trusting remote observations. Forgejo and other server versions are unsupported until their publication behavior is verified.
+
+Enabled startup validates these local prerequisites before the server listens: the state directory's ownership and privacy, each secret file's readability, and the SSH key permission rules. A violation stops startup with a diagnostic naming the path and permissions, and the mounted permissions are never changed. The checks make no forge request, so a temporary forge outage cannot keep Planning from starting.
 
 ## Environment variables
 
