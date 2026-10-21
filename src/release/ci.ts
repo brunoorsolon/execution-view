@@ -13,7 +13,8 @@
  *
  * The run fields below are what the supported Gitea 1.26.1 API returns: `ToActionWorkflowRun`
  * reports GitHub-style `status`/`conclusion` (from `ToActionsStatus`), `path` as
- * `<WorkflowID>@<Ref>`, and the run's repository object, and the run list filters by `head_sha`.
+ * `<WorkflowID>@<Ref>` where `WorkflowID` is the path inside the server's workflow directory,
+ * and the run's repository object; the run list filters by `head_sha`.
  */
 
 import { workflowPathProblem } from '../config/schema.js';
@@ -24,6 +25,7 @@ import type {
 } from '../core/release.js';
 import {
   ReleaseForgeError,
+  forgeOriginKey,
   type ReleaseBlockerCode,
   type ReleaseForgeClient,
 } from './forgeClient.js';
@@ -130,6 +132,23 @@ interface ExpectedRun {
   commit: string;
   branch: string;
   workflowPath: string;
+  /** The workflow identifier Gitea reports for the configured workflow path. */
+  workflowId: string;
+}
+
+/**
+ * Gitea reads workflows from one of its configured workflow directories and reports a run's
+ * workflow as the path inside that directory: `.gitea/workflows/validate.yaml` becomes
+ * `validate.yaml`. The directory itself never appears in the API, so the configured path is
+ * reduced to the same representation instead of being compared to a full repository path.
+ */
+const GITEA_WORKFLOW_DIRECTORIES: readonly string[] = ['.gitea/workflows', '.github/workflows'];
+
+function workflowIdentifier(workflowPath: string): string {
+  for (const dir of GITEA_WORKFLOW_DIRECTORIES) {
+    if (workflowPath.startsWith(`${dir}/`)) return workflowPath.slice(dir.length + 1);
+  }
+  return workflowPath;
 }
 
 /** A way a listed run fails to qualify. */
@@ -281,7 +300,7 @@ function assertVerifiedClient(
   client: ReleaseForgeClient,
   identity: ReleaseRepositoryIdentity,
 ): void {
-  if (client.baseUrl !== identity.baseUrl) {
+  if (forgeOriginKey(client.baseUrl) !== forgeOriginKey(identity.baseUrl)) {
     throw new CiEvidenceError(
       'invalid-request',
       'release CI evidence must be read through the client for the verified release forge origin',
@@ -319,6 +338,7 @@ function expectedRun(
     commit: candidate.commit,
     branch: identity.defaultBranch,
     workflowPath,
+    workflowId: workflowIdentifier(workflowPath),
   };
 }
 
@@ -340,7 +360,7 @@ function classifyRun(run: ParsedRun, expected: ExpectedRun): ReleaseCiEvidence |
   if (run.headCommit !== expected.commit) return 'commit';
   if (run.branch !== expected.branch) return 'branch';
   if (run.event !== 'push') return 'event';
-  if (run.path !== `${expected.workflowPath}@refs/heads/${expected.branch}`) return 'workflow';
+  if (run.path !== `${expected.workflowId}@refs/heads/${expected.branch}`) return 'workflow';
   if (run.status !== 'completed') return 'pending';
   if (run.conclusion !== 'success') return 'failed';
   return {
@@ -378,7 +398,7 @@ function noQualifyingRun(
 ): CiEvidenceError {
   // Messages carry only configuration-derived values, validated commit ids and counts: a forge
   // field is never echoed, because a hostile or broken server can return any text in it.
-  const where = `a completed successful push run of ${bounded(expected.workflowPath, 120)} for commit ${expected.commit} on the verified default branch`;
+  const where = `a completed successful push run of ${bounded(expected.workflowPath, 120)} (reported by the forge as ${bounded(expected.workflowId, 120)}) for commit ${expected.commit} on the verified default branch`;
   if (listedRuns === 0) {
     return new CiEvidenceError(
       'ci-run-missing',

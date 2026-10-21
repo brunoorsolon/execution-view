@@ -103,7 +103,7 @@ function run(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     event: 'push',
     status: 'completed',
     conclusion: 'success',
-    path: `${WORKFLOW}@refs/heads/main`,
+    path: 'validate.yaml@refs/heads/main',
     repository: { id: 1001, full_name: 'acme/api' },
     ...overrides,
   };
@@ -179,7 +179,7 @@ describe('discoverReleaseCi', () => {
       run({ id: 7, status: 'in_progress', conclusion: '' }),
       run({ id: 40 }),
       // Higher id, but another workflow: it must not win.
-      run({ id: 99, path: '.gitea/workflows/other.yaml@refs/heads/main' }),
+      run({ id: 99, path: 'other.yaml@refs/heads/main' }),
       // Higher id, but failed: it must not win either.
       run({ id: 500, conclusion: 'failure' }),
     ];
@@ -216,6 +216,63 @@ describe('discoverReleaseCi', () => {
     ).toBe(false);
   });
 
+  it('matches the configured workflow by the identifier the forge reports for it', async () => {
+    const fixture = forge(pagedRuns(1, [run({ id: 40 })]));
+    const result = await discoverReleaseCi({
+      client: client(fixture.fetch),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: WORKFLOW,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected evidence');
+    // The bound evidence keeps the configured path, the run is matched by its reported identifier.
+    expect(result.evidence.workflowPath).toBe(WORKFLOW);
+
+    // A workflow inside the other default Gitea workflow directory binds the same way.
+    for (const configured of [
+      '.github/workflows/validate.yaml',
+      '.gitea/workflows/nested/validate.yaml',
+    ]) {
+      const runId = configured.replace(/^\.(gitea|github)\/workflows\//, '');
+      const listedRun = run({ id: 40, path: `${runId}@refs/heads/main` });
+      const listed = forge((url) =>
+        /\/actions\/runs\/40$/.test(url.pathname) ? json(listedRun) : runList(1, [listedRun]),
+      );
+      const bound = await discoverReleaseCi({
+        client: client(listed.fetch),
+        identity: IDENTITY,
+        candidate: CANDIDATE,
+        workflowPath: configured,
+      });
+      expect(bound.ok, configured).toBe(true);
+      if (!bound.ok) continue;
+      expect(bound.evidence.workflowPath, configured).toBe(configured);
+
+      const reRead = await verifyReleaseCi({
+        client: client(listed.fetch),
+        identity: IDENTITY,
+        workflowPath: configured,
+        evidence: bound.evidence,
+      });
+      expect(reRead.ok, configured).toBe(true);
+    }
+
+    // The full repository path is not what the server reports, so it cannot match.
+    const fullPath = forge(() =>
+      runList(1, [run({ id: 40, path: `${WORKFLOW}@refs/heads/main` })]),
+    );
+    const rejected = await discoverReleaseCi({
+      client: client(fullPath.fetch),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: WORKFLOW,
+    });
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) throw new Error('expected a blocker');
+    expect(rejected.blocker.code).toBe('ci-workflow-mismatch');
+  });
+
   it('binds the evidence to the verified repository, candidate, branch and configured workflow', async () => {
     const listed = [run({ id: 40 })];
     const fixture = forge(pagedRuns(1, listed));
@@ -246,12 +303,12 @@ describe('discoverReleaseCi', () => {
       ['cancelled', () => runList(1, [run({ conclusion: 'cancelled' })]), 'ci-run-failed'],
       [
         'another workflow',
-        () => runList(1, [run({ path: '.gitea/workflows/ci.yaml@refs/heads/main' })]),
+        () => runList(1, [run({ path: 'ci.yaml@refs/heads/main' })]),
         'ci-workflow-mismatch',
       ],
       [
         'not a push run',
-        () => runList(1, [run({ event: 'pull_request', path: `${WORKFLOW}@refs/pull/7/head` })]),
+        () => runList(1, [run({ event: 'pull_request', path: 'validate.yaml@refs/pull/7/head' })]),
         'ci-event-mismatch',
       ],
       [
@@ -355,6 +412,55 @@ describe('discoverReleaseCi', () => {
       expect(result.blocker.code).toBe('invalid-request');
       expect(unbounded.requests).toHaveLength(0);
     }
+  });
+
+  it('accepts an equivalent forge origin spelling and refuses another port', async () => {
+    const fixture = forge((url) =>
+      /\/actions\/runs\/40$/.test(url.pathname) ? json(run({ id: 40 })) : runList(1, [run()]),
+    );
+    const explicitPort = createReleaseForgeClient({
+      baseUrl: 'https://gitea.example.test:443',
+      token: RELEASE_TOKEN,
+      fetch: fixture.fetch,
+    });
+    expect(explicitPort.baseUrl).toBe(BASE);
+
+    for (const call of [
+      () =>
+        discoverReleaseCi({
+          client: explicitPort,
+          identity: { ...IDENTITY, baseUrl: 'https://gitea.example.test:443' },
+          candidate: CANDIDATE,
+          workflowPath: WORKFLOW,
+        }),
+      () =>
+        verifyReleaseCi({
+          client: explicitPort,
+          identity: { ...IDENTITY, baseUrl: 'https://gitea.example.test:443' },
+          workflowPath: WORKFLOW,
+          evidence: BOUND,
+        }),
+    ]) {
+      const result = await call();
+      expect(result.ok).toBe(true);
+    }
+
+    const otherPort = forge(() => runList(1, [run()]));
+    const sameHostOtherPort = createReleaseForgeClient({
+      baseUrl: 'https://gitea.example.test:8443',
+      token: RELEASE_TOKEN,
+      fetch: otherPort.fetch,
+    });
+    const refused = await discoverReleaseCi({
+      client: sameHostOtherPort,
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: WORKFLOW,
+    });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('expected a blocker');
+    expect(refused.blocker.code).toBe('invalid-request');
+    expect(otherPort.requests).toHaveLength(0);
   });
 
   it('refuses a client for another forge origin before any request', async () => {
@@ -584,8 +690,8 @@ describe('discoverReleaseCi', () => {
     // The verified default branch drives the expected workflow ref, so a run bound to another
     // branch of the same workflow cannot satisfy the plan.
     const runs = [
-      run({ id: 12, head_branch: 'develop', path: `${WORKFLOW}@refs/heads/develop` }),
-      run({ id: 31, head_branch: 'develop', path: `${WORKFLOW}@refs/heads/develop` }),
+      run({ id: 12, head_branch: 'develop', path: 'validate.yaml@refs/heads/develop' }),
+      run({ id: 31, head_branch: 'develop', path: 'validate.yaml@refs/heads/develop' }),
     ];
     const fixture = forge((url) => {
       switch (url.pathname) {
@@ -672,9 +778,9 @@ describe('verifyReleaseCi', () => {
       ['another commit', run({ id: 40, head_sha: OTHER_COMMIT })],
       [
         'another branch ref',
-        run({ id: 40, head_branch: 'main', path: `${WORKFLOW}@refs/heads/release` }),
+        run({ id: 40, head_branch: 'main', path: 'validate.yaml@refs/heads/release' }),
       ],
-      ['another workflow', run({ id: 40, path: '.gitea/workflows/other.yaml@refs/heads/main' })],
+      ['another workflow', run({ id: 40, path: 'other.yaml@refs/heads/main' })],
       ['not a push run', run({ id: 40, event: 'pull_request' })],
       ['another run id', run({ id: 41 })],
       ['another repository', run({ id: 40, repository: { id: 2002, full_name: 'acme/other' } })],
