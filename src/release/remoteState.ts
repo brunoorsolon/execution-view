@@ -103,7 +103,7 @@ const OBJECT_ID = /^[0-9a-f]{40,64}$/;
 const TAGGER = /^(.+) <([^<>]+)> (\d+) [+-]\d{4}$/;
 const SIGNATURE = /^-----BEGIN (?:PGP|SSH) SIGNATURE-----$/m;
 /** Longest tagger name or e-mail retained from an observed tag object. */
-const MAX_TAGGER_FIELD = 200;
+export const MAX_TAGGER_FIELD = 200;
 
 function reason(code: ReleaseRemoteStateReasonCode, message: string): ReleaseRemoteStateReason {
   return { code, message };
@@ -151,15 +151,17 @@ interface ParsedTagObject {
   target: string;
   targetType: string | null;
   name: string;
-  tagger: ReleaseTagger | null;
+  tagger: ReleaseTagger;
   message: string;
 }
 
 /**
  * Reads the raw annotated tag object. Header lines are ASCII; the message must be exact UTF-8.
  *
- * A header Git itself never repeats, or a missing target or tag name, means the object is not a
- * tag Git would have written, so it is refused instead of being compared field by field.
+ * A header Git itself never repeats, a missing target or tag name, or a tagger identity that
+ * cannot be retained all mean the object is not one this engine can classify, so it is refused
+ * instead of being compared field by field. The decoder keeps a byte-order mark, so an
+ * annotation that only differs by one is not compared as the planned message.
  */
 function parseTagObject(bytes: Buffer): ParsedTagObject | string {
   const separator = bytes.indexOf('\n\n');
@@ -167,11 +169,13 @@ function parseTagObject(bytes: Buffer): ParsedTagObject | string {
   const header = bytes.subarray(0, separator).toString('utf8');
   let message: string;
   try {
-    message = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(separator + 2));
+    message = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+      bytes.subarray(separator + 2),
+    );
   } catch {
     return 'the annotated tag message was not valid UTF-8';
   }
-  const parsed: Partial<ParsedTagObject> = { message, targetType: null, tagger: null };
+  const parsed: Partial<ParsedTagObject> = { message, targetType: null };
   const seen = new Set<string>();
   for (const line of header.split('\n')) {
     const key = line.slice(0, line.indexOf(' '));
@@ -188,17 +192,20 @@ function parseTagObject(bytes: Buffer): ParsedTagObject | string {
       parsed.name = line.slice('tag '.length);
     } else {
       const match = TAGGER.exec(line.slice('tagger '.length));
-      if (match !== null) {
-        const [, name = '', email = ''] = match;
-        if (name.length <= MAX_TAGGER_FIELD && email.length <= MAX_TAGGER_FIELD) {
-          parsed.tagger = { name, email };
-        }
+      if (match === null) return 'the annotated tag object carried an unreadable tagger identity';
+      const [, name = '', email = ''] = match;
+      if (name.length > MAX_TAGGER_FIELD || email.length > MAX_TAGGER_FIELD) {
+        return 'the annotated tag tagger identity is too long to retain';
       }
+      parsed.tagger = { name, email };
     }
   }
   if (parsed.target === undefined) return 'the annotated tag object named no target object';
   if (parsed.name === undefined || parsed.name === '') {
     return 'the annotated tag object named no tag name';
+  }
+  if (parsed.tagger === undefined) {
+    return 'the annotated tag object recorded no tagger identity to retain';
   }
   return parsed as ParsedTagObject;
 }
@@ -354,9 +361,13 @@ export function classifyRelease(
   const body = typeof raw['body'] === 'string' ? raw['body'] : null;
   const draft = typeof raw['draft'] === 'boolean' ? raw['draft'] : null;
   const prerelease = typeof raw['prerelease'] === 'boolean' ? raw['prerelease'] : null;
-  const author =
+  const authorLogin =
     isRecord(raw['author']) && typeof raw['author']['login'] === 'string'
       ? raw['author']['login']
+      : null;
+  const author =
+    authorLogin !== null && authorLogin.trim() !== '' && authorLogin.trim() === authorLogin
+      ? authorLogin
       : null;
   const assets = Array.isArray(raw['assets']) ? raw['assets'].length : null;
   const release: ReleaseObservation = {
@@ -376,6 +387,9 @@ export function classifyRelease(
   if (body === null) unprovable.push('notes body');
   if (draft === null || prerelease === null) unprovable.push('stable flags');
   if (assets === null) unprovable.push('asset set');
+  // An exact release must retain its actual author, so a response that names no usable author
+  // cannot establish verified completion.
+  if (author === null) unprovable.push('release author');
   if (unprovable.length > 0) {
     return {
       release,
@@ -478,7 +492,15 @@ async function findListedRelease(
     }
     if (raw.length === 0) return { kind: 'absent' };
     for (const entry of raw) {
-      if (isRecord(entry) && entry['tag_name'] === tag) return { kind: 'found' };
+      // An entry that cannot name its release leaves the listing unable to disprove the planned
+      // tag, so a malformed listing is never allowed to read as absence.
+      if (!isRecord(entry) || typeof entry['tag_name'] !== 'string' || entry['tag_name'] === '') {
+        return {
+          kind: 'unproven',
+          detail: 'a listed release did not prove which tag it represents',
+        };
+      }
+      if (entry['tag_name'] === tag) return { kind: 'found' };
     }
   }
   return {

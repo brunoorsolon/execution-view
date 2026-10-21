@@ -19,6 +19,7 @@ import { createReleaseForgeClient, type ReleaseForgeFetch } from './forgeClient.
 import type { VerifiedReleaseIdentity } from './identity.js';
 import {
   MAX_RELEASE_LIST_PAGES,
+  MAX_TAGGER_FIELD,
   classifyRelease,
   classifyTag,
   combineRemoteState,
@@ -423,8 +424,9 @@ describe('remote tag classification', () => {
 
   it('refuses a crafted tag object Git would not write', async () => {
     const fixture = makeFixture();
-    // A tag object with no `tag` header, and one that repeats a header Git writes once. Git
-    // itself refuses to write either, so the fixture forces the corrupt object into the remote.
+    // A tag object with no `tag` header, one that repeats a header Git writes once, and one
+    // with no tagger identity to retain. Git itself refuses to write these, so the fixture
+    // forces the corrupt objects into the remote.
     writeRawTag(
       fixture.remote,
       'v1.0.5',
@@ -437,10 +439,16 @@ describe('remote tag classification', () => {
       `object ${fixture.headCommit}\ntype commit\ntag v1.0.6\ntag v1.0.6\n${TAGGER_LINE}\n\nv1.0.6\n`,
       true,
     );
+    writeRawTag(
+      fixture.remote,
+      'v1.0.7',
+      `object ${fixture.headCommit}\ntype commit\ntag v1.0.7\n\nv1.0.7\n`,
+      true,
+    );
     fakeSsh(fixture);
     const checkout = checkoutFor(fixture);
 
-    for (const name of ['v1.0.5', 'v1.0.6']) {
+    for (const name of ['v1.0.5', 'v1.0.6', 'v1.0.7']) {
       const check = await observeTagState(
         checkout,
         tagExpectation(fixture, { name, message: name }),
@@ -448,6 +456,39 @@ describe('remote tag classification', () => {
       expect(check.tag.state).toBe('unknown');
       expect(codes(check)).toEqual(['tag-unreadable']);
     }
+  });
+
+  it('does not accept a tagger identity it cannot retain, or an annotation that differs by a BOM', async () => {
+    const fixture = makeFixture();
+    const longName = 'A'.repeat(MAX_TAGGER_FIELD + 1);
+    writeRawTag(
+      fixture.remote,
+      'v1.0.8',
+      `object ${fixture.headCommit}\ntype commit\ntag v1.0.8\ntagger ${longName} <author@example.test> 1700000000 +0000\n\nv1.0.8\n`,
+    );
+    writeRawTag(
+      fixture.remote,
+      'v1.0.9',
+      `object ${fixture.headCommit}\ntype commit\ntag v1.0.9\n${TAGGER_LINE}\n\n\uFEFFv1.0.9\n`,
+    );
+    fakeSsh(fixture);
+    const checkout = checkoutFor(fixture);
+
+    const oversized = await observeTagState(
+      checkout,
+      tagExpectation(fixture, { name: 'v1.0.8', message: 'v1.0.8' }),
+    );
+    expect(oversized.tag.state).toBe('unknown');
+    expect(oversized.tag.tagger).toBeNull();
+    expect(codes(oversized)).toEqual(['tag-unreadable']);
+
+    // The BOM is a real byte the plan never approved, so the message is not the exact one.
+    const bom = await observeTagState(
+      checkout,
+      tagExpectation(fixture, { name: 'v1.0.9', message: 'v1.0.9' }),
+    );
+    expect(bom.tag.state).toBe('conflict');
+    expect(codes(bom)).toEqual(['tag-content-mismatch']);
   });
 
   it('keeps the tag unknown when the remote moves it between listing and fetching', async () => {
@@ -513,11 +554,17 @@ describe('remote release classification', () => {
     }
   });
 
-  it('keeps an unverifiable release identity or shape unknown, never exact', async () => {
+  it('keeps an unverifiable release identity, shape or author unknown, never exact', async () => {
     const cases: Record<string, unknown>[] = [
       releaseRecord({ assets: undefined }),
       releaseRecord({ body: undefined }),
       releaseRecord({ draft: 'false' }),
+      // An exact release must retain its actual author, so unusable attribution blocks it.
+      releaseRecord({ author: undefined }),
+      releaseRecord({ author: {} }),
+      releaseRecord({ author: { login: '' } }),
+      releaseRecord({ author: { login: '   ' } }),
+      releaseRecord({ author: { login: ' release-bot ' } }),
     ];
     for (const record of cases) {
       const { client } = forge({ [RELEASE_TAG_PATH]: () => json(record) });
@@ -577,6 +624,14 @@ describe('remote release classification', () => {
     const failed = await observeReleaseState(failing, REPOSITORY, releaseExpectation());
     expect(failed.release.state).toBe('unknown');
     expect(codes(failed)).toEqual(['release-listing-unproven']);
+
+    // A listing whose entries cannot name their release has not disproved the planned tag.
+    const unreadable = forge({
+      [RELEASE_PATH]: listing([[null, { name: 'unreadable-release' }], []]),
+    }).client;
+    const malformed = await observeReleaseState(unreadable, REPOSITORY, releaseExpectation());
+    expect(malformed.release.state).toBe('unknown');
+    expect(codes(malformed)).toEqual(['release-listing-unproven']);
 
     // A listing that never ends inside the page bound cannot prove absence either.
     const fullPage = Array.from({ length: 50 }, (_, index) => ({ tag_name: `v0.0.${index}` }));
