@@ -70,6 +70,11 @@ export interface ReleaseCheckout {
    * null. Raw bytes: the caller decides whether they are valid text.
    */
   readCommitSubjects(from: string | null, to: string): Promise<ReleaseGitResult<Buffer>>;
+  /**
+   * The candidate this checkout last fetched, or null before a successful fetch. Metadata is
+   * derived only for this commit, so a stale or caller-invented candidate is never substituted.
+   */
+  candidate(): ReleaseCandidate | null;
 }
 
 /** The only ref this module writes: a private, container-owned view of the remote branch. */
@@ -251,6 +256,8 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
    * here, so a failed fetch invalidates reads instead of leaving an older candidate readable.
    */
   let sealedCandidate: string | null = null;
+  /** Default branch of the sealed candidate, as proven by release identity. */
+  let sealedBranch: string | null = null;
   const ssh = options.repository.ssh;
   const git = (argv: readonly string[], operation: string, cwd: string) =>
     runReleaseGit(argv, {
@@ -299,6 +306,7 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
   return {
     async fetchCandidate(): Promise<ReleaseGitResult<ReleaseCandidate>> {
       sealedCandidate = null;
+      sealedBranch = null;
       try {
         const origin = assertVerifiedOrigin(options.repository, options.identity);
         const branch = assertSafeBranch(options.identity.repository.defaultBranch);
@@ -332,6 +340,7 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
           );
         }
         sealedCandidate = commit;
+        sealedBranch = branch;
         return { ok: true, value: { commit, branch } };
       } catch (err) {
         return { ok: false, blocker: releaseGitBlocker(err) };
@@ -426,6 +435,11 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
       } catch (err) {
         return { ok: false, blocker: releaseGitBlocker(err) };
       }
+    },
+
+    candidate(): ReleaseCandidate | null {
+      if (sealedCandidate === null || sealedBranch === null) return null;
+      return { commit: sealedCandidate, branch: sealedBranch };
     },
   };
 }

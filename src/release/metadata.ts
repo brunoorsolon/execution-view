@@ -7,16 +7,18 @@
  * so the tag name, annotation message and exact notes an approval will bind cannot be edited
  * afterwards by a later step in the same preparation.
  *
- * Stable tags are canonical `vMAJOR.MINOR.PATCH` names without leading zeroes; anything else is
- * retained as an observation and never selects the version. Notes are the exact committed
- * `RELEASE_NOTES.md` bytes when that path is a regular file, otherwise bullets of the committed
- * subjects from the baseline to the candidate, oldest first.
+ * Stable tags are canonical `vMAJOR.MINOR.PATCH` names without leading zeroes and at most 128
+ * characters; every other observed name is retained as an observation and never selects the
+ * version. Notes are the exact committed `RELEASE_NOTES.md` bytes when that path is a regular
+ * file, otherwise bullets of the committed subjects from the baseline to the candidate, oldest
+ * first. Notes above the configured bound, or above what this checkout can read, block with
+ * `notes-too-large` rather than being truncated.
  */
 
 import { type ReleaseBaseline, type ReleaseCandidate, type ReleaseNotes } from '../core/release.js';
 import { createReleaseNotes } from '../core/releaseDigest.js';
 import type { ReleaseCheckout } from './checkout.js';
-import type { ReleaseGitBlockerCode } from './gitProcess.js';
+import type { ReleaseGitBlocker, ReleaseGitBlockerCode } from './gitProcess.js';
 
 /**
  * Upper bound for the exact notes bytes of one release. Oversized notes block preparation with
@@ -30,7 +32,8 @@ export const RELEASE_NOTES_PATH = 'RELEASE_NOTES.md';
 
 /**
  * A stable tag observed on the remote. `peeledCommit` is the commit an annotated tag points at,
- * already resolved by the caller, so its ancestry can be proved against the candidate.
+ * already resolved by the caller, so its ancestry can be proved against the candidate. It is
+ * checked only for a name that could select the version.
  */
 export interface ObservedTag {
   name: string;
@@ -86,7 +89,10 @@ export interface DeriveReleaseMetadataOptions {
 }
 
 const STABLE_TAG = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+/** Longest canonical tag name that may select the version, matching the supplied publisher. */
 const MAX_TAG_NAME_LENGTH = 128;
+/** Longest observed tag name carried as an observation; a longer name is unsafe metadata. */
+const MAX_OBSERVED_TAG_LENGTH = 1024;
 const COMMIT_ID = /^[0-9a-f]{40}$/;
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
@@ -133,7 +139,7 @@ interface StableVersion {
   parts: [string, string, string];
 }
 
-/** Splits observations into canonical stable versions and retained noncanonical names. */
+/** Splits observations into selectable canonical versions and retained noncanonical names. */
 function classifyTags(
   tags: readonly ObservedTag[],
 ): { stable: StableVersion[]; other: string[] } | ReleaseMetadataBlocker {
@@ -141,26 +147,22 @@ function classifyTags(
   const other: string[] = [];
   const seen = new Map<string, string>();
   for (const tag of tags) {
-    const name = tag.name;
-    const commit = tag.peeledCommit;
-    if (typeof name !== 'string' || typeof commit !== 'string') {
+    if (tag === null || typeof tag !== 'object') {
       return blocker('tag-invalid', 'a remote tag observation was not a name and commit pair');
     }
-    if (name === '' || name.length > MAX_TAG_NAME_LENGTH || CONTROL_CHARS.test(name)) {
+    const { name, peeledCommit } = tag;
+    if (typeof name !== 'string' || typeof peeledCommit !== 'string') {
+      return blocker('tag-invalid', 'a remote tag observation was not a name and commit pair');
+    }
+    if (name === '' || CONTROL_CHARS.test(name) || name.length > MAX_OBSERVED_TAG_LENGTH) {
       return blocker(
         'tag-invalid',
         `the observed tag name "${bounded(name)}" is empty, too long or contains control characters`,
       );
     }
-    if (!COMMIT_ID.test(commit)) {
-      return blocker(
-        'tag-invalid',
-        `the observed tag "${bounded(name)}" does not resolve to a full commit id`,
-      );
-    }
     const previous = seen.get(name);
     if (previous !== undefined) {
-      if (previous !== commit) {
+      if (previous !== peeledCommit) {
         return blocker(
           'tag-invalid',
           `the observed tag "${bounded(name)}" resolved to two different commits`,
@@ -168,13 +170,21 @@ function classifyTags(
       }
       continue;
     }
-    seen.set(name, commit);
+    seen.set(name, peeledCommit);
     const match = STABLE_TAG.exec(name);
-    if (match === null) {
+    // Only a name that could select the version has to resolve to a commit: every other
+    // observation is retained for later conflict checks without blocking the release.
+    if (match === null || name.length > MAX_TAG_NAME_LENGTH) {
       other.push(name);
       continue;
     }
-    stable.push({ name, commit, parts: [match[1]!, match[2]!, match[3]!] });
+    if (!COMMIT_ID.test(peeledCommit)) {
+      return blocker(
+        'tag-invalid',
+        `the observed stable tag "${bounded(name)}" does not resolve to a full commit id`,
+      );
+    }
+    stable.push({ name, commit: peeledCommit, parts: [match[1]!, match[2]!, match[3]!] });
   }
   stable.sort((left, right) => compareVersion(left.parts, right.parts));
   other.sort();
@@ -234,6 +244,21 @@ function deepFreeze<T>(value: T): T {
 }
 
 /**
+ * A notes read the checkout's Git output bound refused is the oversized-notes case: those notes
+ * are above what this checkout can read, so the caller sees `notes-too-large` rather than an
+ * unrelated Git bound. Any other read failure keeps its own code.
+ */
+function notesBlocker(blocker: ReleaseGitBlocker, what: string): ReleaseMetadataBlocker {
+  if (blocker.code === 'git-output-too-large') {
+    return {
+      code: 'notes-too-large',
+      message: `${what} is larger than this checkout can read; preparation is blocked rather than truncating the release notes`,
+    };
+  }
+  return { code: blocker.code, message: `reading ${what} failed: ${blocker.message}` };
+}
+
+/**
  * Derives version, title, annotation message and exact notes for one candidate.
  *
  * A failure is a typed blocker, never a fallback to another version, another candidate or a
@@ -242,7 +267,22 @@ function deepFreeze<T>(value: T): T {
 export async function deriveReleaseMetadata(
   options: DeriveReleaseMetadataOptions,
 ): Promise<ReleaseMetadataResult> {
+  if (options === null || typeof options !== 'object') {
+    return {
+      ok: false,
+      blocker: blocker(
+        'invalid-request',
+        'release metadata needs a release checkout, its candidate and the observed remote tags',
+      ),
+    };
+  }
   const { checkout, candidate, tags } = options;
+  if (typeof checkout?.candidate !== 'function') {
+    return {
+      ok: false,
+      blocker: blocker('invalid-request', 'release metadata needs a release checkout'),
+    };
+  }
   const maxNotesBytes = options.maxNotesBytes ?? DEFAULT_MAX_NOTES_BYTES;
   if (!Number.isSafeInteger(maxNotesBytes) || maxNotesBytes < 1) {
     return {
@@ -253,7 +293,15 @@ export async function deriveReleaseMetadata(
       ),
     };
   }
+  if (!Array.isArray(tags)) {
+    return {
+      ok: false,
+      blocker: blocker('invalid-request', 'the observed remote tags must be an array'),
+    };
+  }
   if (
+    candidate === null ||
+    typeof candidate !== 'object' ||
     typeof candidate.commit !== 'string' ||
     !COMMIT_ID.test(candidate.commit) ||
     typeof candidate.branch !== 'string' ||
@@ -265,6 +313,27 @@ export async function deriveReleaseMetadata(
       blocker: blocker(
         'candidate-invalid',
         'the selected candidate is not a full commit and branch',
+      ),
+    };
+  }
+  // The candidate is never taken on trust: only the commit this checkout actually fetched may
+  // become immutable release metadata, so a stale or caller-invented candidate fails here.
+  const fetched = checkout.candidate();
+  if (fetched === null) {
+    return {
+      ok: false,
+      blocker: blocker(
+        'candidate-invalid',
+        'the release candidate must be fetched before its metadata is derived',
+      ),
+    };
+  }
+  if (fetched.commit !== candidate.commit || fetched.branch !== candidate.branch) {
+    return {
+      ok: false,
+      blocker: blocker(
+        'candidate-invalid',
+        `the supplied candidate ${bounded(candidate.commit)} on ${bounded(candidate.branch)} is not the candidate this checkout fetched (${fetched.commit} on ${bounded(fetched.branch)})`,
       ),
     };
   }
@@ -287,14 +356,19 @@ export async function deriveReleaseMetadata(
           stableTags: stable.map((entry) => entry.name),
         };
 
-  if (baseline.commit !== null) {
-    const ancestry = await checkout.isAncestor(baseline.commit, candidate.commit);
+  if (highest !== null) {
+    const ancestry = await checkout.isAncestor(highest.commit, candidate.commit);
     if (!ancestry.ok) {
+      // Only a Git read that cannot place the baseline object in the candidate history becomes
+      // `baseline-unavailable`; an interruption or timeout keeps its own code.
+      const missing = ancestry.blocker.code === 'git-failed';
       return {
         ok: false,
         blocker: blocker(
-          'baseline-unavailable',
-          `the baseline tag "${highest?.name ?? ''}" cannot be checked inside the fetched candidate history: ${ancestry.blocker.message}`,
+          missing ? 'baseline-unavailable' : ancestry.blocker.code,
+          missing
+            ? `the baseline tag "${highest.name}" cannot be checked inside the fetched candidate history: ${ancestry.blocker.message}`
+            : `checking the baseline tag "${highest.name}" against the candidate failed: ${ancestry.blocker.message}`,
         ),
       };
     }
@@ -303,7 +377,7 @@ export async function deriveReleaseMetadata(
         ok: false,
         blocker: blocker(
           'baseline-not-ancestor',
-          `the baseline tag "${highest?.name ?? ''}" (${baseline.commit}) is not an ancestor of the candidate ${candidate.commit}`,
+          `the baseline tag "${highest.name}" (${highest.commit}) is not an ancestor of the candidate ${candidate.commit}`,
         ),
       };
     }
@@ -313,29 +387,24 @@ export async function deriveReleaseMetadata(
   if (!entry.ok) {
     return {
       ok: false,
-      blocker: blocker(
-        entry.blocker.code,
-        `reading ${RELEASE_NOTES_PATH} at the candidate failed: ${entry.blocker.message}`,
-      ),
+      blocker: notesBlocker(entry.blocker, `${RELEASE_NOTES_PATH} at the candidate`),
     };
   }
 
   let notes: ReleaseNotes;
   const committed = entry.value;
   if (committed !== null && committed.mode !== SYMLINK_MODE) {
-    if (!REGULAR_FILE_MODES.has(committed.mode) || committed.type !== 'blob') {
+    if (
+      !REGULAR_FILE_MODES.has(committed.mode) ||
+      committed.type !== 'blob' ||
+      committed.bytes === null
+    ) {
       return {
         ok: false,
         blocker: blocker(
           'notes-unsupported-mode',
-          `${RELEASE_NOTES_PATH} at the candidate is a ${committed.type} with Git mode ${committed.mode}; only a regular file may supply release notes`,
+          `${RELEASE_NOTES_PATH} at the candidate is not a readable regular file (${committed.type}, mode ${committed.mode})`,
         ),
-      };
-    }
-    if (committed.bytes === null) {
-      return {
-        ok: false,
-        blocker: blocker('notes-unsupported-mode', `${RELEASE_NOTES_PATH} bytes were not readable`),
       };
     }
     const validated = validateNotes(committed.bytes, maxNotesBytes);
@@ -347,10 +416,7 @@ export async function deriveReleaseMetadata(
     if (!subjects.ok) {
       return {
         ok: false,
-        blocker: blocker(
-          subjects.blocker.code,
-          `reading committed subjects for the release notes failed: ${subjects.blocker.message}`,
-        ),
+        blocker: notesBlocker(subjects.blocker, 'the committed release note subjects'),
       };
     }
     const generated = subjectNotes(subjects.value, candidate.commit, version, maxNotesBytes);

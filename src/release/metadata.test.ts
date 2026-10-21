@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { releaseNotesDigest } from '../core/releaseDigest.js';
+import type { ReleaseCandidate } from '../core/release.js';
 import type { ResolvedReleaseRepository } from '../config/schema.js';
 import { createReleaseCheckout, type ReleaseCheckout } from './checkout.js';
 import type { VerifiedReleaseIdentity } from './identity.js';
@@ -63,6 +64,29 @@ function commitAll(work: string, message: string): string {
   return git(work, 'rev-parse', 'HEAD');
 }
 
+/**
+ * Writes a commit whose subject holds raw bytes, which `git commit -m` cannot do: it re-encodes
+ * an invalid UTF-8 message instead of storing it, so the object is built through plumbing.
+ */
+function commitRawSubject(work: string, subject: Buffer): string {
+  const header = Buffer.concat([
+    Buffer.from(
+      `tree ${git(work, 'write-tree')}\nparent ${git(work, 'rev-parse', 'HEAD')}\nauthor Forge Desk Test <test@example.test> 1700000000 +0000\ncommitter Forge Desk Test <test@example.test> 1700000000 +0000\n\n`,
+    ),
+    subject,
+    Buffer.from('\n'),
+  ]);
+  const oid = execFileSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], {
+    cwd: work,
+    input: header,
+    env: { ...GIT_ENV, PATH: REAL_PATH },
+  })
+    .toString('utf8')
+    .trim();
+  git(work, 'update-ref', 'refs/heads/main', oid);
+  return oid;
+}
+
 /** Creates an annotated tag and returns the observation a caller would supply for it. */
 function annotate(work: string, name: string, target = 'HEAD'): ObservedTag {
   git(work, 'tag', '-a', name, '-m', name, target);
@@ -98,7 +122,7 @@ afterEach(() => {
   process.env['PATH'] = REAL_PATH;
 });
 
-function checkoutFor(fixture: Fixture): ReleaseCheckout {
+function checkoutFor(fixture: Fixture, options: { maxOutputBytes?: number } = {}): ReleaseCheckout {
   const repository: ResolvedReleaseRepository = {
     id: 'app',
     source: 'gt',
@@ -129,29 +153,56 @@ function checkoutFor(fixture: Fixture): ReleaseCheckout {
     },
     ssh: { user: 'git', host: 'gitea.example.test', port: '22', path: 'acme/api' },
   };
-  return createReleaseCheckout({ stateDir: fixture.stateDir, repository, identity });
+  return createReleaseCheckout({
+    stateDir: fixture.stateDir,
+    repository,
+    identity,
+    ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
+  });
+}
+
+/** A checkout that already fetched its candidate, exactly as a preparation caller would have it. */
+async function openCandidate(
+  fixture: Fixture,
+  checkoutOptions: { maxOutputBytes?: number } = {},
+): Promise<{ checkout: ReleaseCheckout; candidate: ReleaseCandidate }> {
+  const checkout = checkoutFor(fixture, checkoutOptions);
+  const fetched = await checkout.fetchCandidate();
+  if (!fetched.ok) throw new Error(`expected a candidate, got ${fetched.blocker.code}`);
+  return { checkout, candidate: fetched.value };
+}
+
+interface DeriveOptions {
+  maxNotesBytes?: number;
+  /** Override the candidate handed to the derivation; the fetched one is the default. */
+  candidate?: ReleaseCandidate;
+  /** Extra checkout options, for example a smaller Git output bound. */
+  checkout?: { maxOutputBytes?: number };
 }
 
 async function derive(
   fixture: Fixture,
   tags: readonly ObservedTag[],
-  options: { maxNotesBytes?: number } = {},
+  options: DeriveOptions = {},
 ): Promise<ReleaseMetadataResult> {
-  const checkout = checkoutFor(fixture);
-  const fetched = await checkout.fetchCandidate();
-  if (!fetched.ok) throw new Error(`expected a candidate, got ${fetched.blocker.code}`);
+  const { checkout, candidate } = await openCandidate(fixture, options.checkout ?? {});
   return deriveReleaseMetadata({
     checkout,
-    candidate: fetched.value,
+    candidate: options.candidate ?? candidate,
     tags,
     ...(options.maxNotesBytes !== undefined ? { maxNotesBytes: options.maxNotesBytes } : {}),
   });
 }
 
+/** The same call with unchecked input, to prove malformed values become blockers, not throws. */
+async function deriveRaw(input: unknown): Promise<ReleaseMetadataResult> {
+  return deriveReleaseMetadata(input as Parameters<typeof deriveReleaseMetadata>[0]);
+}
+
 async function metadataOf(
   fixture: Fixture,
   tags: readonly ObservedTag[] = [],
-  options: { maxNotesBytes?: number } = {},
+  options: DeriveOptions = {},
 ): Promise<ReleaseMetadata> {
   const result = await derive(fixture, tags, options);
   if (!result.ok) throw new Error(`expected metadata, got ${result.blocker.code}`);
@@ -238,13 +289,33 @@ describe('release version derivation', () => {
     expect(metadata.otherTags).toEqual(['1.5.0', 'V1.0.0', 'release-9', 'v01.2.3', 'v2.0.0-rc.1']);
   });
 
+  it('retains overlong and unresolved tags as observations instead of blocking', async () => {
+    const work = newWork();
+    writeFileSync(join(work, 'README.md'), '# api\n');
+    writeFileSync(join(work, 'RELEASE_NOTES.md'), NOTES);
+    const first = commitAll(work, 'Add the API');
+    const overlong = `v1.2.${'9'.repeat(130)}`;
+    const fixture = publish(work);
+
+    const metadata = await metadataOf(fixture, [
+      annotate(work, 'v0.3.4', first),
+      { name: overlong, peeledCommit: first },
+      { name: 'unresolved-peel', peeledCommit: 'not-a-commit' },
+    ]);
+
+    expect(metadata.version).toBe('v0.3.5');
+    expect(metadata.baseline.stableTags).toEqual(['v0.3.4']);
+    expect(metadata.otherTags).toEqual([overlong, 'unresolved-peel'].sort());
+  });
+
   it('blocks a baseline tag that is not an ancestor of the candidate', async () => {
     const work = newWork();
     writeFileSync(join(work, 'README.md'), '# api\n');
     const first = commitAll(work, 'Add the API');
     writeFileSync(join(work, 'RELEASE_NOTES.md'), NOTES);
     const second = commitAll(work, 'Add release notes');
-    const behind = annotate(work, 'v0.1.0', second);
+    const behind = annotate(work, 'v0.2.0', second);
+    const ancestor = annotate(work, 'v0.1.0', first);
     const fixture = publish(work);
 
     // The first preparation sees `second` and leaves it in the cache.
@@ -256,11 +327,12 @@ describe('release version derivation', () => {
       env: { ...GIT_ENV, PATH: REAL_PATH },
     });
 
-    const blocker = blockerOf(await derive(fixture, [behind]));
+    // The highest stable tag is the one that must be an ancestor, even when a lower tag is.
+    const blocker = blockerOf(await derive(fixture, [ancestor, behind]));
 
     expect(blocker.code).toBe('baseline-not-ancestor');
-    expect(blocker.message).toContain('v0.1.0');
-    expect(blocker.message).toContain(first);
+    expect(blocker.message).toContain('v0.2.0');
+    expect(blocker.message).toContain(second);
   });
 
   it('blocks a baseline whose commit the candidate history does not contain', async () => {
@@ -281,6 +353,54 @@ describe('release version derivation', () => {
 
     expect(blocker.code).toBe('baseline-unavailable');
     expect(blocker.message).toContain('v0.1.0');
+  });
+
+  it('blocks metadata for a candidate the checkout did not fetch', async () => {
+    const work = newWork();
+    writeFileSync(join(work, 'README.md'), '# api\n');
+    const first = commitAll(work, 'Add the API');
+    writeFileSync(join(work, 'RELEASE_NOTES.md'), NOTES);
+    commitAll(work, 'Add the release notes');
+    const fixture = publish(work);
+
+    const stale = blockerOf(
+      await derive(fixture, [], { candidate: { commit: first, branch: 'main' } }),
+    );
+    expect(stale.code).toBe('candidate-invalid');
+    expect(stale.message).toContain(first);
+
+    const wrongBranch = blockerOf(
+      await derive(fixture, [], { candidate: { commit: first, branch: 'release' } }),
+    );
+    expect(wrongBranch.code).toBe('candidate-invalid');
+  });
+
+  it('returns typed blockers for malformed input instead of throwing', async () => {
+    const work = newWork();
+    writeFileSync(join(work, 'RELEASE_NOTES.md'), NOTES);
+    commitAll(work, 'Add the release notes');
+    const fixture = publish(work);
+    const { checkout, candidate } = await openCandidate(fixture);
+
+    const cases: Array<{ input: unknown; code: string }> = [
+      { input: null, code: 'invalid-request' },
+      { input: {}, code: 'invalid-request' },
+      { input: { checkout, candidate, tags: undefined }, code: 'invalid-request' },
+      { input: { checkout, candidate: null, tags: [] }, code: 'candidate-invalid' },
+      { input: { checkout, candidate: undefined, tags: [] }, code: 'candidate-invalid' },
+      { input: { checkout, candidate, tags: [null] }, code: 'tag-invalid' },
+      { input: { checkout, candidate, tags: [{ name: 'v0.1.0' }] }, code: 'tag-invalid' },
+    ];
+
+    for (const { input, code } of cases) {
+      expect(blockerOf(await deriveRaw(input)).code).toBe(code);
+    }
+
+    // A checkout that fetched nothing cannot derive metadata for any candidate.
+    const empty = blockerOf(
+      await deriveRaw({ checkout: checkoutFor(fixture), candidate, tags: [] }),
+    );
+    expect(empty.code).toBe('candidate-invalid');
   });
 
   it('rejects unsafe tag observations instead of choosing a version from them', async () => {
@@ -382,6 +502,31 @@ describe('release notes derivation', () => {
     }
   });
 
+  it('rejects a fallback built from a commit subject that is not valid UTF-8', async () => {
+    const work = newWork();
+    writeFileSync(join(work, 'README.md'), '# api\n');
+    commitAll(work, 'Add the API');
+    commitRawSubject(work, Buffer.from([0x41, 0xff]));
+    const fixture = publish(work);
+
+    const blocker = blockerOf(await derive(fixture, []));
+
+    expect(blocker.code).toBe('notes-invalid-utf8');
+  });
+
+  it('accepts an executable regular notes file and rejects a directory in its place', async () => {
+    const work = newWork();
+    writeFileSync(join(work, 'RELEASE_NOTES.md'), NOTES);
+    chmodSync(join(work, 'RELEASE_NOTES.md'), 0o755);
+    commitAll(work, 'Add the release notes');
+    const fixture = publish(work);
+
+    const metadata = await metadataOf(fixture);
+
+    expect(metadata.notes.text).toBe(NOTES);
+    expect(metadata.notes.source).toBe('file');
+  });
+
   it('blocks oversized notes with an explicit code instead of truncating them', async () => {
     const work = newWork();
     const oversized = Buffer.alloc(DEFAULT_MAX_NOTES_BYTES + 1, 'a');
@@ -394,6 +539,31 @@ describe('release notes derivation', () => {
     expect(blocker.code).toBe('notes-too-large');
     expect(blocker.message).toContain(String(oversized.byteLength));
     expect(blocker.message).toContain('1024');
+  });
+
+  it('reports notes the checkout cannot read as oversized instead of a Git bound', async () => {
+    const work = newWork();
+    writeFileSync(join(work, 'RELEASE_NOTES.md'), Buffer.alloc(4096, 'a'));
+    commitAll(work, 'Add the release notes');
+    const fixture = publish(work);
+
+    const blocker = blockerOf(
+      await derive(fixture, [], { maxNotesBytes: 8192, checkout: { maxOutputBytes: 1024 } }),
+    );
+
+    expect(blocker.code).toBe('notes-too-large');
+    expect(blocker.message).not.toContain('git-output-too-large');
+  });
+
+  it('bounds the commit-subject fallback as well', async () => {
+    const work = newWork();
+    writeFileSync(join(work, 'README.md'), '# api\n');
+    commitAll(work, `Add ${'a'.repeat(200)}`);
+    const fixture = publish(work);
+
+    const blocker = blockerOf(await derive(fixture, [], { maxNotesBytes: 64 }));
+
+    expect(blocker.code).toBe('notes-too-large');
   });
 
   it('blocks unpreparable bounds and candidates without touching the notes', async () => {

@@ -432,12 +432,14 @@ describe('release object reads', () => {
     fakeSsh(fixture);
     const checkout = checkoutFor(fixture);
     expect(Object.keys(checkout).sort()).toEqual([
+      'candidate',
       'fetchCandidate',
       'isAncestor',
       'readCommitSubjects',
       'readEntry',
     ]);
-    // Reads cannot precede a verified candidate fetch.
+    // Reads cannot precede a verified candidate fetch, and no candidate is exposed yet.
+    expect(checkout.candidate()).toBeNull();
     expect(blockerOf(await checkout.readEntry('0'.repeat(40), 'README.md')).code).toBe(
       'git-invalid-request',
     );
