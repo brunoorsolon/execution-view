@@ -186,6 +186,17 @@ function describe(info: Stats): string {
   return `uid ${info.uid}, mode 0${(info.mode & 0o777).toString(8)}`;
 }
 
+/** Percent-decode a string (twice) so encoded parameter names cannot hide a credential. */
+function decodePercent(text: string): string {
+  let decoded = text;
+  for (let pass = 0; pass < 2; pass += 1) {
+    decoded = decoded.replace(/%([0-9A-Fa-f]{2})/g, (_, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+  }
+  return decoded;
+}
+
 function malformed(message: string): ReleaseStateError {
   return new ReleaseStateError('malformed-record', message);
 }
@@ -196,7 +207,8 @@ function assertSafeContent(value: unknown, key = 'record', depth = 0): void {
     throw new ReleaseStateError('unsafe-content', `${key}: nested too deeply to verify safely`);
   }
   if (typeof value === 'string') {
-    if (FORBIDDEN_VALUE.some((pattern) => pattern.test(value))) {
+    const decoded = decodePercent(value);
+    if (FORBIDDEN_VALUE.some((pattern) => pattern.test(value) || pattern.test(decoded))) {
       throw new ReleaseStateError('unsafe-content', `${key}: contains credential material`);
     }
     return;
@@ -757,8 +769,6 @@ export class ReleaseStateStore {
     } catch (error) {
       throw new ReleaseStateError('write-failed', `could not create ${dir}`, { cause: error });
     }
-    // The new directory entry must survive a crash too.
-    this.syncDirectory(this.stateDir);
     return dir;
   }
 
@@ -860,6 +870,8 @@ export class ReleaseStateStore {
         closeSync(fd);
       }
       this.syncDirectory(dir);
+      // The record directory's own entry must be durable too, including one created earlier.
+      this.syncDirectory(this.stateDir);
     } catch (error) {
       if (error instanceof ReleaseStateError) throw error;
       throw new ReleaseStateError('write-failed', `could not synchronize ${kind} record ${id}`, {
@@ -886,6 +898,8 @@ export class ReleaseStateStore {
       if (mode === 'create') this.writeExclusive(file, dir, text);
       else this.writeAtomic(file, dir, text);
       this.syncDirectory(dir);
+      // Establish the record directory's entry as well, even when it already existed.
+      this.syncDirectory(this.stateDir);
     } catch (error) {
       if (error instanceof ReleaseStateError) throw error;
       throw new ReleaseStateError(

@@ -1,5 +1,7 @@
 import {
   chmodSync,
+  fstatSync,
+  fsyncSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -473,26 +475,49 @@ describe('ReleaseStateStore immutability and integrity', () => {
     );
   });
 
-  it('does not report success for an identical approval retry after a synchronization failure', () => {
+  it('re-synchronizes record and directory before an identical retry can succeed', () => {
     const { stateDir } = tempStateDir();
-    const healthy = new ReleaseStateStore({ stateDir });
-    healthy.writePlan(plan());
+    new ReleaseStateStore({ stateDir }).writePlan(plan());
 
-    // The record file synchronizes, the directory synchronization fails, for every attempt.
-    let calls = 0;
-    const failing = () => {
-      calls += 1;
-      if (calls > 1) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+    // Every directory synchronization fails, so the record is linked but never reported durable.
+    const failing = (fd: number) => {
+      if (fstatSync(fd).isDirectory()) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+      fsyncSync(fd);
     };
-    const failingStore = new ReleaseStateStore({ stateDir, fsync: failing });
-    expectStateError('write-failed', () => failingStore.writeIntent(intent()));
-    const afterFirst = calls;
+    const store = new ReleaseStateStore({ stateDir, fsync: failing });
+    expectStateError('write-failed', () => store.writeIntent(intent()));
+    // Readable bytes are exactly why the retry must synchronize instead of trusting them.
+    expect(store.readIntent('plan-1')).toEqual(intent());
+    expectStateError('write-failed', () => store.writeIntent(intent()));
 
-    // The retry must attempt synchronization again instead of trusting readable bytes.
-    expectStateError('write-failed', () => failingStore.writeIntent(intent()));
-    expect(calls).toBeGreaterThan(afterFirst);
+    const recovered = new ReleaseStateStore({ stateDir });
+    expect(recovered.writeIntent(intent())).toEqual(intent());
+    expect(recovered.readIntent('plan-1').jobId).toBe('job-1');
+  });
 
-    // A store that can synchronize still returns the same durable evidence.
+  it('synchronizes a newly created record directory entry before an identical retry succeeds', () => {
+    const { stateDir } = tempStateDir();
+    new ReleaseStateStore({ stateDir }).writePlan(plan());
+
+    // Only the state directory's own descriptor fails, as when its child entry was created.
+    const stateInfo = statSync(stateDir);
+    let stateSyncs = 0;
+    const failing = (fd: number) => {
+      const info = fstatSync(fd);
+      if (info.dev === stateInfo.dev && info.ino === stateInfo.ino) {
+        stateSyncs += 1;
+        throw Object.assign(new Error('EIO'), { code: 'EIO' });
+      }
+      fsyncSync(fd);
+    };
+    const store = new ReleaseStateStore({ stateDir, fsync: failing });
+    expectStateError('write-failed', () => store.writeIntent(intent()));
+    expect(stateSyncs).toBe(1);
+
+    // The retry must establish the created directory's entry, not just the record bytes.
+    expectStateError('write-failed', () => store.writeIntent(intent()));
+    expect(stateSyncs).toBe(2);
+
     const recovered = new ReleaseStateStore({ stateDir });
     expect(recovered.writeIntent(intent())).toEqual(intent());
     expect(recovered.readIntent('plan-1').jobId).toBe('job-1');
@@ -656,12 +681,22 @@ describe('ReleaseStateStore secret hygiene', () => {
         }),
       ),
     );
-    // A credential carried in a query parameter is the same leak as userinfo.
+    // A credential carried in a query parameter is the same leak as userinfo, encoded or not.
     expectStateError('unsafe-content', () =>
       store.writePlan(
         plan('plan-secret', {
           notes: createReleaseNotes(
             'Fetched https://forge.example/api?access_token=review-canary-123456789\n',
+            'file',
+          ),
+        }),
+      ),
+    );
+    expectStateError('unsafe-content', () =>
+      store.writePlan(
+        plan('plan-secret', {
+          notes: createReleaseNotes(
+            'Fetched https://forge.example/api?access%5F%74oken=review-canary-123456789\n',
             'file',
           ),
         }),
