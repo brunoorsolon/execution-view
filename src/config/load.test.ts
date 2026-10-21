@@ -808,6 +808,13 @@ describe('release configuration', () => {
         {},
       ).releases,
     ).toMatchObject({ publicOrigin: 'http://localhost:3000' });
+    // The stored origin is what a browser serializes, not the raw spelling.
+    expect(
+      parseConfig(
+        JSON.stringify(withReleases((r) => (r['publicOrigin'] = 'HTTPS://DESK.EXAMPLE:443'))),
+        {},
+      ).releases,
+    ).toMatchObject({ publicOrigin: 'https://desk.example' });
   });
 
   it('requires the application login', () => {
@@ -937,6 +944,9 @@ describe('release configuration', () => {
     ).toContain('email');
     expect(
       releaseError((r) => (r['repositories'][0].tagger.name = 'Bot\nInjected')).message,
+    ).toContain('control characters');
+    expect(
+      releaseError((r) => (r['repositories'][0].tagger.email = 'bot\u0000@example.com')).message,
     ).toContain('control characters');
   });
 });

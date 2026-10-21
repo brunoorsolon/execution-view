@@ -327,7 +327,9 @@ function resolveReleases(
   }
   return {
     enabled: true,
-    publicOrigin: stripTrailingSlashes(enabled.publicOrigin),
+    // Store the browser's serialized origin, so later request-origin comparisons cannot differ in
+    // case, default port or dot segments.
+    publicOrigin: new URL(enabled.publicOrigin).origin,
     stateDir: enabled.stateDir,
     repositories,
   };

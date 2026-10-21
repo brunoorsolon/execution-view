@@ -11,7 +11,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ConfigError } from './load.js';
+import { ConfigError, parseConfig } from './load.js';
 import { loadReleaseRuntime } from './releaseRuntime.js';
 import { startServer } from '../server/index.js';
 import type { ResolvedReleaseRepository, ResolvedReleases, ResolvedSource } from './schema.js';
@@ -132,6 +132,33 @@ describe('release runtime prerequisites', () => {
     expect(
       errorOf(() => loadReleaseRuntime(releases(f), [planningSource('release-token')], {})).message,
     ).toContain('dedicated');
+  });
+
+  it('compares the effective token, ignoring surrounding whitespace', () => {
+    const f = files();
+    expect(
+      errorOf(() => loadReleaseRuntime(releases(f), [planningSource('release-token ')], {}))
+        .message,
+    ).toContain('dedicated');
+
+    // The same through the real config path, where an inline planning token keeps its whitespace.
+    const cfg = parseConfig(
+      JSON.stringify({
+        sources: [
+          {
+            id: 'gt',
+            kind: 'gitea',
+            baseUrl: 'https://gitea.example.com',
+            token: 'release-token ',
+          },
+        ],
+        views: [{ id: 'v', source: 'gt', repos: ['example/app'] }],
+      }),
+      {},
+    );
+    expect(errorOf(() => loadReleaseRuntime(releases(f), cfg.sources, {})).message).toContain(
+      'dedicated',
+    );
   });
 
   it('requires a private state directory owned by the runtime user', () => {

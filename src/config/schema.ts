@@ -225,9 +225,9 @@ const gitIdentitySchema = z
       .string()
       .trim()
       .refine(
-        (s) => /^[^@<>\s]+@[^@<>\s]+$/.test(s),
+        (s) => printable(s) && /^[^@<>\s]+@[^@<>\s]+$/.test(s),
         () => ({
-          message: 'must be a plain email address without "<" or ">"',
+          message: 'must be a plain email address without control characters, "<" or ">"',
         }),
       ),
   })

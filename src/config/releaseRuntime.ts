@@ -191,8 +191,10 @@ export function loadReleaseRuntime(
   for (const name of missingExecutables()) {
     errors.push(`release runtime: the ${name} executable was not found in PATH`);
   }
+  // Normalize both sides: an inline planning token may carry whitespace that the provider's
+  // Authorization header strips anyway, so comparing raw strings would miss a shared credential.
   const planningTokens = new Set(
-    sources.map((s) => s.token).filter((t): t is string => t !== null && t !== ''),
+    sources.map((s) => s.token?.trim()).filter((t): t is string => t !== undefined && t !== ''),
   );
   const tokens = releases.repositories.map((repository) => {
     const at = `releases.repositories[${repository.id}]`;
