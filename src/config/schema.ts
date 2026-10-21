@@ -148,7 +148,7 @@ function publicOriginProblem(s: string): string | null {
   return null;
 }
 
-function isLoopbackHost(hostname: string): boolean {
+export function isLoopbackHost(hostname: string): boolean {
   if (hostname === 'localhost' || hostname === '::1' || hostname === '[::1]') return true;
   // A dotted prefix would also accept a public name such as 127.evil.com.
   const ipv4 = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
