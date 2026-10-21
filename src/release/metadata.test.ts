@@ -355,6 +355,21 @@ describe('release version derivation', () => {
     expect(blocker.message).toContain('v0.1.0');
   });
 
+  it('refuses a version that outgrows the supported canonical tag name', async () => {
+    const work = newWork();
+    writeFileSync(join(work, 'README.md'), '# api\n');
+    writeFileSync(join(work, 'RELEASE_NOTES.md'), NOTES);
+    const first = commitAll(work, 'Add the API');
+    const atLimit = `v1.2.${'9'.repeat(123)}`;
+    const fixture = publish(work);
+
+    const blocker = blockerOf(await derive(fixture, [annotate(work, atLimit, first)]));
+
+    expect(atLimit.length).toBe(128);
+    expect(blocker.code).toBe('version-unsupported');
+    expect(blocker.message).toContain('129');
+  });
+
   it('blocks metadata for a candidate the checkout did not fetch', async () => {
     const work = newWork();
     writeFileSync(join(work, 'README.md'), '# api\n');
@@ -472,6 +487,20 @@ describe('release notes derivation', () => {
 
     expect(metadata.notes.source).toBe('commit-subjects');
     expect(metadata.notes.text).toBe('# v0.1.0\n\n- Add the release notes link\n');
+  });
+
+  it('never reads a symlink target before choosing the commit-subject fallback', async () => {
+    const work = newWork();
+    writeFileSync(join(work, 'README.md'), '# api\n');
+    // A target longer than the checkout can read must not make the fallback look oversized.
+    symlinkSync('x'.repeat(1500), join(work, 'RELEASE_NOTES.md'));
+    commitAll(work, 'Release changes');
+    const fixture = publish(work);
+
+    const metadata = await metadataOf(fixture, [], { checkout: { maxOutputBytes: 1024 } });
+
+    expect(metadata.notes.source).toBe('commit-subjects');
+    expect(metadata.notes.text).toBe('# v0.1.0\n\n- Release changes\n');
   });
 
   it('rejects notes that cannot be published exactly as committed', async () => {

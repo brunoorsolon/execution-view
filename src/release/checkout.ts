@@ -57,8 +57,14 @@ export interface ReleaseCheckout {
   /**
    * Reads one committed entry at `<commit>:<path>`, or null when the path is absent. Only
    * history reachable from this instance's last successfully fetched candidate is readable.
+   * With `content: false` only the Git mode and type are read, so classifying an entry (for
+   * example to detect a symlink) never depends on the blob's size.
    */
-  readEntry(commit: string, path: string): Promise<ReleaseGitResult<ReleaseEntry | null>>;
+  readEntry(
+    commit: string,
+    path: string,
+    options?: { content?: boolean },
+  ): Promise<ReleaseGitResult<ReleaseEntry | null>>;
   /**
    * True when `ancestor` is reachable from `descendant`. Both are full commit ids, and the
    * descendant must belong to the fetched candidate, so a tag observation can be placed against
@@ -347,7 +353,11 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
       }
     },
 
-    async readEntry(commit: string, path: string): Promise<ReleaseGitResult<ReleaseEntry | null>> {
+    async readEntry(
+      commit: string,
+      path: string,
+      options?: { content?: boolean },
+    ): Promise<ReleaseGitResult<ReleaseEntry | null>> {
       try {
         const rev = assertSafeCommit(commit);
         const entryPath = assertSafePath(path);
@@ -389,7 +399,9 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
             'a committed release entry named a different path than the one requested',
           );
         }
-        if (type !== 'blob') return { ok: true, value: { mode, type, bytes: null } };
+        if (type !== 'blob' || options?.content === false) {
+          return { ok: true, value: { mode, type, bytes: null } };
+        }
         const blob = await git(
           ['cat-file', 'blob', objectId],
           'read a committed release blob',

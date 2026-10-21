@@ -45,6 +45,7 @@ export type ReleaseMetadataBlockerCode =
   | 'invalid-request'
   | 'candidate-invalid'
   | 'tag-invalid'
+  | 'version-unsupported'
   | 'baseline-not-ancestor'
   | 'baseline-unavailable'
   | 'notes-empty'
@@ -347,6 +348,18 @@ export async function deriveReleaseMetadata(
     highest === null
       ? 'v0.1.0'
       : `v${highest.parts[0]}.${highest.parts[1]}.${BigInt(highest.parts[2]) + 1n}`;
+  // The increment can outgrow the canonical name the classifier accepts, which would make the
+  // published tag unrecognizable to the next preparation. Refuse it instead of returning
+  // metadata whose own version can never become the next baseline.
+  if (version.length > MAX_TAG_NAME_LENGTH) {
+    return {
+      ok: false,
+      blocker: blocker(
+        'version-unsupported',
+        `the next version "${bounded(version)}" is ${version.length} characters, longer than the supported ${MAX_TAG_NAME_LENGTH}-character stable tag name`,
+      ),
+    };
+  }
   const baseline: ReleaseBaseline =
     highest === null
       ? { tag: null, commit: null, stableTags: [] }
@@ -383,7 +396,9 @@ export async function deriveReleaseMetadata(
     }
   }
 
-  const entry = await checkout.readEntry(candidate.commit, RELEASE_NOTES_PATH);
+  // The mode decides the notes source before any blob is read: a symlink's target text is not
+  // release notes, so it is never read and can never make the notes look oversized.
+  const entry = await checkout.readEntry(candidate.commit, RELEASE_NOTES_PATH, { content: false });
   if (!entry.ok) {
     return {
       ok: false,
@@ -394,20 +409,33 @@ export async function deriveReleaseMetadata(
   let notes: ReleaseNotes;
   const committed = entry.value;
   if (committed !== null && committed.mode !== SYMLINK_MODE) {
-    if (
-      !REGULAR_FILE_MODES.has(committed.mode) ||
-      committed.type !== 'blob' ||
-      committed.bytes === null
-    ) {
+    if (!REGULAR_FILE_MODES.has(committed.mode) || committed.type !== 'blob') {
       return {
         ok: false,
         blocker: blocker(
           'notes-unsupported-mode',
-          `${RELEASE_NOTES_PATH} at the candidate is not a readable regular file (${committed.type}, mode ${committed.mode})`,
+          `${RELEASE_NOTES_PATH} at the candidate is not a regular file (${committed.type}, mode ${committed.mode})`,
         ),
       };
     }
-    const validated = validateNotes(committed.bytes, maxNotesBytes);
+    const content = await checkout.readEntry(candidate.commit, RELEASE_NOTES_PATH);
+    if (!content.ok) {
+      return {
+        ok: false,
+        blocker: notesBlocker(content.blocker, `${RELEASE_NOTES_PATH} at the candidate`),
+      };
+    }
+    const bytes = content.value?.bytes ?? null;
+    if (bytes === null) {
+      return {
+        ok: false,
+        blocker: blocker(
+          'notes-unsupported-mode',
+          `${RELEASE_NOTES_PATH} at the candidate was not readable as a regular file`,
+        ),
+      };
+    }
+    const validated = validateNotes(bytes, maxNotesBytes);
     if (typeof validated !== 'string') return { ok: false, blocker: validated };
     notes = createReleaseNotes(validated, 'file');
   } else {
