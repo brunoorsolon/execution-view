@@ -456,7 +456,14 @@ describe('login page', () => {
       url: '/api/session',
       headers: { cookie: `a=b; ${cookie}` },
     });
-    expect(session.json()).toEqual({ username: 'admin' });
+    expect(session.json()).toEqual({
+      username: 'admin',
+      csrfToken: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+    });
+    // The CSRF token is bound to the session, not reused across logins.
+    const second = cookieOf(await login(app, 'username=admin&password=s3cret'));
+    const other = await app.inject({ url: '/api/session', headers: { cookie: second } });
+    expect(other.json().csrfToken).not.toBe(session.json().csrfToken);
   });
 
   it('marks the cookie Secure behind HTTPS', async () => {

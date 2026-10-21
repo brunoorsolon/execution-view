@@ -163,13 +163,19 @@ function identity(overrides: Partial<VerifiedReleaseIdentity['repository']> = {}
 
 function checkoutFor(
   fixture: Fixture,
-  options: { origin?: string; verified?: VerifiedReleaseIdentity; timeoutMs?: number } = {},
+  options: {
+    origin?: string;
+    verified?: VerifiedReleaseIdentity;
+    timeoutMs?: number;
+    maxOutputBytes?: number;
+  } = {},
 ) {
   return createReleaseCheckout({
     stateDir: fixture.stateDir,
     repository: repository(fixture, options.origin === undefined ? {} : { origin: options.origin }),
     identity: options.verified ?? identity(),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
   });
 }
 
@@ -427,13 +433,102 @@ describe('release object reads', () => {
     );
   });
 
+  it('classifies an entry without reading blob content', async () => {
+    const fixture = makeFixture();
+    fakeSsh(fixture);
+    const work = join(fixture.root, 'work');
+    writeFileSync(join(work, 'RELEASE_NOTES.md'), 'y'.repeat(4096));
+    git(work, 'commit', '--quiet', '-am', 'grow the notes');
+    execFileSync('git', ['push', '--quiet', fixture.remote, 'main'], {
+      cwd: work,
+      env: { ...GIT_ENV, PATH: REAL_PATH },
+    });
+    const checkout = checkoutFor(fixture, { maxOutputBytes: 1024 });
+    const fetched = await checkout.fetchCandidate();
+    if (!fetched.ok) throw new Error('expected a candidate');
+
+    const notes = await checkout.readEntry(fetched.value.commit, 'RELEASE_NOTES.md', {
+      content: false,
+    });
+    if (!notes.ok) throw new Error(`expected an entry, got ${notes.blocker.code}`);
+    expect(notes.value).toEqual({ mode: '100644', type: 'blob', bytes: null });
+
+    const link = await checkout.readEntry(fetched.value.commit, 'notes-link', { content: false });
+    if (!link.ok) throw new Error(`expected an entry, got ${link.blocker.code}`);
+    expect(link.value).toEqual({ mode: '120000', type: 'blob', bytes: null });
+
+    // The same read with content still fails closed on the output bound.
+    expect(blockerOf(await checkout.readEntry(fetched.value.commit, 'RELEASE_NOTES.md')).code).toBe(
+      'git-output-too-large',
+    );
+  });
+
+  it('lists every committed path of the candidate and nothing outside it', async () => {
+    const fixture = makeFixture();
+    fakeSsh(fixture);
+    const checkout = checkoutFor(fixture);
+    const fetched = await checkout.fetchCandidate();
+    if (!fetched.ok) throw new Error('expected a candidate');
+    const head = fetched.value;
+
+    const listed = await checkout.listPaths(head.commit);
+    if (!listed.ok) throw new Error(`expected a listing, got ${listed.blocker.code}`);
+    expect(listed.value.slice().sort()).toEqual([
+      '.gitattributes',
+      '.gitmodules',
+      'README.md',
+      'RELEASE_NOTES.md',
+      'notes-link',
+      'src/index.ts',
+    ]);
+
+    // A commit outside the fetched candidate's history is never listed as release evidence.
+    const cache = join(fixture.stateDir, 'checkout', 'app.git');
+    git(cache, 'fetch', '--quiet', fixture.remote, '+refs/heads/side:refs/heads/side');
+    expect(blockerOf(await checkout.listPaths(fixture.sideCommit)).code).toBe(
+      'git-unsafe-revision',
+    );
+    expect(blockerOf(await checkout.listPaths('main')).code).toBe('git-unsafe-revision');
+
+    // A listing is bounded like every other child read.
+    const work = join(fixture.root, 'work');
+    writeFileSync(join(work, 'src', 'extra.ts'), 'export const extra = 1;\n');
+    git(work, 'add', '-A');
+    git(work, 'commit', '--quiet', '-m', 'grow the tree');
+    execFileSync('git', ['push', '--quiet', fixture.remote, 'main'], {
+      cwd: work,
+      env: { ...GIT_ENV, PATH: REAL_PATH },
+    });
+    const bounded = checkoutFor(fixture, { maxOutputBytes: 80 });
+    const boundedFetch = await bounded.fetchCandidate();
+    if (!boundedFetch.ok) throw new Error('expected a candidate');
+    expect(blockerOf(await bounded.listPaths(boundedFetch.value.commit)).code).toBe(
+      'git-output-too-large',
+    );
+  });
+
   it('exposes read-only operations and no mutation surface', async () => {
     const fixture = makeFixture();
     fakeSsh(fixture);
     const checkout = checkoutFor(fixture);
-    expect(Object.keys(checkout).sort()).toEqual(['fetchCandidate', 'readEntry', 'readRemoteTag']);
-    // Reads cannot precede a verified candidate fetch.
+    expect(Object.keys(checkout).sort()).toEqual([
+      'candidate',
+      'fetchCandidate',
+      'isAncestor',
+      'listPaths',
+      'readCommitSubjects',
+      'readEntry',
+      'readRemoteTag',
+    ]);
+    // Reads cannot precede a verified candidate fetch, and no candidate is exposed yet.
+    expect(checkout.candidate()).toBeNull();
     expect(blockerOf(await checkout.readEntry('0'.repeat(40), 'README.md')).code).toBe(
+      'git-invalid-request',
+    );
+    expect(blockerOf(await checkout.isAncestor('0'.repeat(40), '0'.repeat(40))).code).toBe(
+      'git-invalid-request',
+    );
+    expect(blockerOf(await checkout.readCommitSubjects(null, '0'.repeat(40))).code).toBe(
       'git-invalid-request',
     );
   });

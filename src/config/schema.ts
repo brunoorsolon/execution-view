@@ -187,7 +187,8 @@ const sshOriginSchema = z.string().refine(
   }),
 );
 
-function workflowPathProblem(s: string): string | null {
+/** Why a configured designated CI workflow path is unusable, or null when it is a safe path. */
+export function workflowPathProblem(s: string): string | null {
   if (s.startsWith('/') || s.includes('\\')) return 'must be a relative path inside the repository';
   if (!/^[A-Za-z0-9._/-]+$/.test(s))
     return 'may contain only letters, digits, ".", "_", "-" and "/"';
