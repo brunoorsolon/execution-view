@@ -1,15 +1,19 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { ConfigError } from '../config/load.js';
+import type { ReleaseRuntime } from '../config/releaseRuntime.js';
 import type { AppConfig } from '../config/schema.js';
 import type { Snapshot } from '../core/types.js';
 import { exporters, type ExportFormat } from '../export/index.js';
 import { UnknownViewError, type PlanService } from '../service/planService.js';
 import { packageVersion } from '../version.js';
+import { SESSION_COOKIE, checkBasicAuth, credentialsMatch, sessionToken } from './auth.js';
+import { checkReleaseAccess } from './releaseAccess.js';
+import { registerReleaseRoutes, type ReleaseMount } from './releaseRoutes.js';
 import { registerWebhooks, WEBHOOK_PATHS } from './webhooks.js';
 
 export interface BuildAppOptions {
@@ -17,9 +21,13 @@ export interface BuildAppOptions {
   webDir?: string;
   /** Enable Fastify's request logger. Default: false. */
   logger?: boolean;
+  /**
+   * Loaded release runtime and its admission gate. Release routes are registered only when the
+   * configuration enables releases and this mount is supplied.
+   */
+  releases?: ReleaseMount;
 }
 
-const SESSION_COOKIE = 'ev_session';
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /** URL extension to exporter. `mmd` is the Mermaid exporter; any other value is unknown. */
@@ -217,43 +225,6 @@ function pathnameOf(url: string): string {
   return q === -1 ? url : url.slice(0, q);
 }
 
-/** Constant-time string comparison that does not leak the length (compares digests). */
-function safeEqual(a: string, b: string): boolean {
-  const ha = createHash('sha256').update(a).digest();
-  const hb = createHash('sha256').update(b).digest();
-  return timingSafeEqual(ha, hb);
-}
-
-function checkBasicAuth(
-  header: string | undefined,
-  expected: { username: string; password: string },
-): boolean {
-  if (header === undefined) return false;
-  const match = /^Basic\s+([A-Za-z0-9+/=_-]+)\s*$/i.exec(header);
-  if (match === null) return false;
-  const decoded = Buffer.from(match[1] as string, 'base64').toString('utf8');
-  const colon = decoded.indexOf(':');
-  const username = colon === -1 ? decoded : decoded.slice(0, colon);
-  const password = colon === -1 ? '' : decoded.slice(colon + 1);
-  return credentialsMatch(username, password, expected) && colon !== -1;
-}
-
-function credentialsMatch(
-  username: string,
-  password: string,
-  expected: { username: string; password: string },
-): boolean {
-  // Evaluate both comparisons so timing does not reveal which one failed.
-  const userOk = safeEqual(username, expected.username);
-  const passOk = safeEqual(password, expected.password);
-  return userOk && passOk;
-}
-
-function sessionToken(cookie: string | undefined): string | null {
-  const match = /(?:^|;\s*)ev_session=([A-Za-z0-9_-]+)/.exec(cookie ?? '');
-  return match === null ? null : (match[1] as string);
-}
-
 /**
  * The session cookie. Without a Path attribute the browser scopes it to the directory of the login
  * URL, so it also works below a sub-path. `X-Forwarded-Proto` is read without trusting the proxy
@@ -300,15 +271,34 @@ export function buildApp(
   // or a basic-auth header both pass. No `WWW-Authenticate` challenge: it would make the browser
   // show its own dialog instead of the login page. ---
   const webhooks = config.webhooks;
+  // Release routes exist only for a fully loaded, owned runtime with the application login the
+  // configuration already requires. Anything else is absent, never silently unprotected.
+  const releaseMount =
+    config.releases.enabled && basicAuth !== null && opts.releases !== undefined
+      ? opts.releases
+      : null;
   if (basicAuth !== null) {
     // ponytail: sessions live in memory, so a restart logs everyone out; sign cookies with a
     // configured secret if that becomes a nuisance.
-    const sessions = new Map<string, number>(); // token -> expiry, epoch ms
-    const hasSession = (request: FastifyRequest): boolean => {
-      const token = sessionToken(request.headers.cookie);
-      const expires = token === null ? undefined : sessions.get(token);
-      return expires !== undefined && expires > Date.now();
+    const sessions = new Map<string, { expires: number; csrf: string }>();
+    const liveSession = (cookie: string | undefined) => {
+      const token = sessionToken(cookie);
+      const session = token === null ? undefined : sessions.get(token);
+      return session !== undefined && session.expires > Date.now() ? session : null;
     };
+    const hasSession = (request: FastifyRequest): boolean =>
+      liveSession(request.headers.cookie) !== null;
+    // Browser release requests also prove the configured public Host/Origin and a session-bound
+    // CSRF token; CLI requests prove an explicit header and carry no session cookie.
+    const releaseAccess =
+      releaseMount === null
+        ? null
+        : {
+            publicOrigin: releaseMount.runtime.publicOrigin,
+            sessionCsrf: (cookie: string | undefined) => liveSession(cookie)?.csrf ?? null,
+            hasSessionCookie: (cookie: string | undefined) => sessionToken(cookie) !== null,
+            headerAuthenticated: (header: string | undefined) => checkBasicAuth(header, basicAuth),
+          };
 
     app.addHook('onRequest', async (request, reply) => {
       const pathname = pathnameOf(request.url);
@@ -316,16 +306,25 @@ export function buildApp(
       if (webhooks !== null && request.method === 'POST' && WEBHOOK_PATHS.includes(pathname)) {
         return;
       }
-      if (hasSession(request) || checkBasicAuth(request.headers.authorization, basicAuth)) return;
-      if (
-        request.method === 'GET' &&
-        !pathname.startsWith('/api/') &&
-        (request.headers.accept ?? '').includes('text/html')
-      ) {
-        // Relative, so it also works below a sub-path: climb to the app root first.
-        return reply.redirect(`${'../'.repeat(pathname.split('/').length - 2)}login`);
+      if (!hasSession(request) && !checkBasicAuth(request.headers.authorization, basicAuth)) {
+        if (
+          request.method === 'GET' &&
+          !pathname.startsWith('/api/') &&
+          (request.headers.accept ?? '').includes('text/html')
+        ) {
+          // Relative, so it also works below a sub-path: climb to the app root first.
+          return reply.redirect(`${'../'.repeat(pathname.split('/').length - 2)}login`);
+        }
+        return reply.code(401).send({ error: 'Unauthorized' });
       }
-      return reply.code(401).send({ error: 'Unauthorized' });
+      // Release routes carry a stricter gate than the planning API. It runs for every release
+      // path, so a route added later inherits it and an unknown one is rejected before 404.
+      if (releaseAccess !== null && pathname.startsWith('/api/releases')) {
+        const access = checkReleaseAccess(request.method, request.headers, releaseAccess);
+        if (!access.ok) {
+          return reply.code(access.status).send({ error: access.message, code: access.code });
+        }
+      }
     });
 
     // Own scope, so the form parser does not reach the webhook routes.
@@ -348,9 +347,12 @@ export function buildApp(
         );
         if (!ok) return reply.code(401).type('text/html; charset=utf-8').send(loginPage(true));
         const now = Date.now();
-        for (const [token, expires] of sessions) if (expires <= now) sessions.delete(token);
+        for (const [token, session] of sessions) {
+          if (session.expires <= now) sessions.delete(token);
+        }
         const token = randomBytes(32).toString('base64url');
-        sessions.set(token, now + SESSION_TTL_SECONDS * 1000);
+        const csrf = randomBytes(32).toString('base64url');
+        sessions.set(token, { expires: now + SESSION_TTL_SECONDS * 1000, csrf });
         return reply
           .header('Set-Cookie', sessionCookie(request, token, SESSION_TTL_SECONDS))
           .redirect('./', 303);
@@ -362,7 +364,12 @@ export function buildApp(
         return reply.header('Set-Cookie', sessionCookie(request, '', 0)).redirect('login', 303);
       });
 
-      scope.get('/api/session', async () => ({ username: basicAuth.username }));
+      scope.get('/api/session', async (request) => ({
+        username: basicAuth.username,
+        // The browser proves a release mutation with this session-bound token; a header-authenticated
+        // caller needs none, so it gets null rather than another caller's token.
+        csrfToken: liveSession(request.headers.cookie)?.csrf ?? null,
+      }));
       done();
     });
   }
@@ -443,6 +450,9 @@ export function buildApp(
         .send(exporter.render(snapshot));
     },
   );
+
+  // --- release routes (only with an owned release runtime; otherwise the routes do not exist) ---
+  if (releaseMount !== null) registerReleaseRoutes(app, config, releaseMount);
 
   // --- webhooks (only with a configured secret; otherwise the routes do not exist) ---
   if (webhooks !== null) registerWebhooks(app, webhooks.secret, service);

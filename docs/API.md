@@ -16,21 +16,22 @@ Contents:
 
 ## Endpoints
 
-| Method | Path                            | Description                                                             | Success                               |
-| ------ | ------------------------------- | ----------------------------------------------------------------------- | ------------------------------------- |
-| GET    | `/healthz`                      | Liveness check. **No authentication.**                                  | `200` `{"status":"ok"}`               |
-| GET    | `/api/views`                    | The configured views                                                    | `200` array of view summaries         |
-| GET    | `/api/settings`                 | Settings for the web UI and the running version                         | `200` `{"refreshMinutes":5,...}`      |
-| GET    | `/api/views/:id/snapshot`       | The plan and layout of a view                                           | `200` snapshot with `ETag`, or `304`  |
-| POST   | `/api/views/:id/refresh`        | Force a refetch from the tracker, ignoring the cache                    | `200` snapshot with `ETag`            |
-| GET    | `/api/views/:id/export.:format` | The snapshot rendered as a file: `json`, `md`, `mmd` (Mermaid) or `dot` | `200` text with `Content-Disposition` |
-| POST   | `/api/webhooks/github`          | Webhook receiver for GitHub issue events (only with a secret)           | `202` `{"invalidated":[...]}`         |
-| POST   | `/api/webhooks/gitea`           | Webhook receiver for Gitea / Forgejo issue events (only with a secret)  | `202` `{"invalidated":[...]}`         |
-| GET    | `/api/session`                  | The signed-in user (only with a login configured)                       | `200` `{"username":"admin"}`          |
-| GET    | `/login`                        | The login page (only with a login configured). **No authentication.**   | `200` HTML                            |
-| POST   | `/login`                        | Form login: `username` and `password`, form-encoded                     | `303` to the UI, with session cookie  |
-| POST   | `/logout`                       | Ends the session and clears the cookie                                  | `303` to the login page               |
-| GET    | `/` and other paths             | The web UI (static files)                                               | `200` HTML/JS/CSS                     |
+| Method | Path                            | Description                                                              | Success                               |
+| ------ | ------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
+| GET    | `/healthz`                      | Liveness check. **No authentication.**                                   | `200` `{"status":"ok"}`               |
+| GET    | `/api/views`                    | The configured views                                                     | `200` array of view summaries         |
+| GET    | `/api/settings`                 | Settings for the web UI and the running version                          | `200` `{"refreshMinutes":5,...}`      |
+| GET    | `/api/views/:id/snapshot`       | The plan and layout of a view                                            | `200` snapshot with `ETag`, or `304`  |
+| POST   | `/api/views/:id/refresh`        | Force a refetch from the tracker, ignoring the cache                     | `200` snapshot with `ETag`            |
+| GET    | `/api/views/:id/export.:format` | The snapshot rendered as a file: `json`, `md`, `mmd` (Mermaid) or `dot`  | `200` text with `Content-Disposition` |
+| POST   | `/api/webhooks/github`          | Webhook receiver for GitHub issue events (only with a secret)            | `202` `{"invalidated":[...]}`         |
+| POST   | `/api/webhooks/gitea`           | Webhook receiver for Gitea / Forgejo issue events (only with a secret)   | `202` `{"invalidated":[...]}`         |
+| GET    | `/api/session`                  | The signed-in user and session CSRF token (only with a login configured) | `200` `{"username","csrfToken"}`      |
+| GET    | `/api/releases/repositories`    | Configured release repositories and their capability (releases only)     | `200` array of capabilities           |
+| GET    | `/login`                        | The login page (only with a login configured). **No authentication.**    | `200` HTML                            |
+| POST   | `/login`                        | Form login: `username` and `password`, form-encoded                      | `303` to the UI, with session cookie  |
+| POST   | `/logout`                       | Ends the session and clears the cookie                                   | `303` to the login page               |
+| GET    | `/` and other paths             | The web UI (static files)                                                | `200` HTML/JS/CSS                     |
 
 ### `GET /api/views`
 
@@ -156,6 +157,32 @@ content-type: application/json; charset=utf-8
 cache-control: no-store
 
 {"error":"Unauthorized"}
+```
+
+### Release routes
+
+When `releases.enabled` is true, the release routes exist and require the application login plus the release-specific proof below; when releases are disabled they are not registered at all (404). Release responses are `Cache-Control: no-store` and never contain a release token, SSH key, Authorization header, credential-bearing URL or private filesystem path.
+
+Two caller kinds are accepted:
+
+- **Browser.** A live session cookie, a `Host` header equal to `releases.publicOrigin`, and an `Origin` header equal to that origin when one is sent. A request that changes state (`POST`, `PUT`, `PATCH`, `DELETE`) must send that `Origin` and the session-bound `x-csrf-token` value returned by `GET /api/session`. Forwarded headers (`X-Forwarded-Host`, `X-Forwarded-Proto`, ...) never decide access.
+- **CLI.** An explicit `Authorization` header with the same basic-auth credentials and no session cookie. A request that sends both is rejected.
+
+Foreign origins, a missing or invalid credential or CSRF proof, and the webhook signature exemptions never grant release access.
+
+`GET /api/releases/repositories` reports one entry per configured release repository: its allowlist `id`, `repo`, `source`, `forge`, `capability` (`available` or `blocked`) and sanitized `blockers` (`{ code, message }`). A forge outage or unsupported server blocks that repository's capability without stopping Planning or `/healthz`:
+
+```json
+[
+  {
+    "id": "app",
+    "repo": "example/app",
+    "source": "gt",
+    "forge": "https://gitea.example.com/",
+    "capability": "blocked",
+    "blockers": [{ "code": "network-error", "message": "GET /api/v1/user failed: fetch failed" }]
+  }
+]
 ```
 
 ## Snapshot schema
