@@ -142,7 +142,30 @@ interface Forge {
   methods: string[];
 }
 
-function forge(handler: (url: URL) => Response): Forge {
+/** One workflow the server runs on the default branch, as its workflow list reports it. */
+interface WorkflowEntry {
+  id: string;
+  path: string;
+}
+
+/** The workflows the server runs by default in these fixtures: the `.gitea` directory only. */
+const ACTIVE_WORKFLOWS: WorkflowEntry[] = [{ id: 'validate.yaml', path: WORKFLOW }];
+
+function workflowList(workflows: WorkflowEntry[]): Response {
+  return json({
+    total_count: workflows.length,
+    workflows: workflows.map((workflow) => ({ ...workflow, name: workflow.id, state: 'active' })),
+  });
+}
+
+/**
+ * A read-only forge whose workflow list is served separately, so a test can describe exactly which
+ * workflow directory the server runs while the handler serves run pages or a single run.
+ */
+function forge(
+  handler: (url: URL) => Response,
+  workflows: WorkflowEntry[] = ACTIVE_WORKFLOWS,
+): Forge {
   const requests: URL[] = [];
   const methods: string[] = [];
   const fetch: ReleaseForgeFetch = (input, init) => {
@@ -150,6 +173,8 @@ function forge(handler: (url: URL) => Response): Forge {
     requests.push(url);
     methods.push(init.method ?? 'GET');
     try {
+      if (url.pathname.endsWith('/actions/workflows'))
+        return Promise.resolve(workflowList(workflows));
       return Promise.resolve(handler(url));
     } catch (err) {
       return Promise.reject(err);
@@ -211,54 +236,66 @@ describe('discoverReleaseCi', () => {
     expect(pages.every((url) => url.searchParams.get('head_sha') === COMMIT)).toBe(true);
     // Read-only discovery: no request can mutate or trigger anything.
     expect(fixture.methods.every((method) => method === 'GET')).toBe(true);
-    expect(
-      fixture.requests.some((url) => /releases|\/tags|actions\/workflows/.test(url.pathname)),
-    ).toBe(false);
+    expect(fixture.requests.some((url) => /releases|\/tags/.test(url.pathname))).toBe(false);
   });
 
-  it('matches the configured workflow by the identifier the forge reports for it', async () => {
-    const fixture = forge(pagedRuns(1, [run({ id: 40 })]));
-    const result = await discoverReleaseCi({
+  it('binds the configured workflow through the workflow list the server reports', async () => {
+    const listedRun = run({ id: 40, path: 'validate.yaml@refs/heads/main' });
+    const serveRuns = (url: URL) =>
+      /\/actions\/runs\/40$/.test(url.pathname) ? json(listedRun) : runList(1, [listedRun]);
+
+    const fixture = forge(serveRuns);
+    const bound = await discoverReleaseCi({
       client: client(fixture.fetch),
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected evidence');
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) throw new Error('expected evidence');
     // The bound evidence keeps the configured path, the run is matched by its reported identifier.
-    expect(result.evidence.workflowPath).toBe(WORKFLOW);
+    expect(bound.evidence.workflowPath).toBe(WORKFLOW);
+    const reRead = await verifyReleaseCi({
+      client: client(fixture.fetch),
+      identity: IDENTITY,
+      workflowPath: WORKFLOW,
+      evidence: bound.evidence,
+    });
+    expect(reRead.ok).toBe(true);
+    // Provenance is re-read, not remembered: both calls ask the server which workflows it runs.
+    expect(
+      fixture.requests.filter((url) => url.pathname.endsWith('/actions/workflows')),
+    ).toHaveLength(2);
 
-    // A workflow inside the other default Gitea workflow directory binds the same way.
-    for (const configured of [
-      '.github/workflows/validate.yaml',
-      '.gitea/workflows/nested/validate.yaml',
-    ]) {
-      const runId = configured.replace(/^\.(gitea|github)\/workflows\//, '');
-      const listedRun = run({ id: 40, path: `${runId}@refs/heads/main` });
-      const listed = forge((url) =>
-        /\/actions\/runs\/40$/.test(url.pathname) ? json(listedRun) : runList(1, [listedRun]),
-      );
-      const bound = await discoverReleaseCi({
-        client: client(listed.fetch),
-        identity: IDENTITY,
-        candidate: CANDIDATE,
-        workflowPath: configured,
-      });
-      expect(bound.ok, configured).toBe(true);
-      if (!bound.ok) continue;
-      expect(bound.evidence.workflowPath, configured).toBe(configured);
+    // A nested workflow inside the active directory binds by its reported identifier.
+    const nestedPath = '.gitea/workflows/nested/validate.yaml';
+    const nestedRun = run({ id: 40, path: 'nested/validate.yaml@refs/heads/main' });
+    const nested = await discoverReleaseCi({
+      client: client(
+        forge(() => runList(1, [nestedRun]), [{ id: 'nested/validate.yaml', path: nestedPath }])
+          .fetch,
+      ),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: nestedPath,
+    });
+    expect(nested.ok).toBe(true);
+    if (!nested.ok) throw new Error('expected evidence');
+    expect(nested.evidence.workflowPath).toBe(nestedPath);
 
-      const reRead = await verifyReleaseCi({
-        client: client(listed.fetch),
-        identity: IDENTITY,
-        workflowPath: configured,
-        evidence: bound.evidence,
-      });
-      expect(reRead.ok, configured).toBe(true);
-    }
+    // A server that runs the `.github` workflow binds that file too.
+    const githubPath = '.github/workflows/validate.yaml';
+    const github = await discoverReleaseCi({
+      client: client(forge(serveRuns, [{ id: 'validate.yaml', path: githubPath }]).fetch),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: githubPath,
+    });
+    expect(github.ok).toBe(true);
+    if (!github.ok) throw new Error('expected evidence');
+    expect(github.evidence.workflowPath).toBe(githubPath);
 
-    // The full repository path is not what the server reports, so it cannot match.
+    // The full repository path is not what a run reports, so it cannot match.
     const fullPath = forge(() =>
       runList(1, [run({ id: 40, path: `${WORKFLOW}@refs/heads/main` })]),
     );
@@ -273,6 +310,84 @@ describe('discoverReleaseCi', () => {
     expect(rejected.blocker.code).toBe('ci-workflow-mismatch');
   });
 
+  it('refuses a same-named workflow from another directory the server runs instead', async () => {
+    // The repository contains both workflow directories; the server runs `.gitea` only, so a run
+    // reporting `validate.yaml` is the `.gitea` file even when `.github` is designated.
+    const giteaOnly: WorkflowEntry[] = [{ id: 'validate.yaml', path: WORKFLOW }];
+    const designated = '.github/workflows/validate.yaml';
+    const listedRun = run({ id: 40, path: 'validate.yaml@refs/heads/main' });
+    const serveRuns = (url: URL) =>
+      /\/actions\/runs\/40$/.test(url.pathname) ? json(listedRun) : runList(1, [listedRun]);
+
+    const discovery = await discoverReleaseCi({
+      client: client(forge(serveRuns, giteaOnly).fetch),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: designated,
+    });
+    expect(discovery.ok).toBe(false);
+    if (discovery.ok) throw new Error('expected a blocker');
+    expect(discovery.blocker.code).toBe('ci-workflow-mismatch');
+
+    const reRead = await verifyReleaseCi({
+      client: client(forge(serveRuns, giteaOnly).fetch),
+      identity: IDENTITY,
+      workflowPath: designated,
+      evidence: { ...BOUND, workflowPath: designated },
+    });
+    expect(reRead.ok).toBe(false);
+    if (reRead.ok) throw new Error('expected a blocker');
+    expect(reRead.blocker.code).toBe('ci-workflow-mismatch');
+
+    // A configured path the server does not list blocks even when a run exists for the commit.
+    const unlisted = await discoverReleaseCi({
+      client: client(
+        forge(serveRuns, [{ id: 'other.yaml', path: '.gitea/workflows/other.yaml' }]).fetch,
+      ),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: WORKFLOW,
+    });
+    expect(unlisted.ok).toBe(false);
+    if (unlisted.ok) throw new Error('expected a blocker');
+    expect(unlisted.blocker.code).toBe('ci-workflow-mismatch');
+
+    // A workflow list that names the configured path twice is contradictory.
+    const duplicated = await discoverReleaseCi({
+      client: client(
+        forge(serveRuns, [
+          { id: 'validate.yaml', path: WORKFLOW },
+          { id: 'validate.yaml', path: WORKFLOW },
+        ]).fetch,
+      ),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: WORKFLOW,
+    });
+    expect(duplicated.ok).toBe(false);
+    if (duplicated.ok) throw new Error('expected a blocker');
+    expect(duplicated.blocker.code).toBe('ci-evidence-conflict');
+
+    // A malformed workflow list blocks instead of falling through to a run match.
+    const badList: ReleaseForgeFetch = (input) => {
+      const url = new URL(input);
+      return Promise.resolve(
+        url.pathname.endsWith('/actions/workflows')
+          ? json({ total_count: 1, workflows: ['validate.yaml'] })
+          : runList(1, [listedRun]),
+      );
+    };
+    const malformed = await discoverReleaseCi({
+      client: client(badList),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: WORKFLOW,
+    });
+    expect(malformed.ok).toBe(false);
+    if (malformed.ok) throw new Error('expected a blocker');
+    expect(malformed.blocker.code).toBe('malformed-response');
+  });
+
   it('binds the evidence to the verified repository, candidate, branch and configured workflow', async () => {
     const listed = [run({ id: 40 })];
     const fixture = forge(pagedRuns(1, listed));
@@ -285,8 +400,9 @@ describe('discoverReleaseCi', () => {
     });
 
     expect(result).toEqual({ ok: true, evidence: BOUND });
-    expect(fixture.requests[0]?.pathname).toBe('/api/v1/repos/acme/api/actions/runs');
-    expect(fixture.requests[0]?.searchParams.get('head_sha')).toBe(COMMIT);
+    const runs = listRequests(fixture.requests);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.searchParams.get('head_sha')).toBe(COMMIT);
   });
 
   it('blocks every nonqualifying run state with a stable, distinct error', async () => {
@@ -669,7 +785,9 @@ describe('discoverReleaseCi', () => {
     expect(redirectResult.ok).toBe(false);
     if (redirectResult.ok) throw new Error('expected a blocker');
     expect(redirectResult.blocker.code).toBe('redirect-refused');
-    expect(redirected.requests).toHaveLength(1);
+    // Only the run list was redirected; the redirect target was never contacted.
+    expect(listRequests(redirected.requests)).toHaveLength(1);
+    expect(redirected.requests.some((url) => url.hostname === 'evil.test')).toBe(false);
 
     const oversized = forge(() =>
       json({ total_count: 1, workflow_runs: [run()], pad: 'x'.repeat(500) }),
@@ -765,10 +883,11 @@ describe('verifyReleaseCi', () => {
     });
 
     expect(result).toEqual({ ok: true, evidence: BOUND });
-    expect(fixture.requests).toHaveLength(1);
-    expect(fixture.requests[0]?.pathname).toBe('/api/v1/repos/acme/api/actions/runs/40');
-    expect(fixture.requests[0]?.search).toBe('');
-    expect(fixture.methods).toEqual(['GET']);
+    const runRequests = fixture.requests.filter((url) => /\/actions\/runs\/40$/.test(url.pathname));
+    expect(runRequests).toHaveLength(1);
+    expect(runRequests[0]?.pathname).toBe('/api/v1/repos/acme/api/actions/runs/40');
+    expect(runRequests[0]?.search).toBe('');
+    expect(fixture.methods.every((method) => method === 'GET')).toBe(true);
   });
 
   it('blocks when the bound run no longer proves the same evidence', async () => {

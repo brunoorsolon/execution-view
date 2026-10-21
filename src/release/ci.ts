@@ -14,7 +14,9 @@
  * The run fields below are what the supported Gitea 1.26.1 API returns: `ToActionWorkflowRun`
  * reports GitHub-style `status`/`conclusion` (from `ToActionsStatus`), `path` as
  * `<WorkflowID>@<Ref>` where `WorkflowID` is the path inside the server's workflow directory,
- * and the run's repository object; the run list filters by `head_sha`.
+ * and the run's repository object; the run list filters by `head_sha`. Because that identifier
+ * omits the directory, the configured path is bound to it through the server's own workflow
+ * list, which reports each runnable workflow by full repository path.
  */
 
 import { workflowPathProblem } from '../config/schema.js';
@@ -132,23 +134,19 @@ interface ExpectedRun {
   commit: string;
   branch: string;
   workflowPath: string;
-  /** The workflow identifier Gitea reports for the configured workflow path. */
-  workflowId: string;
 }
 
-/**
- * Gitea reads workflows from one of its configured workflow directories and reports a run's
- * workflow as the path inside that directory: `.gitea/workflows/validate.yaml` becomes
- * `validate.yaml`. The directory itself never appears in the API, so the configured path is
- * reduced to the same representation instead of being compared to a full repository path.
- */
-const GITEA_WORKFLOW_DIRECTORIES: readonly string[] = ['.gitea/workflows', '.github/workflows'];
+/** One workflow the server reports for the default branch, by identifier and full repository path. */
+interface ParsedWorkflow {
+  id: string;
+  path: string;
+}
 
-function workflowIdentifier(workflowPath: string): string {
-  for (const dir of GITEA_WORKFLOW_DIRECTORIES) {
-    if (workflowPath.startsWith(`${dir}/`)) return workflowPath.slice(dir.length + 1);
-  }
-  return workflowPath;
+/** The bounded enumeration limits one discovery resolved from its options. */
+interface RunBounds {
+  pageSize: number;
+  maxPages: number;
+  maxRuns: number;
 }
 
 /** A way a listed run fails to qualify. */
@@ -276,6 +274,14 @@ function runsPath(
   return `${repositoryPath(identity)}/actions/runs?${query.toString()}`;
 }
 
+function resolveBounds(options: DiscoverReleaseCiOptions): RunBounds {
+  return {
+    pageSize: boundedOption(options.pageSize, DEFAULT_CI_PAGE_SIZE, 'pageSize', MAX_CI_PAGE_SIZE),
+    maxPages: boundedOption(options.maxPages, DEFAULT_CI_MAX_PAGES, 'maxPages', MAX_CI_MAX_PAGES),
+    maxRuns: boundedOption(options.maxRuns, DEFAULT_CI_MAX_RUNS, 'maxRuns', MAX_CI_MAX_RUNS),
+  };
+}
+
 function boundedOption(
   value: number | undefined,
   fallback: number,
@@ -338,8 +344,65 @@ function expectedRun(
     commit: candidate.commit,
     branch: identity.defaultBranch,
     workflowPath,
-    workflowId: workflowIdentifier(workflowPath),
   };
+}
+
+function parseWorkflowList(raw: unknown, field: string): ParsedWorkflow[] {
+  if (!isRecord(raw)) throw malformed(`${field} did not return a JSON object`);
+  const workflows = raw['workflows'];
+  if (!Array.isArray(workflows)) throw malformed(`${field}.workflows was not a list`);
+  return workflows.map((entry, index) => {
+    if (!isRecord(entry)) throw malformed(`${field}.workflows[${index}] was not a JSON object`);
+    return {
+      id: textField(entry['id'], `${field}.workflows[${index}].id`, 300),
+      path: textField(entry['path'], `${field}.workflows[${index}].path`, 300),
+    };
+  });
+}
+
+/**
+ * Binds the configured workflow path to the identifier a run reports.
+ *
+ * A run's `path` names only the workflow inside the server's workflow directory, so the same file
+ * name in another directory is a different workflow. The server's workflow list reports the full
+ * repository path of every workflow it actually runs on the default branch; the configured path
+ * must be exactly one of those, and its reported identifier is the only identifier a qualifying
+ * run may carry. A configured file the server does not run therefore blocks instead of matching a
+ * same-named workflow from another directory.
+ */
+async function resolveWorkflowIdentifier(
+  client: ReleaseForgeClient,
+  identity: ReleaseRepositoryIdentity,
+  workflowPath: string,
+): Promise<string> {
+  const path = `${repositoryPath(identity)}/actions/workflows`;
+  let raw: unknown;
+  try {
+    raw = await client.getJson<unknown>(path);
+  } catch (err) {
+    if (err instanceof ReleaseForgeError && err.status === 404) {
+      throw new CiEvidenceError(
+        'ci-workflow-mismatch',
+        `the forge does not expose its workflow list for "${bounded(identity.owner)}/${bounded(identity.repo)}" (status 404), so the designated workflow cannot be proved`,
+      );
+    }
+    throw err;
+  }
+  const workflows = parseWorkflowList(raw, `GET ${path}`);
+  const matching = workflows.filter((workflow) => workflow.path === workflowPath);
+  if (matching.length === 0) {
+    throw new CiEvidenceError(
+      'ci-workflow-mismatch',
+      `the forge does not run ${bounded(workflowPath, 120)} on the default branch (it reports ${workflows.length} other workflow(s)), so the designated workflow cannot be proved`,
+    );
+  }
+  if (matching.length > 1) {
+    throw new CiEvidenceError(
+      'ci-evidence-conflict',
+      `the forge listed ${bounded(workflowPath, 120)} more than once, so the designated workflow is ambiguous`,
+    );
+  }
+  return matching[0]!.id;
 }
 
 /**
@@ -347,7 +410,11 @@ function expectedRun(
  * commit, branch or event is reported before its workflow path, and a run that proves every
  * identity but is unfinished is reported as pending rather than as a missing success.
  */
-function classifyRun(run: ParsedRun, expected: ExpectedRun): ReleaseCiEvidence | Rejection {
+function classifyRun(
+  run: ParsedRun,
+  expected: ExpectedRun,
+  workflowId: string,
+): ReleaseCiEvidence | Rejection {
   if (
     run.repositoryId !== expected.forgeRepositoryId ||
     run.repositoryFullName.toLowerCase() !== expected.slug.toLowerCase()
@@ -360,7 +427,7 @@ function classifyRun(run: ParsedRun, expected: ExpectedRun): ReleaseCiEvidence |
   if (run.headCommit !== expected.commit) return 'commit';
   if (run.branch !== expected.branch) return 'branch';
   if (run.event !== 'push') return 'event';
-  if (run.path !== `${expected.workflowId}@refs/heads/${expected.branch}`) return 'workflow';
+  if (run.path !== `${workflowId}@refs/heads/${expected.branch}`) return 'workflow';
   if (run.status !== 'completed') return 'pending';
   if (run.conclusion !== 'success') return 'failed';
   return {
@@ -394,11 +461,12 @@ function rejectionCode(rejection: Rejection): ReleaseCiBlockerCode {
 function noQualifyingRun(
   counts: ReadonlyMap<Rejection, number>,
   expected: ExpectedRun,
+  workflowId: string,
   listedRuns: number,
 ): CiEvidenceError {
   // Messages carry only configuration-derived values, validated commit ids and counts: a forge
   // field is never echoed, because a hostile or broken server can return any text in it.
-  const where = `a completed successful push run of ${bounded(expected.workflowPath, 120)} (reported by the forge as ${bounded(expected.workflowId, 120)}) for commit ${expected.commit} on the verified default branch`;
+  const where = `a completed successful push run of ${bounded(expected.workflowPath, 120)} (reported by the forge as ${bounded(workflowId, 120)}) for commit ${expected.commit} on the verified default branch`;
   if (listedRuns === 0) {
     return new CiEvidenceError(
       'ci-run-missing',
@@ -423,20 +491,9 @@ function noQualifyingRun(
 async function enumerateRuns(
   options: DiscoverReleaseCiOptions,
   expected: ExpectedRun,
+  bounds: RunBounds,
 ): Promise<ParsedRun[]> {
-  const pageSize = boundedOption(
-    options.pageSize,
-    DEFAULT_CI_PAGE_SIZE,
-    'pageSize',
-    MAX_CI_PAGE_SIZE,
-  );
-  const maxPages = boundedOption(
-    options.maxPages,
-    DEFAULT_CI_MAX_PAGES,
-    'maxPages',
-    MAX_CI_MAX_PAGES,
-  );
-  const maxRuns = boundedOption(options.maxRuns, DEFAULT_CI_MAX_RUNS, 'maxRuns', MAX_CI_MAX_RUNS);
+  const { pageSize, maxPages, maxRuns } = bounds;
   const seen = new Map<number, ParsedRun>();
   let totalCount: number | null = null;
 
@@ -555,20 +612,26 @@ export async function discoverReleaseCi(
   options: DiscoverReleaseCiOptions,
 ): Promise<ReleaseCiResult> {
   try {
+    const bounds = resolveBounds(options);
     assertVerifiedClient(options.client, options.identity);
     const expected = expectedRun(options.identity, options.candidate, options.workflowPath);
-    const runs = await enumerateRuns(options, expected);
+    const workflowId = await resolveWorkflowIdentifier(
+      options.client,
+      options.identity,
+      options.workflowPath,
+    );
+    const runs = await enumerateRuns(options, expected, bounds);
     const counts = new Map<Rejection, number>();
     let selected: ReleaseCiEvidence | null = null;
     for (const run of runs) {
-      const outcome = classifyRun(run, expected);
+      const outcome = classifyRun(run, expected, workflowId);
       if (typeof outcome === 'string') {
         counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
         continue;
       }
       if (selected === null || outcome.runId > selected.runId) selected = outcome;
     }
-    if (selected === null) throw noQualifyingRun(counts, expected, runs.length);
+    if (selected === null) throw noQualifyingRun(counts, expected, workflowId, runs.length);
     return { ok: true, evidence: selected };
   } catch (err) {
     return { ok: false, blocker: ciBlocker(err) };
@@ -589,6 +652,13 @@ export async function verifyReleaseCi(options: VerifyReleaseCiOptions): Promise<
       { commit: options.evidence.headCommit, branch: options.evidence.branch },
       options.workflowPath,
     );
+    // Provenance is re-proved, not assumed: the designated path must still be a workflow the
+    // server runs, so a same-named workflow in another directory can never satisfy the evidence.
+    const workflowId = await resolveWorkflowIdentifier(
+      options.client,
+      options.identity,
+      options.workflowPath,
+    );
     const path = `${repositoryPath(options.identity)}/actions/runs/${options.evidence.runId}`;
     let raw: unknown;
     try {
@@ -603,7 +673,7 @@ export async function verifyReleaseCi(options: VerifyReleaseCiOptions): Promise<
       throw err;
     }
     const run = parseRun(raw, `GET ${path}`);
-    const outcome = classifyRun(run, expected);
+    const outcome = classifyRun(run, expected, workflowId);
     if (typeof outcome === 'string') {
       throw new CiEvidenceError(
         'ci-evidence-changed',
