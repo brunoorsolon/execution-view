@@ -73,6 +73,14 @@ export function checkReleaseAccess(
   const authorization = header(headers, 'authorization');
   const cookie = header(headers, 'cookie');
   const sessionCsrf = deps.sessionCsrf(cookie);
+  const publicOrigin = new URL(deps.publicOrigin);
+  // A browser sends exactly the origin, never a path; anything else is a foreign or forged value.
+  // A supplied Origin is checked for both caller kinds: an explicit header is another credential,
+  // not a waiver of the origin policy, and a browser can attach one too.
+  const origin = header(headers, 'origin');
+  if (origin !== undefined && origin !== publicOrigin.origin) {
+    return reject(403, 'forbidden-origin', 'release requests must come from the configured origin');
+  }
 
   if (authorization !== undefined) {
     // A session cookie beside an explicit header would mix ambient browser authority with a
@@ -94,16 +102,9 @@ export function checkReleaseAccess(
     return reject(401, 'unauthenticated', 'release access requires the application login');
   }
 
-  const publicOrigin = new URL(deps.publicOrigin);
   const host = header(headers, 'host');
   if (host === undefined || host.toLowerCase() !== publicOrigin.host.toLowerCase()) {
     return reject(403, 'forbidden-origin', 'release requests must use the configured public host');
-  }
-
-  // A browser sends exactly the origin, never a path; anything else is a foreign or forged value.
-  const origin = header(headers, 'origin');
-  if (origin !== undefined && origin !== publicOrigin.origin) {
-    return reject(403, 'forbidden-origin', 'release requests must come from the configured origin');
   }
 
   if (!SAFE_METHODS.has(method.toUpperCase())) {

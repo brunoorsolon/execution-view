@@ -214,6 +214,27 @@ describe('release authentication', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('rejects a foreign Origin even when an Authorization header authenticates the caller', async () => {
+    const { app } = setup();
+    for (const method of ['GET', 'POST']) {
+      const res = await app.inject({
+        method: method as 'GET' | 'POST',
+        url: '/api/releases/repositories',
+        headers: { authorization: basic(), host: PUBLIC_HOST, origin: 'https://evil.example.com' },
+      });
+      expect(res.statusCode, method).toBe(403);
+      expect(res.json().code, method).toBe('forbidden-origin');
+    }
+    // An origin-less CLI call and a same-origin browser-style call still pass.
+    for (const headers of [
+      { authorization: basic() },
+      { authorization: basic(), origin: PUBLIC_ORIGIN },
+    ]) {
+      const res = await app.inject({ url: '/api/releases/repositories', headers });
+      expect(res.statusCode, JSON.stringify(headers)).toBe(200);
+    }
+  });
+
   it('refuses a request that mixes a session cookie with an Authorization header', async () => {
     const { app } = setup();
     const { cookie } = await login(app);

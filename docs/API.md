@@ -166,7 +166,7 @@ When `releases.enabled` is true, the release routes exist and require the applic
 Two caller kinds are accepted:
 
 - **Browser.** A live session cookie, a `Host` header equal to `releases.publicOrigin`, and an `Origin` header equal to that origin when one is sent. A request that changes state (`POST`, `PUT`, `PATCH`, `DELETE`) must send that `Origin` and the session-bound `x-csrf-token` value returned by `GET /api/session`. Forwarded headers (`X-Forwarded-Host`, `X-Forwarded-Proto`, ...) never decide access.
-- **CLI.** An explicit `Authorization` header with the same basic-auth credentials and no session cookie. A request that sends both is rejected.
+- **CLI.** An explicit `Authorization` header with the same basic-auth credentials and no session cookie. A request that sends both is rejected, and an `Origin` it does supply must still match the configured origin.
 
 Foreign origins, a missing or invalid credential or CSRF proof, and the webhook signature exemptions never grant release access.
 
