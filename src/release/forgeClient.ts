@@ -73,6 +73,8 @@ export interface ReleaseForgeClientOptions {
 }
 
 export interface ReleaseForgeClient {
+  /** Forge origin this client reads from, so a caller can bind it to a verified identity. */
+  readonly baseUrl: string;
   /** GETs `<baseUrl>/api/v1<path>` with the release token. Only a path starting with "/" is accepted. */
   getJson<T>(path: string): Promise<T>;
 }
@@ -110,6 +112,19 @@ function requireToken(raw: string): string {
   return token;
 }
 
+/**
+ * Canonical form of a forge origin for equality checks. `new URL` lowercases the scheme and host
+ * and drops a redundant default port, so two spellings of one endpoint compare equal while a
+ * different host, port or subpath does not. Null when the value is not an absolute URL.
+ */
+export function forgeOriginKey(raw: string): string | null {
+  try {
+    return new URL(raw).toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
 /** TLS everywhere except an isolated loopback test deployment; no credentials in the URL. */
 function normalizeBaseUrl(raw: string): string {
   let url: URL;
@@ -135,7 +150,7 @@ function normalizeBaseUrl(raw: string): string {
       `release forge origin ${sanitizeUrl(raw)} must use https (plain http is allowed only for an isolated loopback test deployment)`,
     );
   }
-  return url.toString().replace(/\/+$/, '');
+  return forgeOriginKey(raw) ?? url.toString();
 }
 
 async function discardBody(res: Response): Promise<void> {
@@ -282,5 +297,5 @@ export function createReleaseForgeClient(opts: ReleaseForgeClientOptions): Relea
     }
   }
 
-  return { getJson };
+  return { baseUrl, getJson };
 }
