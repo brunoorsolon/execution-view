@@ -135,6 +135,7 @@ describe('verifyReleaseIdentity', () => {
           forgeRepositoryId: 1001,
           defaultBranch: 'main',
         },
+        ssh: { user: 'git', host: 'gitea.example.test', port: '22', path: 'acme/api' },
       },
     });
     expect(calls).toEqual([
