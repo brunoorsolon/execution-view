@@ -423,6 +423,42 @@ describe('discoverReleaseCi', () => {
     expect(malformed.blocker.code).toBe('malformed-response');
   });
 
+  it('blocks a candidate with several workflow directories, whichever one the server runs', async () => {
+    // Gitea's configured directory order is not observable, so a commit containing both
+    // directories cannot prove which file a run reporting `validate.yaml` executed.
+    const listedRun = run({ id: 40, path: 'validate.yaml@refs/heads/main' });
+    const serveRuns = (url: URL) =>
+      /\/actions\/runs\/40$/.test(url.pathname) ? json(listedRun) : runList(1, [listedRun]);
+
+    for (const designated of [
+      '.gitea/workflows/validate.yaml',
+      '.github/workflows/validate.yaml',
+    ]) {
+      const workflows: WorkflowEntry[] = [{ id: 'validate.yaml', path: designated }];
+      const discovery = await discoverReleaseCi({
+        client: client(forge(serveRuns, workflows).fetch),
+        identity: IDENTITY,
+        candidate: CANDIDATE,
+        workflowPath: designated,
+        readEntry: BOTH_TREES,
+      });
+      expect(discovery.ok, designated).toBe(false);
+      if (discovery.ok) throw new Error(`expected a blocker for ${designated}`);
+      expect(discovery.blocker.code, designated).toBe('ci-workflow-mismatch');
+
+      const reRead = await verifyReleaseCi({
+        client: client(forge(serveRuns, workflows).fetch),
+        identity: IDENTITY,
+        workflowPath: designated,
+        readEntry: BOTH_TREES,
+        evidence: { ...BOUND, workflowPath: designated },
+      });
+      expect(reRead.ok, designated).toBe(false);
+      if (reRead.ok) throw new Error(`expected a blocker for ${designated}`);
+      expect(reRead.blocker.code, designated).toBe('ci-workflow-mismatch');
+    }
+  });
+
   it('binds workflow provenance to the candidate tree, not the current branch files', async () => {
     // The branch advanced after the candidate: today's head runs only `.github`, while the
     // candidate still contains `.gitea`, so the run reporting `validate.yaml` is the `.gitea`

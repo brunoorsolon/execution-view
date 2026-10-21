@@ -17,7 +17,8 @@
  * and the run's repository object; the run list filters by `head_sha`. Because that identifier
  * omits the workflow directory, provenance is proved from two read-only observations: the
  * server's workflow list (the full path of each workflow it runs) and the candidate's own
- * committed tree (which workflow directory that commit contains, in Gitea's default order).
+ * committed tree. The candidate must contain exactly one supported workflow directory, so which
+ * directory its runs used follows from the tree itself rather than from an assumed server order.
  */
 
 import { workflowPathProblem } from '../config/schema.js';
@@ -157,9 +158,9 @@ interface ParsedWorkflow {
 }
 
 /**
- * Gitea's default workflow directories, in the order the server checks them: it runs the first
- * one the commit contains and ignores the rest. The candidate's own tree therefore decides which
- * directory a run's identifier refers to.
+ * The workflow directories this release target supports. Gitea's own configured order decides
+ * which one it runs when a commit contains several, and that order is not observable through the
+ * release API, so a candidate containing more than one of these is ambiguous and blocks.
  */
 const GITEA_WORKFLOW_DIRECTORIES: readonly string[] = ['.gitea/workflows', '.github/workflows'];
 
@@ -431,8 +432,9 @@ async function resolveWorkflowIdentifier(
   const serverId = matching[0]!.id;
 
   // The candidate's own tree decides which workflow directory its runs used. Reading it here, at
-  // this commit, is what keeps a branch that moved from relabelling an older run.
-  let activeDirectory: string | null = null;
+  // this commit, is what keeps a branch that moved from relabelling an older run; a commit with
+  // several workflow directories is left to the server's unobservable order, so it blocks.
+  const present: string[] = [];
   for (const directory of GITEA_WORKFLOW_DIRECTORIES) {
     let entry: ReleaseGitResult<ReleaseEntry | null>;
     try {
@@ -449,17 +451,21 @@ async function resolveWorkflowIdentifier(
         `the candidate's committed workflow entries could not be read, so the designated workflow cannot be proved`,
       );
     }
-    if (entry.value !== null && entry.value.type === 'tree') {
-      activeDirectory = directory;
-      break;
-    }
+    if (entry.value !== null && entry.value.type === 'tree') present.push(directory);
   }
-  if (activeDirectory === null) {
+  if (present.length === 0) {
     throw new CiEvidenceError(
       'ci-workflow-mismatch',
-      `the candidate contains none of the workflow directories Gitea runs, so ${bounded(workflowPath, 120)} cannot be proved`,
+      `the candidate contains none of the supported workflow directories, so ${bounded(workflowPath, 120)} cannot be proved`,
     );
   }
+  if (present.length > 1) {
+    throw new CiEvidenceError(
+      'ci-workflow-mismatch',
+      `the candidate contains more than one workflow directory, so which one the server runs for ${bounded(workflowPath, 120)} cannot be proved`,
+    );
+  }
+  const activeDirectory = present[0]!;
   if (!workflowPath.startsWith(`${activeDirectory}/`)) {
     throw new CiEvidenceError(
       'ci-workflow-mismatch',
