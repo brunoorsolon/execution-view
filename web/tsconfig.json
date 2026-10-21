@@ -12,6 +12,6 @@
     "allowImportingTsExtensions": true,
     "isolatedModules": true
   },
-  "include": ["**/*.ts", "../src/core/types.ts"],
+  "include": ["**/*.ts", "../src/core/types.ts", "../src/core/release.ts"],
   "exclude": ["vite.config.ts", "**/*.test.ts"]
 }
