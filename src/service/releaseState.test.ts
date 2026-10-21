@@ -19,6 +19,7 @@ import {
   RELEASE_STATE_SCHEMA_VERSION,
   type ReleaseIntent,
   type ReleaseJob,
+  type ReleaseJobStep,
   type ReleasePlan,
   type ReleasePlanPayload,
   type ReleaseReceipt,
@@ -437,6 +438,66 @@ describe('ReleaseStateStore immutability and integrity', () => {
     expectStateError('malformed-record', () => store.readJob('job-1'));
   });
 
+  it('rejects a digest-valid job record that does not match the shared contract', () => {
+    const { stateDir } = tempStateDir();
+    const store = new ReleaseStateStore({ stateDir });
+    mkdirSync(join(stateDir, 'jobs'), { mode: 0o700 });
+    const body = { jobId: 'j1', planId: null, planDigest: null, state: 'complete' };
+    writeFileSync(
+      recordFile(stateDir, 'jobs', 'j1'),
+      `${JSON.stringify({
+        stateSchemaVersion: RELEASE_STATE_SCHEMA_VERSION,
+        kind: 'job',
+        recordDigest: contentHash(body),
+        body,
+      })}\n`,
+      { mode: 0o600 },
+    );
+
+    expectStateError('malformed-record', () => store.readJob('j1'));
+  });
+
+  it('refuses an out-of-contract record instead of storing it', () => {
+    const { stateDir } = tempStateDir();
+    const store = new ReleaseStateStore({ stateDir });
+    store.writePlan(plan());
+
+    expectStateError('malformed-record', () =>
+      store.writeJob(job({ state: 'published' as ReleaseJob['state'] })),
+    );
+    expectStateError('malformed-record', () =>
+      store.writeObservation({ ...observation(), step: 'publishing' as ReleaseJobStep }),
+    );
+    expectStateError('malformed-record', () =>
+      store.writeReceipt(receipt({ remote: { tag: 'exact' } as ReleaseReceipt['remote'] })),
+    );
+  });
+
+  it('does not report success for an identical approval retry after a synchronization failure', () => {
+    const { stateDir } = tempStateDir();
+    const healthy = new ReleaseStateStore({ stateDir });
+    healthy.writePlan(plan());
+
+    // The record file synchronizes, the directory synchronization fails, for every attempt.
+    let calls = 0;
+    const failing = () => {
+      calls += 1;
+      if (calls > 1) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+    };
+    const failingStore = new ReleaseStateStore({ stateDir, fsync: failing });
+    expectStateError('write-failed', () => failingStore.writeIntent(intent()));
+    const afterFirst = calls;
+
+    // The retry must attempt synchronization again instead of trusting readable bytes.
+    expectStateError('write-failed', () => failingStore.writeIntent(intent()));
+    expect(calls).toBeGreaterThan(afterFirst);
+
+    // A store that can synchronize still returns the same durable evidence.
+    const recovered = new ReleaseStateStore({ stateDir });
+    expect(recovered.writeIntent(intent())).toEqual(intent());
+    expect(recovered.readIntent('plan-1').jobId).toBe('job-1');
+  });
+
   it('survives an interrupted write without exposing partial evidence', () => {
     const { stateDir } = tempStateDir();
     const store = new ReleaseStateStore({ stateDir });
@@ -484,6 +545,28 @@ describe('ReleaseStateStore path and permission safety', () => {
     const store = new ReleaseStateStore({ stateDir });
 
     expectStateError('unsafe-path', () => store.writePlan(plan()));
+  });
+
+  it('rejects a record directory substituted after the record was written', () => {
+    const { root, stateDir } = tempStateDir();
+    const store = new ReleaseStateStore({ stateDir });
+    store.writePlan(plan());
+    const moved = join(root, 'plans-moved');
+    renameSync(join(stateDir, 'plans'), moved);
+    symlinkSync(moved, join(stateDir, 'plans'));
+
+    // Recovery reads must not follow a substituted directory to the old evidence.
+    expectStateError('unsafe-path', () => store.readPlan('plan-1'));
+    expectStateError('unsafe-path', () => new ReleaseStateStore({ stateDir }).readPlan('plan-1'));
+  });
+
+  it('rejects a record directory that became accessible to others before a read', () => {
+    const { stateDir } = tempStateDir();
+    const store = new ReleaseStateStore({ stateDir });
+    store.writePlan(plan());
+    chmodSync(join(stateDir, 'plans'), 0o755);
+
+    expectStateError('unsafe-permissions', () => store.readPlan('plan-1'));
   });
 
   it('rejects records or directories that are accessible to group or others', () => {
@@ -573,8 +656,20 @@ describe('ReleaseStateStore secret hygiene', () => {
         }),
       ),
     );
+    // A credential carried in a query parameter is the same leak as userinfo.
+    expectStateError('unsafe-content', () =>
+      store.writePlan(
+        plan('plan-secret', {
+          notes: createReleaseNotes(
+            'Fetched https://forge.example/api?access_token=review-canary-123456789\n',
+            'file',
+          ),
+        }),
+      ),
+    );
 
-    expect(() => store.readPlan('plan-secret')).toThrow();
+    expectStateError('not-found', () => store.readPlan('plan-secret'));
+    expect(allBytes(stateDir)).not.toContain('review-canary');
   });
 
   it('keeps canaries out of every persisted byte', () => {
@@ -610,7 +705,7 @@ describe('ReleaseStateStore failure recovery', () => {
     const reopened = new ReleaseStateStore({ stateDir });
     expect(reopened.readIntent('plan-1')).toEqual(intent());
     expect(reopened.readJob('job-1').state).toBe('running');
-    expectStateError('not-found', () => reopened.readReceipt('job-1'));
+    expectStateError('unsafe-path', () => reopened.readReceipt('job-1'));
 
     // Once storage is repaired the same intent can finalize its receipt.
     rmSync(join(stateDir, 'receipts'));
