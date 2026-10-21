@@ -14,6 +14,7 @@ import {
   ReleaseForgeError,
   SUPPORTED_GITEA_VERSION,
   createReleaseForgeClient,
+  redactSecrets,
   type ReleaseBlocker,
   type ReleaseForgeFetch,
 } from './forgeClient.js';
@@ -48,41 +49,105 @@ function positiveId(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
-/** A server-provided name, made safe for a diagnostic: no control characters, bounded length. */
-function safeName(value: unknown, max = 64): string | null {
-  if (typeof value !== 'string') return null;
-  const cleaned = value.replace(/[\x00-\x1f\x7f]/g, '?').trim();
-  if (cleaned === '') return null;
-  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
-}
-
-function hostOf(url: string): string | null {
-  try {
-    return new URL(url).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
 function malformed(detail: string): ReleaseForgeError {
   return new ReleaseForgeError('malformed-response', `release forge response: ${detail}`);
 }
 
+/** Bounds and neutralizes a caller-supplied value echoed in a diagnostic. */
+function diagnostic(value: string, maxLength = 64): string {
+  const cleaned = value.replace(/[\x00-\x1f\x7f]/g, '?');
+  return cleaned.length > maxLength ? `${cleaned.slice(0, maxLength)}…` : cleaned;
+}
+
+/**
+ * A value returned as verified identity is never rewritten: an oversized or control-character
+ * value blocks instead, because a trimmed or truncated branch name would name another Git ref.
+ */
+function exactField(value: unknown, field: string, maxLength: number): string {
+  if (typeof value !== 'string') throw malformed(`${field} was not a string`);
+  if (value === '') throw malformed(`${field} was empty`);
+  if (value.trim() !== value) throw malformed(`${field} was padded with whitespace`);
+  if (/[\x00-\x1f\x7f]/.test(value)) throw malformed(`${field} contained control characters`);
+  if (value.length > maxLength) {
+    throw malformed(`${field} was longer than ${maxLength} characters`);
+  }
+  return value;
+}
+
+interface SshEndpoint {
+  host: string;
+  /** Effective port, "22" when the form does not name one. */
+  port: string;
+  path: string;
+}
+
+/** Parses the configured `ssh://` origin and Gitea's `ssh_url`, which may be scp-style. */
+function parseSshEndpoint(raw: string): SshEndpoint | null {
+  if (/^ssh:\/\//i.test(raw)) {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      return null;
+    }
+    if (url.hostname === '') return null;
+    return {
+      host: url.hostname.toLowerCase(),
+      port: url.port === '' ? '22' : url.port,
+      path: url.pathname,
+    };
+  }
+  const scp = /^(?:[^@/\s]+@)?(\[[^\]]+\]|[^:/\s]+):(.+)$/.exec(raw);
+  if (scp === null) return null;
+  return { host: scp[1]!.toLowerCase(), port: '22', path: scp[2]! };
+}
+
+function sshPath(path: string): string {
+  return path
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .replace(/\.git$/i, '')
+    .toLowerCase();
+}
+
+/**
+ * The configured push endpoint must be the endpoint the authenticated repository reports:
+ * another SSH service on the same host, or another port, would push to a different repository.
+ */
+function assertSshEndpoint(configured: ResolvedReleaseRepository, reported: string): void {
+  const wanted = parseSshEndpoint(configured.origin);
+  const actual = parseSshEndpoint(reported);
+  const at = `releases.repositories[${configured.id}].origin`;
+  if (wanted === null || actual === null) {
+    throw new ReleaseForgeError(
+      'ssh-origin-mismatch',
+      `${at}: "${configured.origin}" does not match the repository's SSH endpoint "${reported}"`,
+    );
+  }
+  if (
+    wanted.host !== actual.host ||
+    wanted.port !== actual.port ||
+    sshPath(wanted.path) !== sshPath(actual.path)
+  ) {
+    throw new ReleaseForgeError(
+      'ssh-origin-mismatch',
+      `${at}: "${configured.origin}" does not match the repository's SSH endpoint "${reported}"`,
+    );
+  }
+}
+
 function parseAccount(raw: unknown, baseUrl: string): ReleaseAccountIdentity {
   if (!isRecord(raw)) throw malformed('/user did not return a JSON object');
-  const login = safeName(raw['login']);
+  const login = exactField(raw['login'], '/user login', 64);
   const id = positiveId(raw['id']);
-  if (login === null || id === null) {
-    throw malformed('/user did not return a login and a positive numeric account id');
-  }
+  if (id === null) throw malformed('/user did not return a positive numeric account id');
   return { forge: 'gitea', baseUrl, login, forgeUserId: id };
 }
 
 /** Only the supported Gitea release target may prove release identity. */
 function parseVersion(raw: unknown): string {
   if (!isRecord(raw)) throw malformed('/version did not return a JSON object');
-  const version = safeName(raw['version'], 40);
-  if (version === null) throw malformed('/version did not return a version string');
+  const version = exactField(raw['version'], '/version version', 40);
   if (/forgejo/i.test(version)) {
     throw new ReleaseForgeError(
       'unsupported-forge',
@@ -106,16 +171,16 @@ function parseRepository(
   const id = positiveId(raw['id']);
   if (id === null) throw malformed('/repos/{owner}/{repo} did not return a numeric repository id');
   const expected = `${configured.repo.owner}/${configured.repo.repo}`;
-  const fullName = safeName(raw['full_name'], 200);
-  if (fullName === null || fullName.toLowerCase() !== expected) {
+  const fullName = exactField(raw['full_name'], 'repository full_name', 200);
+  if (fullName.toLowerCase() !== expected) {
     throw new ReleaseForgeError(
       'repository-mismatch',
-      `the release token sees repository "${fullName ?? '?'}" but releases.repositories[${configured.id}] configures "${expected}"`,
+      `the release token sees repository "${fullName}" but releases.repositories[${configured.id}] configures "${expected}"`,
     );
   }
-  const defaultBranch = safeName(raw['default_branch'], 200);
-  if (defaultBranch === null)
-    throw malformed('/repos/{owner}/{repo} did not return a default branch');
+  const defaultBranch = exactField(raw['default_branch'], 'repository default_branch', 200);
+  const sshUrl = exactField(raw['ssh_url'], 'repository ssh_url', 300);
+  assertSshEndpoint(configured, sshUrl);
   return { forgeRepositoryId: id, defaultBranch };
 }
 
@@ -127,46 +192,23 @@ function assertDedicatedToken(config: AppConfig, token: string, repositoryId: st
   if (shared) {
     throw new ReleaseForgeError(
       'shared-planning-token',
-      `releases.repositories[${safeName(repositoryId) ?? '?'}]: the release token must be dedicated, not a planning source token`,
+      `releases.repositories[${repositoryId}]: the release token must be dedicated, not a planning source token`,
     );
   }
 }
 
-async function verify(opts: VerifyReleaseIdentityOptions): Promise<VerifiedReleaseIdentity> {
-  const releases = opts.config.releases;
-  if (!releases.enabled) {
-    throw new ReleaseForgeError(
-      'release-disabled',
-      'releases are disabled in this configuration; no release identity can be verified',
-    );
-  }
-  const configured = releases.repositories.find((r) => r.id === opts.repositoryId);
-  const loaded = opts.runtime.repositories.find((r) => r.config.id === opts.repositoryId);
-  if (configured === undefined || loaded === undefined) {
-    throw new ReleaseForgeError(
-      'unknown-repository',
-      `release repository "${safeName(opts.repositoryId) ?? '?'}" is not in the configured release allowlist`,
-    );
-  }
-
-  const token = loaded.token.trim();
+async function prove(
+  opts: VerifyReleaseIdentityOptions,
+  configured: ResolvedReleaseRepository,
+  token: string,
+): Promise<VerifiedReleaseIdentity> {
   assertDedicatedToken(opts.config, token, configured.id);
 
   const source = opts.config.sources.find((s) => s.id === configured.source);
   if (source === undefined || source.kind !== 'gitea' || source.baseUrl === '') {
     throw new ReleaseForgeError(
       'unknown-repository',
-      `releases.repositories[${configured.id}]: source "${safeName(configured.source) ?? '?'}" is not a configured gitea source`,
-    );
-  }
-
-  // The configured SSH push origin must name the same forge host we authenticate against.
-  const forgeHost = hostOf(source.baseUrl);
-  const originHost = hostOf(configured.origin);
-  if (forgeHost === null || originHost !== forgeHost) {
-    throw new ReleaseForgeError(
-      'ssh-origin-mismatch',
-      `releases.repositories[${configured.id}].origin: SSH host "${originHost ?? '?'}" must match the configured forge host "${forgeHost ?? '?'}"`,
+      `releases.repositories[${configured.id}]: source "${configured.source}" is not a configured gitea source`,
     );
   }
 
@@ -231,7 +273,32 @@ export async function verifyReleaseIdentity(
   opts: VerifyReleaseIdentityOptions,
 ): Promise<ReleaseIdentityCheck> {
   try {
-    return { ok: true, identity: await verify(opts) };
+    const releases = opts.config.releases;
+    if (!releases.enabled) {
+      throw new ReleaseForgeError(
+        'release-disabled',
+        'releases are disabled in this configuration; no release identity can be verified',
+      );
+    }
+    const configured = releases.repositories.find((r) => r.id === opts.repositoryId);
+    const loaded = opts.runtime.repositories.find((r) => r.config.id === opts.repositoryId);
+    if (configured === undefined || loaded === undefined) {
+      throw new ReleaseForgeError(
+        'unknown-repository',
+        `release repository "${diagnostic(opts.repositoryId)}" is not in the configured release allowlist`,
+      );
+    }
+    const token = loaded.token.trim();
+    try {
+      return { ok: true, identity: await prove(opts, configured, token) };
+    } catch (err) {
+      if (err instanceof ReleaseForgeError) {
+        // Server-derived fields can echo any request value, including the token, so every
+        // outward message is redacted rather than trusted because it came from the forge.
+        throw new ReleaseForgeError(err.code, redactSecrets(err.message, [token]), err.status);
+      }
+      throw err;
+    }
   } catch (err) {
     if (err instanceof ReleaseForgeError) {
       return { ok: false, blocker: { code: err.code, message: err.message } };

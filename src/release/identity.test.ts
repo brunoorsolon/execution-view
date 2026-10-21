@@ -98,7 +98,13 @@ function identityRoutes(overrides: Partial<Record<string, () => Response>> = {})
     '/api/v1/user': () => json({ id: 42, login: 'release-bot' }),
     '/api/v1/version': () => json({ version: '1.26.1' }),
     '/api/v1/repos/acme/api': () =>
-      json({ id: 1001, name: 'api', full_name: 'Acme/API', default_branch: 'main' }),
+      json({
+        id: 1001,
+        name: 'api',
+        full_name: 'Acme/API',
+        default_branch: 'main',
+        ssh_url: 'git@gitea.example.test:acme/api.git',
+      }),
     ...overrides,
   };
 }
@@ -280,21 +286,64 @@ describe('verifyReleaseIdentity', () => {
     expect(redirected.calls).toHaveLength(1);
   });
 
-  it('blocks an SSH origin that names a different host than the authenticated forge', async () => {
+  it('blocks an SSH origin that is not the authenticated repository endpoint', async () => {
+    const cases: Array<[string, string]> = [
+      ['ssh://git@gitea-mirror.test/acme/api.git', 'git@gitea.example.test:acme/api.git'],
+      ['ssh://git@gitea.example.test:2222/acme/api.git', 'git@gitea.example.test:acme/api.git'],
+      ['ssh://git@gitea.example.test/acme/api.git', 'git@gitea.example.test:acme/other.git'],
+    ];
+    for (const [origin, sshUrl] of cases) {
+      const config = releaseConfig(
+        RELEASE_YAML.replace('ssh://git@gitea.example.test/acme/api.git', origin),
+      );
+      const { fetch } = forge(
+        identityRoutes({
+          '/api/v1/repos/acme/api': () =>
+            json({
+              id: 1001,
+              full_name: 'acme/api',
+              default_branch: 'main',
+              ssh_url: sshUrl,
+            }),
+        }),
+      );
+      const result = await verifyReleaseIdentity({
+        config,
+        runtime: runtimeFor(config),
+        repositoryId: 'app',
+        fetch,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected a blocker');
+      expect(result.blocker.code).toBe('ssh-origin-mismatch');
+    }
+  });
+
+  it('accepts a configured port that matches the reported SSH endpoint', async () => {
     const config = releaseConfig(
-      RELEASE_YAML.replace('ssh://git@gitea.example.test', 'ssh://git@gitea-mirror.test'),
+      RELEASE_YAML.replace(
+        'ssh://git@gitea.example.test/acme/api.git',
+        'ssh://git@gitea.example.test:2222/acme/api.git',
+      ),
     );
-    const { fetch, calls } = forge(identityRoutes());
+    const { fetch } = forge(
+      identityRoutes({
+        '/api/v1/repos/acme/api': () =>
+          json({
+            id: 1001,
+            full_name: 'acme/api',
+            default_branch: 'main',
+            ssh_url: 'ssh://git@gitea.example.test:2222/acme/api.git',
+          }),
+      }),
+    );
     const result = await verifyReleaseIdentity({
       config,
       runtime: runtimeFor(config),
       repositoryId: 'app',
       fetch,
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected a blocker');
-    expect(result.blocker.code).toBe('ssh-origin-mismatch');
-    expect(calls).toHaveLength(0);
+    expect(result.ok).toBe(true);
   });
 
   it('blocks disabled releases and an unknown repository id', async () => {
@@ -332,6 +381,81 @@ views:
     expect(unknownResult.ok).toBe(false);
     if (unknownResult.ok) throw new Error('expected a blocker');
     expect(unknownResult.blocker.code).toBe('unknown-repository');
+  });
+
+  it('redacts a forge value that echoes the release token', async () => {
+    const config = releaseConfig();
+    const echoLogin = forge(
+      identityRoutes({ '/api/v1/user': () => json({ id: 42, login: RELEASE_TOKEN }) }),
+    );
+    const loginResult = await verifyReleaseIdentity({
+      config,
+      runtime: runtimeFor(config),
+      repositoryId: 'app',
+      fetch: echoLogin.fetch,
+    });
+    expect(loginResult.ok).toBe(false);
+    if (loginResult.ok) throw new Error('expected a blocker');
+    expect(loginResult.blocker.message).not.toContain(RELEASE_TOKEN);
+
+    const echoVersion = forge(
+      identityRoutes({ '/api/v1/version': () => json({ version: RELEASE_TOKEN }) }),
+    );
+    const versionResult = await verifyReleaseIdentity({
+      config,
+      runtime: runtimeFor(config),
+      repositoryId: 'app',
+      fetch: echoVersion.fetch,
+    });
+    expect(versionResult.ok).toBe(false);
+    if (versionResult.ok) throw new Error('expected a blocker');
+    expect(versionResult.blocker.message).not.toContain(RELEASE_TOKEN);
+  });
+
+  it('returns the reported default branch exactly and rejects oversized evidence', async () => {
+    const config = releaseConfig();
+    const branch = 'a'.repeat(200);
+    const exact = forge(
+      identityRoutes({
+        '/api/v1/repos/acme/api': () =>
+          json({
+            id: 1001,
+            full_name: 'acme/api',
+            default_branch: branch,
+            ssh_url: 'git@gitea.example.test:acme/api.git',
+          }),
+      }),
+    );
+    const ok = await verifyReleaseIdentity({
+      config,
+      runtime: runtimeFor(config),
+      repositoryId: 'app',
+      fetch: exact.fetch,
+    });
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) throw new Error('expected a verified identity');
+    expect(ok.identity.repository.defaultBranch).toBe(branch);
+
+    const tooLong = forge(
+      identityRoutes({
+        '/api/v1/repos/acme/api': () =>
+          json({
+            id: 1001,
+            full_name: 'acme/api',
+            default_branch: 'a'.repeat(201),
+            ssh_url: 'git@gitea.example.test:acme/api.git',
+          }),
+      }),
+    );
+    const blocked = await verifyReleaseIdentity({
+      config,
+      runtime: runtimeFor(config),
+      repositoryId: 'app',
+      fetch: tooLong.fetch,
+    });
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) throw new Error('expected a blocker');
+    expect(blocked.blocker.code).toBe('malformed-response');
   });
 
   it('leaves Planning available while the forge is down', async () => {

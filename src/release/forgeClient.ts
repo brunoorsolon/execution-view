@@ -80,14 +80,13 @@ export interface ReleaseForgeClient {
 /** Control characters would let a value forge a log line or a header. */
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
 
-function redactor(secrets: string[]): (text: string) => string {
-  return (text: string): string => {
-    let out = text;
-    for (const secret of secrets) {
-      if (secret !== '') out = out.split(secret).join('***');
-    }
-    return out;
-  };
+/** Removes every secret from outward text. Callers must route server-derived text through this. */
+export function redactSecrets(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) {
+    if (secret !== '') out = out.split(secret).join('***');
+  }
+  return out;
 }
 
 /**
@@ -192,10 +191,33 @@ async function readBoundedText(res: Response, describe: string, maxBytes: number
   return text + decoder.decode();
 }
 
+/**
+ * Reads the body, turning a stream failure into a redacted release error. A body read can reject
+ * after the response headers arrived, and that rejection may name the credential.
+ */
+async function readResponseText(
+  res: Response,
+  describe: string,
+  maxBytes: number,
+  redact: (text: string) => string,
+): Promise<string> {
+  try {
+    return await readBoundedText(res, describe, maxBytes);
+  } catch (err) {
+    if (err instanceof ReleaseForgeError) throw err;
+    const cause = err instanceof Error ? err.message : String(err);
+    throw new ReleaseForgeError(
+      'network-error',
+      redact(`${describe} failed while reading the response: ${cause}`),
+      res.status,
+    );
+  }
+}
+
 export function createReleaseForgeClient(opts: ReleaseForgeClientOptions): ReleaseForgeClient {
   const baseUrl = normalizeBaseUrl(opts.baseUrl);
   const token = requireToken(opts.token);
-  const redact = redactor([token]);
+  const redact = (text: string): string => redactSecrets(text, [token]);
   const fetchFn: ReleaseForgeFetch = opts.fetch ?? (async (input, init) => fetch(input, init));
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = opts.maxResponseBytes ?? MAX_RESPONSE_BYTES;
@@ -248,7 +270,7 @@ export function createReleaseForgeClient(opts: ReleaseForgeClientOptions): Relea
       throw new ReleaseForgeError(code, `${describe} failed with status ${status}`, status);
     }
 
-    const text = await readBoundedText(res, describe, maxBytes);
+    const text = await readResponseText(res, describe, maxBytes, redact);
     try {
       return JSON.parse(text) as T;
     } catch {

@@ -202,4 +202,19 @@ describe('createReleaseForgeClient request', () => {
     expect(err.message).not.toContain(TOKEN);
     expect(err.message).toContain('***');
   });
+
+  it('redacts a failure raised while reading the response body', async () => {
+    const { fetch } = fakeFetch(() => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error(`body failed with ${TOKEN}`));
+        },
+      });
+      return new Response(body, { status: 200 });
+    });
+    const client = createReleaseForgeClient({ baseUrl: BASE, token: TOKEN, fetch });
+    const err = await expectError(() => client.getJson('/user'));
+    expect(err.code).toBe('network-error');
+    expect(err.message).not.toContain(TOKEN);
+  });
 });
