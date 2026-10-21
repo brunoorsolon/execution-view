@@ -15,11 +15,13 @@
  * reports GitHub-style `status`/`conclusion` (from `ToActionsStatus`), `path` as
  * `<WorkflowID>@<Ref>` where `WorkflowID` is the path inside the server's workflow directory,
  * and the run's repository object; the run list filters by `head_sha`. Because that identifier
- * omits the directory, the configured path is bound to it through the server's own workflow
- * list, which reports each runnable workflow by full repository path.
+ * omits the workflow directory, provenance is proved from two read-only observations: the
+ * server's workflow list (the full path of each workflow it runs) and the candidate's own
+ * committed tree (which workflow directory that commit contains, in Gitea's default order).
  */
 
 import { workflowPathProblem } from '../config/schema.js';
+import type { ReleaseEntry } from './checkout.js';
 import type {
   ReleaseCandidate,
   ReleaseCiEvidence,
@@ -31,6 +33,7 @@ import {
   type ReleaseBlockerCode,
   type ReleaseForgeClient,
 } from './forgeClient.js';
+import type { ReleaseGitResult } from './gitProcess.js';
 
 /** A stable machine-readable reason the designated CI evidence could not be proved. */
 export type ReleaseCiBlockerCode =
@@ -46,7 +49,8 @@ export type ReleaseCiBlockerCode =
   | 'ci-discovery-incomplete'
   | 'ci-evidence-too-large'
   | 'ci-evidence-conflict'
-  | 'ci-evidence-changed';
+  | 'ci-evidence-changed'
+  | 'ci-tree-unavailable';
 
 /** Why the designated CI evidence is unusable. Safe to log, return or persist. */
 export interface ReleaseCiBlocker {
@@ -77,6 +81,12 @@ export const DEFAULT_CI_MAX_PAGES = 20;
 /** Most runs one discovery may enumerate before the evidence set is too large to trust. */
 export const DEFAULT_CI_MAX_RUNS = 500;
 
+/**
+ * Reads one committed entry at the candidate commit from the container-owned checkout. It is how
+ * workflow provenance is bound to the exact tree the run was made for.
+ */
+export type ReleaseCiTreeReader = (path: string) => Promise<ReleaseGitResult<ReleaseEntry | null>>;
+
 export interface DiscoverReleaseCiOptions {
   /** Release forge client for the verified forge; only a read-capable client is accepted. */
   client: ReleaseForgeClient;
@@ -86,6 +96,8 @@ export interface DiscoverReleaseCiOptions {
   candidate: ReleaseCandidate;
   /** Configured designated workflow path from `releases.repositories[].ci.workflowPath`. */
   workflowPath: string;
+  /** Reads a committed entry at the candidate commit; binds provenance to that exact tree. */
+  readEntry: ReleaseCiTreeReader;
   pageSize?: number;
   maxPages?: number;
   maxRuns?: number;
@@ -98,6 +110,8 @@ export interface VerifyReleaseCiOptions {
   identity: ReleaseRepositoryIdentity;
   /** Configured designated workflow path the evidence was bound to. */
   workflowPath: string;
+  /** Reads a committed entry at the evidence's candidate commit. */
+  readEntry: ReleaseCiTreeReader;
   /** Evidence bound into an approved plan; read again, never rewritten. */
   evidence: ReleaseCiEvidence;
 }
@@ -141,6 +155,13 @@ interface ParsedWorkflow {
   id: string;
   path: string;
 }
+
+/**
+ * Gitea's default workflow directories, in the order the server checks them: it runs the first
+ * one the commit contains and ignores the rest. The candidate's own tree therefore decides which
+ * directory a run's identifier refers to.
+ */
+const GITEA_WORKFLOW_DIRECTORIES: readonly string[] = ['.gitea/workflows', '.github/workflows'];
 
 /** The bounded enumeration limits one discovery resolved from its options. */
 interface RunBounds {
@@ -361,19 +382,24 @@ function parseWorkflowList(raw: unknown, field: string): ParsedWorkflow[] {
 }
 
 /**
- * Binds the configured workflow path to the identifier a run reports.
+ * Binds the configured workflow path to the identifier a run reports, for the exact candidate.
  *
  * A run's `path` names only the workflow inside the server's workflow directory, so the same file
- * name in another directory is a different workflow. The server's workflow list reports the full
- * repository path of every workflow it actually runs on the default branch; the configured path
- * must be exactly one of those, and its reported identifier is the only identifier a qualifying
- * run may carry. A configured file the server does not run therefore blocks instead of matching a
- * same-named workflow from another directory.
+ * name in another directory is a different workflow. Two read-only observations decide which
+ * directory the identifier means for this candidate: the server's workflow list, which reports
+ * every workflow it runs by full repository path at the current default-branch head, and the
+ * candidate's own committed tree, which shows the workflow directory that commit contains.
+ * Gitea runs only the first workflow directory a commit contains, so the candidate's tree picks
+ * the directory; the configured path must sit inside it and be one the server reports, and the
+ * identifier both observations imply must agree. A configured file the server does not run, or a
+ * branch that moved since the candidate, therefore blocks instead of matching a same-named
+ * workflow from another directory or from a different tree.
  */
 async function resolveWorkflowIdentifier(
   client: ReleaseForgeClient,
   identity: ReleaseRepositoryIdentity,
   workflowPath: string,
+  readEntry: ReleaseCiTreeReader,
 ): Promise<string> {
   const path = `${repositoryPath(identity)}/actions/workflows`;
   let raw: unknown;
@@ -402,7 +428,52 @@ async function resolveWorkflowIdentifier(
       `the forge listed ${bounded(workflowPath, 120)} more than once, so the designated workflow is ambiguous`,
     );
   }
-  return matching[0]!.id;
+  const serverId = matching[0]!.id;
+
+  // The candidate's own tree decides which workflow directory its runs used. Reading it here, at
+  // this commit, is what keeps a branch that moved from relabelling an older run.
+  let activeDirectory: string | null = null;
+  for (const directory of GITEA_WORKFLOW_DIRECTORIES) {
+    let entry: ReleaseGitResult<ReleaseEntry | null>;
+    try {
+      entry = await readEntry(directory);
+    } catch {
+      throw new CiEvidenceError(
+        'ci-tree-unavailable',
+        `the candidate's committed workflow entries could not be read, so the designated workflow cannot be proved`,
+      );
+    }
+    if (!entry.ok) {
+      throw new CiEvidenceError(
+        'ci-tree-unavailable',
+        `the candidate's committed workflow entries could not be read, so the designated workflow cannot be proved`,
+      );
+    }
+    if (entry.value !== null && entry.value.type === 'tree') {
+      activeDirectory = directory;
+      break;
+    }
+  }
+  if (activeDirectory === null) {
+    throw new CiEvidenceError(
+      'ci-workflow-mismatch',
+      `the candidate contains none of the workflow directories Gitea runs, so ${bounded(workflowPath, 120)} cannot be proved`,
+    );
+  }
+  if (!workflowPath.startsWith(`${activeDirectory}/`)) {
+    throw new CiEvidenceError(
+      'ci-workflow-mismatch',
+      `the candidate's workflow directory is ${activeDirectory}, so ${bounded(workflowPath, 120)} is not the workflow a run of this candidate reports`,
+    );
+  }
+  const candidateId = workflowPath.slice(activeDirectory.length + 1);
+  if (candidateId !== serverId) {
+    throw new CiEvidenceError(
+      'ci-evidence-conflict',
+      `the forge reports a different identifier for ${bounded(workflowPath, 120)} than the candidate's workflow directory implies, so the designated workflow is ambiguous`,
+    );
+  }
+  return serverId;
 }
 
 /**
@@ -466,7 +537,7 @@ function noQualifyingRun(
 ): CiEvidenceError {
   // Messages carry only configuration-derived values, validated commit ids and counts: a forge
   // field is never echoed, because a hostile or broken server can return any text in it.
-  const where = `a completed successful push run of ${bounded(expected.workflowPath, 120)} (reported by the forge as ${bounded(workflowId, 120)}) for commit ${expected.commit} on the verified default branch`;
+  const where = `a completed successful push run of ${bounded(expected.workflowPath, 120)} for commit ${expected.commit} on the verified default branch`;
   if (listedRuns === 0) {
     return new CiEvidenceError(
       'ci-run-missing',
@@ -619,6 +690,7 @@ export async function discoverReleaseCi(
       options.client,
       options.identity,
       options.workflowPath,
+      options.readEntry,
     );
     const runs = await enumerateRuns(options, expected, bounds);
     const counts = new Map<Rejection, number>();
@@ -658,6 +730,7 @@ export async function verifyReleaseCi(options: VerifyReleaseCiOptions): Promise<
       options.client,
       options.identity,
       options.workflowPath,
+      options.readEntry,
     );
     const path = `${repositoryPath(options.identity)}/actions/runs/${options.evidence.runId}`;
     let raw: unknown;
