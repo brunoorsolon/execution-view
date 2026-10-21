@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ResolvedReleaseRepository } from '../config/schema.js';
 import type {
@@ -118,16 +120,29 @@ afterEach(() => {
 
 const TAGGER_LINE = 'tagger Fixture Author <author@example.test> 1700000000 +0000';
 
-function writeRawTag(remote: string, name: string, body: string): string {
-  const oid = execFileSync(
-    'git',
-    ['--git-dir', remote, 'hash-object', '-t', 'tag', '-w', '--stdin'],
-    {
-      input: body,
-      encoding: 'utf8',
-      env: gitEnv(),
-    },
-  ).trim();
+/**
+ * Writes a tag object into the bare remote. `literally` stores a corrupt object Git itself
+ * refuses to hash, by writing the loose object and the ref file directly: `update-ref` refuses to
+ * point a ref at an object it cannot parse.
+ */
+function writeRawTag(remote: string, name: string, body: string, literally = false): string {
+  let oid: string;
+  if (literally) {
+    const content = Buffer.from(body, 'utf8');
+    const stored = Buffer.concat([Buffer.from(`tag ${content.length}\0`, 'utf8'), content]);
+    oid = createHash('sha1').update(stored).digest('hex');
+    const directory = join(remote, 'objects', oid.slice(0, 2));
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, oid.slice(2)), deflateSync(stored));
+    mkdirSync(join(remote, 'refs', 'tags'), { recursive: true });
+    writeFileSync(join(remote, 'refs', 'tags', name), `${oid}\n`);
+    return oid;
+  }
+  oid = execFileSync('git', ['--git-dir', remote, 'hash-object', '-t', 'tag', '-w', '--stdin'], {
+    input: body,
+    encoding: 'utf8',
+    env: gitEnv(),
+  }).trim();
   gitDir(remote, 'update-ref', `refs/tags/${name}`, oid);
   return oid;
 }
@@ -405,6 +420,56 @@ describe('remote tag classification', () => {
     expect(check.tag.state).toBe('unknown');
     expect(codes(check)).toEqual(['tag-unreadable']);
   });
+
+  it('refuses a crafted tag object Git would not write', async () => {
+    const fixture = makeFixture();
+    // A tag object with no `tag` header, and one that repeats a header Git writes once. Git
+    // itself refuses to write either, so the fixture forces the corrupt object into the remote.
+    writeRawTag(
+      fixture.remote,
+      'v1.0.5',
+      `object ${fixture.headCommit}\ntype commit\n${TAGGER_LINE}\n\nv1.0.5\n`,
+      true,
+    );
+    writeRawTag(
+      fixture.remote,
+      'v1.0.6',
+      `object ${fixture.headCommit}\ntype commit\ntag v1.0.6\ntag v1.0.6\n${TAGGER_LINE}\n\nv1.0.6\n`,
+      true,
+    );
+    fakeSsh(fixture);
+    const checkout = checkoutFor(fixture);
+
+    for (const name of ['v1.0.5', 'v1.0.6']) {
+      const check = await observeTagState(
+        checkout,
+        tagExpectation(fixture, { name, message: name }),
+      );
+      expect(check.tag.state).toBe('unknown');
+      expect(codes(check)).toEqual(['tag-unreadable']);
+    }
+  });
+
+  it('keeps the tag unknown when the remote moves it between listing and fetching', async () => {
+    const fixture = makeFixture();
+    annotatedTag(fixture.remote, TAG, fixture.headCommit);
+    const movedId = annotatedTag(fixture.remote, 'v9.9.9', fixture.headCommit, 'moved');
+    // The first ssh invocation serves the listing; the second moves the ref, then serves the
+    // fetch, so the two reads cannot agree on the tag object.
+    const dir = mkdtempSync(join(tmpdir(), 'forge-desk-ssh-'));
+    const counter = join(dir, 'count');
+    writeFileSync(
+      join(dir, 'ssh'),
+      `#!/bin/sh\nn=$(cat '${counter}' 2>/dev/null || echo 0)\necho $((n+1)) > '${counter}'\nif [ "$n" = "0" ]; then\n  exec git-upload-pack '${fixture.remote}'\nfi\ngit --git-dir '${fixture.remote}' update-ref refs/tags/${TAG} '${movedId}'\nexec git-upload-pack '${fixture.remote}'\n`,
+      { mode: 0o755 },
+    );
+    process.env['PATH'] = `${dir}:${REAL_PATH}`;
+
+    const check = await observeTagState(checkoutFor(fixture), tagExpectation(fixture));
+
+    expect(check.tag.state).toBe('unknown');
+    expect(codes(check)).toEqual(['tag-unreadable']);
+  });
 });
 
 describe('remote release classification', () => {
@@ -519,6 +584,13 @@ describe('remote release classification', () => {
     const bounded = await observeReleaseState(truncated, REPOSITORY, releaseExpectation());
     expect(bounded.release.state).toBe('unknown');
     expect(codes(bounded)).toEqual(['release-listing-unproven']);
+
+    // The page bound is caller-controlled, so a narrower bound also fails closed.
+    const narrow = await observeReleaseState(truncated, REPOSITORY, releaseExpectation(), {
+      maxListPages: 1,
+    });
+    expect(narrow.release.state).toBe('unknown');
+    expect(codes(narrow)).toEqual(['release-listing-unproven']);
     expect(MAX_RELEASE_LIST_PAGES).toBeGreaterThan(0);
   });
 

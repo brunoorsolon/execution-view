@@ -148,14 +148,19 @@ function annotationMessage(message: string): string {
 }
 
 interface ParsedTagObject {
-  target: string | null;
+  target: string;
   targetType: string | null;
-  name: string | null;
+  name: string;
   tagger: ReleaseTagger | null;
   message: string;
 }
 
-/** Reads the raw annotated tag object. Header lines are ASCII; the message must be exact UTF-8. */
+/**
+ * Reads the raw annotated tag object. Header lines are ASCII; the message must be exact UTF-8.
+ *
+ * A header Git itself never repeats, or a missing target or tag name, means the object is not a
+ * tag Git would have written, so it is refused instead of being compared field by field.
+ */
 function parseTagObject(bytes: Buffer): ParsedTagObject | string {
   const separator = bytes.indexOf('\n\n');
   if (separator < 0) return 'the annotated tag object carried no header/body separator';
@@ -166,23 +171,22 @@ function parseTagObject(bytes: Buffer): ParsedTagObject | string {
   } catch {
     return 'the annotated tag message was not valid UTF-8';
   }
-  const parsed: ParsedTagObject = {
-    target: null,
-    targetType: null,
-    name: null,
-    tagger: null,
-    message,
-  };
+  const parsed: Partial<ParsedTagObject> = { message, targetType: null, tagger: null };
+  const seen = new Set<string>();
   for (const line of header.split('\n')) {
-    if (line.startsWith('object ')) {
+    const key = line.slice(0, line.indexOf(' '));
+    if (key !== 'object' && key !== 'type' && key !== 'tag' && key !== 'tagger') continue;
+    if (seen.has(key)) return `the annotated tag object repeated its ${key} header`;
+    seen.add(key);
+    if (key === 'object') {
       const value = line.slice('object '.length);
       if (!OBJECT_ID.test(value)) return 'the annotated tag object named no valid target object';
       parsed.target = value;
-    } else if (line.startsWith('type ')) {
+    } else if (key === 'type') {
       parsed.targetType = line.slice('type '.length);
-    } else if (line.startsWith('tag ')) {
+    } else if (key === 'tag') {
       parsed.name = line.slice('tag '.length);
-    } else if (line.startsWith('tagger ')) {
+    } else {
       const match = TAGGER.exec(line.slice('tagger '.length));
       if (match !== null) {
         const [, name = '', email = ''] = match;
@@ -192,8 +196,11 @@ function parseTagObject(bytes: Buffer): ParsedTagObject | string {
       }
     }
   }
-  if (parsed.target === null) return 'the annotated tag object named no target object';
-  return parsed;
+  if (parsed.target === undefined) return 'the annotated tag object named no target object';
+  if (parsed.name === undefined || parsed.name === '') {
+    return 'the annotated tag object named no tag name';
+  }
+  return parsed as ParsedTagObject;
 }
 
 /** Classifies one remote tag against the planned immutable tag content. */
@@ -249,7 +256,7 @@ export function classifyTag(
       ),
     );
   }
-  if (parsed.name !== null && parsed.name !== expected.name) {
+  if (parsed.name !== expected.name) {
     reasons.push(
       reason(
         'tag-content-mismatch',
