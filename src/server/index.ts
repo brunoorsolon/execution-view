@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { ConfigError, loadConfig } from '../config/load.js';
 import { loadReleaseRuntime } from '../config/releaseRuntime.js';
 import { PlanService } from '../service/planService.js';
+import { acquireReleaseOwnership } from '../service/releaseOwnership.js';
 import { buildApp } from './app.js';
 
 export interface StartServerOptions {
@@ -32,10 +33,33 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Fastif
     app.log.info(
       `releases enabled: ${releaseRuntime.repositories.length} repository(ies), state dir ${releaseRuntime.stateDir}`,
     );
+    // One process owns release state for its lifetime; a second one is refused here, before it
+    // can serve release work or touch the records. Closing the server, by any path, releases it.
+    const ownership = await acquireReleaseOwnership({
+      stateDir: releaseRuntime.stateDir,
+      onLost: (reason) => app.log.error(`release execution unavailable: ${reason}`),
+    });
+    app.log.info(`release state owned: ${ownership.lockFile}`);
+    app.addHook('onClose', async () => {
+      const report = await ownership.shutdown();
+      if (!report.drained) {
+        app.log.warn(
+          `shutdown deadline passed with release work still running (${report.pending.join(', ')}); this process keeps release-state ownership until it exits, and the durable intent is what the next start reconciles`,
+        );
+      } else if (!report.lockReleased) {
+        app.log.error(`could not release the release-state ownership lock ${ownership.lockFile}`);
+      }
+    });
   }
 
   const { host, port } = config.server;
-  await app.listen({ host, port });
+  try {
+    await app.listen({ host, port });
+  } catch (error) {
+    // Do not leak the ownership lock or the helper process when listening fails.
+    await app.close().catch(() => undefined);
+    throw error;
+  }
 
   const shownHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
   app.log.info(`execution-view listening on http://${shownHost}:${port}`);
@@ -43,6 +67,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Fastif
     app.log.info(`view "${view.id}" (${view.title}): ${view.repos.join(', ')}`);
   }
 
+  // Closing the server stops release admission and drains release work within the bound, so
+  // SIGTERM never cuts an accepted publication short mid-write.
   const shutdown = (signal: string): void => {
     app.log.info(`received ${signal}, shutting down`);
     app.close().then(
