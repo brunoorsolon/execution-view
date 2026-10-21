@@ -319,6 +319,33 @@ describe('verifyReleaseIdentity', () => {
     }
   });
 
+  it('never echoes credentials embedded in the reported SSH endpoint', async () => {
+    const config = releaseConfig();
+    const password = 'private-url-password';
+    const { fetch } = forge(
+      identityRoutes({
+        '/api/v1/repos/acme/api': () =>
+          json({
+            id: 1001,
+            full_name: 'acme/api',
+            default_branch: 'main',
+            ssh_url: `ssh://git:${password}@other.test/acme/api.git`,
+          }),
+      }),
+    );
+    const result = await verifyReleaseIdentity({
+      config,
+      runtime: runtimeFor(config),
+      repositoryId: 'app',
+      fetch,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a blocker');
+    expect(result.blocker.code).toBe('ssh-origin-mismatch');
+    expect(result.blocker.message).not.toContain(password);
+    expect(result.blocker.message).not.toContain('other.test');
+  });
+
   it('accepts a configured port that matches the reported SSH endpoint', async () => {
     const config = releaseConfig(
       RELEASE_YAML.replace(

@@ -113,25 +113,22 @@ function sshPath(path: string): string {
 /**
  * The configured push endpoint must be the endpoint the authenticated repository reports:
  * another SSH service on the same host, or another port, would push to a different repository.
+ * The reported endpoint is untrusted and may carry a URL password, so it never enters the message.
  */
 function assertSshEndpoint(configured: ResolvedReleaseRepository, reported: string): void {
   const wanted = parseSshEndpoint(configured.origin);
   const actual = parseSshEndpoint(reported);
   const at = `releases.repositories[${configured.id}].origin`;
-  if (wanted === null || actual === null) {
-    throw new ReleaseForgeError(
-      'ssh-origin-mismatch',
-      `${at}: "${configured.origin}" does not match the repository's SSH endpoint "${reported}"`,
-    );
-  }
   if (
+    wanted === null ||
+    actual === null ||
     wanted.host !== actual.host ||
     wanted.port !== actual.port ||
     sshPath(wanted.path) !== sshPath(actual.path)
   ) {
     throw new ReleaseForgeError(
       'ssh-origin-mismatch',
-      `${at}: "${configured.origin}" does not match the repository's SSH endpoint "${reported}"`,
+      `${at}: "${configured.origin}" is not the SSH endpoint the authenticated repository reports`,
     );
   }
 }
