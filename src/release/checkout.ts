@@ -59,6 +59,17 @@ export interface ReleaseCheckout {
    * history reachable from this instance's last successfully fetched candidate is readable.
    */
   readEntry(commit: string, path: string): Promise<ReleaseGitResult<ReleaseEntry | null>>;
+  /**
+   * True when `ancestor` is reachable from `descendant`. Both are full commit ids, and the
+   * descendant must belong to the fetched candidate, so a tag observation can be placed against
+   * the candidate history without trusting a caller-supplied answer.
+   */
+  isAncestor(ancestor: string, descendant: string): Promise<ReleaseGitResult<boolean>>;
+  /**
+   * NUL-separated commit subjects of `<from>..<to>`, oldest first, or of `<to>` when `from` is
+   * null. Raw bytes: the caller decides whether they are valid text.
+   */
+  readCommitSubjects(from: string | null, to: string): Promise<ReleaseGitResult<Buffer>>;
 }
 
 /** The only ref this module writes: a private, container-owned view of the remote branch. */
@@ -260,6 +271,31 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
     resetCacheConfig(cache);
   };
 
+  /**
+   * Object and history reads are rooted in the sealed candidate, so an unrelated commit or one
+   * left behind by an earlier fetch can never become release evidence.
+   */
+  const requireSealedCandidate = async (rev: string, operation: string): Promise<void> => {
+    if (sealedCandidate === null) {
+      throw new ReleaseGitError(
+        'git-invalid-request',
+        'read the release candidate before reading its objects',
+      );
+    }
+    await prepareCache();
+    const reachable = await git(
+      ['rev-list', '--max-count=1', rev, '--not', sealedCandidate],
+      operation,
+      cache,
+    );
+    if (firstLine(reachable.stdout) !== '') {
+      throw new ReleaseGitError(
+        'git-unsafe-revision',
+        'the requested object is not reachable from the fetched release candidate',
+      );
+    }
+  };
+
   return {
     async fetchCandidate(): Promise<ReleaseGitResult<ReleaseCandidate>> {
       sealedCandidate = null;
@@ -306,26 +342,9 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
       try {
         const rev = assertSafeCommit(commit);
         const entryPath = assertSafePath(path);
-        if (sealedCandidate === null) {
-          throw new ReleaseGitError(
-            'git-invalid-request',
-            'read the release candidate before reading its objects',
-          );
-        }
-        await prepareCache();
         // Only objects the verified candidate reaches may be read, so an unrelated or
         // caller-invented commit cannot become release evidence.
-        const reachable = await git(
-          ['rev-list', '--max-count=1', rev, '--not', sealedCandidate],
-          'verify a release object belongs to the candidate',
-          cache,
-        );
-        if (firstLine(reachable.stdout) !== '') {
-          throw new ReleaseGitError(
-            'git-unsafe-revision',
-            'the requested object is not reachable from the fetched release candidate',
-          );
-        }
+        await requireSealedCandidate(rev, 'verify a release object belongs to the candidate');
         const listed = await git(
           ['ls-tree', '-z', '--full-tree', rev, '--', entryPath],
           'read a committed release entry',
@@ -368,6 +387,42 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
           cache,
         );
         return { ok: true, value: { mode, type, bytes: blob.stdout } };
+      } catch (err) {
+        return { ok: false, blocker: releaseGitBlocker(err) };
+      }
+    },
+
+    async isAncestor(ancestor: string, descendant: string): Promise<ReleaseGitResult<boolean>> {
+      try {
+        const from = assertSafeCommit(ancestor);
+        const to = assertSafeCommit(descendant);
+        await requireSealedCandidate(to, 'verify a release baseline belongs to the candidate');
+        // An empty listing means every commit reachable from `from` is reachable from `to`.
+        const listed = await git(
+          ['rev-list', '--max-count=1', from, '--not', to],
+          'verify a release baseline is an ancestor of the candidate',
+          cache,
+        );
+        return { ok: true, value: firstLine(listed.stdout) === '' };
+      } catch (err) {
+        return { ok: false, blocker: releaseGitBlocker(err) };
+      }
+    },
+
+    async readCommitSubjects(from: string | null, to: string): Promise<ReleaseGitResult<Buffer>> {
+      try {
+        const target = assertSafeCommit(to);
+        const base = from === null ? null : assertSafeCommit(from);
+        await requireSealedCandidate(
+          target,
+          'verify a release note range belongs to the candidate',
+        );
+        const logged = await git(
+          ['log', '--reverse', '--format=%s', '-z', base === null ? target : `${base}..${target}`],
+          'read committed release note subjects',
+          cache,
+        );
+        return { ok: true, value: logged.stdout };
       } catch (err) {
         return { ok: false, blocker: releaseGitBlocker(err) };
       }
