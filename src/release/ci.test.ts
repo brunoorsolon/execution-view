@@ -3,7 +3,7 @@ import { parseConfig } from '../config/load.js';
 import type { ReleaseRuntime } from '../config/releaseRuntime.js';
 import type { AppConfig } from '../config/schema.js';
 import type { ReleaseCiEvidence, ReleaseRepositoryIdentity } from '../core/release.js';
-import { discoverReleaseCi, verifyReleaseCi, type ReleaseCiTreeReader } from './ci.js';
+import { discoverReleaseCi, verifyReleaseCi, type ReleaseCiPathLister } from './ci.js';
 import {
   createReleaseForgeClient,
   type ReleaseForgeClient,
@@ -142,54 +142,20 @@ interface Forge {
   methods: string[];
 }
 
-/** One workflow the server runs on the default branch, as its workflow list reports it. */
-interface WorkflowEntry {
-  id: string;
-  path: string;
+/** A candidate tree containing exactly the given committed paths. */
+function candidateTree(paths: string[]): ReleaseCiPathLister {
+  return () => Promise.resolve({ ok: true, value: paths });
 }
 
-/** The workflows the server runs by default in these fixtures: the `.gitea` directory only. */
-const ACTIVE_WORKFLOWS: WorkflowEntry[] = [{ id: 'validate.yaml', path: WORKFLOW }];
+/** The usual candidate: the `.gitea` workflow file. */
+const GITEA_TREE = candidateTree([WORKFLOW]);
+/** A candidate that only contains the `.github` workflow file. */
+const GITHUB_TREE = candidateTree(['.github/workflows/validate.yaml']);
+/** A candidate containing the same file name in both workflow directories. */
+const BOTH_TREES = candidateTree([WORKFLOW, '.github/workflows/validate.yaml']);
 
-/** A candidate tree containing exactly the given committed entries. */
-function candidateTree(entries: Record<string, 'tree' | 'blob'>): ReleaseCiTreeReader {
-  return (path) =>
-    Promise.resolve(
-      path in entries
-        ? {
-            ok: true,
-            value: {
-              mode: entries[path] === 'tree' ? '040000' : '100644',
-              type: entries[path]!,
-              bytes: null,
-            },
-          }
-        : { ok: true, value: null },
-    );
-}
-
-/** The usual candidate: the `.gitea` workflow directory, which the server runs. */
-const GITEA_TREE = candidateTree({ '.gitea/workflows': 'tree' });
-/** A candidate that only contains the `.github` workflow directory. */
-const GITHUB_TREE = candidateTree({ '.github/workflows': 'tree' });
-/** A candidate containing both directories, which Gitea resolves to `.gitea` first. */
-const BOTH_TREES = candidateTree({ '.gitea/workflows': 'tree', '.github/workflows': 'tree' });
-
-function workflowList(workflows: WorkflowEntry[]): Response {
-  return json({
-    total_count: workflows.length,
-    workflows: workflows.map((workflow) => ({ ...workflow, name: workflow.id, state: 'active' })),
-  });
-}
-
-/**
- * A read-only forge whose workflow list is served separately, so a test can describe exactly which
- * workflow directory the server runs while the handler serves run pages or a single run.
- */
-function forge(
-  handler: (url: URL) => Response,
-  workflows: WorkflowEntry[] = ACTIVE_WORKFLOWS,
-): Forge {
+/** A read-only forge whose handler serves run pages or a single run. */
+function forge(handler: (url: URL) => Response): Forge {
   const requests: URL[] = [];
   const methods: string[] = [];
   const fetch: ReleaseForgeFetch = (input, init) => {
@@ -197,8 +163,6 @@ function forge(
     requests.push(url);
     methods.push(init.method ?? 'GET');
     try {
-      if (url.pathname.endsWith('/actions/workflows'))
-        return Promise.resolve(workflowList(workflows));
       return Promise.resolve(handler(url));
     } catch (err) {
       return Promise.reject(err);
@@ -239,7 +203,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       pageSize: 2,
     });
 
@@ -264,7 +228,7 @@ describe('discoverReleaseCi', () => {
     expect(fixture.requests.some((url) => /releases|\/tags/.test(url.pathname))).toBe(false);
   });
 
-  it('binds the configured workflow through the workflow list the server reports', async () => {
+  it('binds the configured workflow to the unique committed path the run names', async () => {
     const listedRun = run({ id: 40, path: 'validate.yaml@refs/heads/main' });
     const serveRuns = (url: URL) =>
       /\/actions\/runs\/40$/.test(url.pathname) ? json(listedRun) : runList(1, [listedRun]);
@@ -275,230 +239,167 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
     expect(bound.ok).toBe(true);
     if (!bound.ok) throw new Error('expected evidence');
-    // The bound evidence keeps the configured path, the run is matched by its reported identifier.
+    // The evidence keeps the configured path; the run is matched by the file name it reports.
     expect(bound.evidence.workflowPath).toBe(WORKFLOW);
     const reRead = await verifyReleaseCi({
       client: client(fixture.fetch),
       identity: IDENTITY,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       evidence: bound.evidence,
     });
     expect(reRead.ok).toBe(true);
-    // Provenance is re-read, not remembered: both calls ask the server which workflows it runs.
-    expect(
-      fixture.requests.filter((url) => url.pathname.endsWith('/actions/workflows')),
-    ).toHaveLength(2);
+    // Provenance is re-read, not remembered: both calls list the candidate tree again.
+    expect(fixture.requests.some((url) => url.pathname.endsWith('/actions/workflows'))).toBe(false);
 
-    // A nested workflow inside the active directory binds by its reported identifier.
+    // A nested workflow inside a workflow directory binds by its reported identifier.
     const nestedPath = '.gitea/workflows/nested/validate.yaml';
     const nestedRun = run({ id: 40, path: 'nested/validate.yaml@refs/heads/main' });
     const nested = await discoverReleaseCi({
-      client: client(
-        forge(() => runList(1, [nestedRun]), [{ id: 'nested/validate.yaml', path: nestedPath }])
-          .fetch,
-      ),
+      client: client(forge(() => runList(1, [nestedRun])).fetch),
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: nestedPath,
-      readEntry: GITEA_TREE,
+      listPaths: candidateTree([nestedPath]),
     });
     expect(nested.ok).toBe(true);
     if (!nested.ok) throw new Error('expected evidence');
     expect(nested.evidence.workflowPath).toBe(nestedPath);
 
-    // A server that runs the `.github` workflow binds that file too.
+    // A `.github` workflow binds that file when the candidate contains only that file.
     const githubPath = '.github/workflows/validate.yaml';
     const github = await discoverReleaseCi({
-      client: client(forge(serveRuns, [{ id: 'validate.yaml', path: githubPath }]).fetch),
+      client: client(forge(serveRuns).fetch),
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: githubPath,
-      readEntry: GITHUB_TREE,
+      listPaths: GITHUB_TREE,
     });
     expect(github.ok).toBe(true);
     if (!github.ok) throw new Error('expected evidence');
     expect(github.evidence.workflowPath).toBe(githubPath);
 
-    // The full repository path is not what a run reports, so it cannot match.
-    const fullPath = forge(() =>
-      runList(1, [run({ id: 40, path: `${WORKFLOW}@refs/heads/main` })]),
-    );
-    const rejected = await discoverReleaseCi({
-      client: client(fullPath.fetch),
+    // A run path naming the whole repository path resolves to the same committed file, so it is
+    // accepted rather than read as a different workflow.
+    const fullPath = await discoverReleaseCi({
+      client: client(
+        forge(() => runList(1, [run({ id: 40, path: `${WORKFLOW}@refs/heads/main` })])).fetch,
+      ),
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
-    expect(rejected.ok).toBe(false);
-    if (rejected.ok) throw new Error('expected a blocker');
-    expect(rejected.blocker.code).toBe('ci-workflow-mismatch');
+    expect(fullPath.ok).toBe(true);
   });
 
-  it('refuses a same-named workflow from another directory the server runs instead', async () => {
-    // The repository contains both workflow directories; the server runs `.gitea` only, so a run
-    // reporting `validate.yaml` is the `.gitea` file even when `.github` is designated.
-    const giteaOnly: WorkflowEntry[] = [{ id: 'validate.yaml', path: WORKFLOW }];
-    const designated = '.github/workflows/validate.yaml';
+  it('refuses a same-named workflow that is not the configured committed path', async () => {
+    // The candidate has no configured workflow file; the only file with that name sits in another
+    // directory, so a run reporting `validate.yaml` executed that other file.
+    const elsewhere = candidateTree(['ci/workflows/validate.yaml']);
     const listedRun = run({ id: 40, path: 'validate.yaml@refs/heads/main' });
     const serveRuns = (url: URL) =>
       /\/actions\/runs\/40$/.test(url.pathname) ? json(listedRun) : runList(1, [listedRun]);
 
     const discovery = await discoverReleaseCi({
-      client: client(forge(serveRuns, giteaOnly).fetch),
+      client: client(forge(serveRuns).fetch),
       identity: IDENTITY,
       candidate: CANDIDATE,
-      workflowPath: designated,
-      readEntry: GITEA_TREE,
+      workflowPath: WORKFLOW,
+      listPaths: elsewhere,
     });
     expect(discovery.ok).toBe(false);
     if (discovery.ok) throw new Error('expected a blocker');
     expect(discovery.blocker.code).toBe('ci-workflow-mismatch');
 
     const reRead = await verifyReleaseCi({
-      client: client(forge(serveRuns, giteaOnly).fetch),
+      client: client(forge(serveRuns).fetch),
       identity: IDENTITY,
-      workflowPath: designated,
-      readEntry: GITEA_TREE,
-      evidence: { ...BOUND, workflowPath: designated },
+      workflowPath: WORKFLOW,
+      listPaths: elsewhere,
+      evidence: BOUND,
     });
     expect(reRead.ok).toBe(false);
     if (reRead.ok) throw new Error('expected a blocker');
-    expect(reRead.blocker.code).toBe('ci-workflow-mismatch');
+    expect(reRead.blocker.code).toBe('ci-evidence-changed');
 
-    // A configured path the server does not list blocks even when a run exists for the commit.
-    const unlisted = await discoverReleaseCi({
+    // A run path that does not name the verified default branch is not this workflow's push run.
+    const otherRef = await discoverReleaseCi({
       client: client(
-        forge(serveRuns, [{ id: 'other.yaml', path: '.gitea/workflows/other.yaml' }]).fetch,
+        forge(() => runList(1, [run({ id: 40, path: 'validate.yaml@refs/pull/7/head' })])).fetch,
       ),
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
-    expect(unlisted.ok).toBe(false);
-    if (unlisted.ok) throw new Error('expected a blocker');
-    expect(unlisted.blocker.code).toBe('ci-workflow-mismatch');
-
-    // A workflow list that names the configured path twice is contradictory.
-    const duplicated = await discoverReleaseCi({
-      client: client(
-        forge(serveRuns, [
-          { id: 'validate.yaml', path: WORKFLOW },
-          { id: 'validate.yaml', path: WORKFLOW },
-        ]).fetch,
-      ),
-      identity: IDENTITY,
-      candidate: CANDIDATE,
-      workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
-    });
-    expect(duplicated.ok).toBe(false);
-    if (duplicated.ok) throw new Error('expected a blocker');
-    expect(duplicated.blocker.code).toBe('ci-evidence-conflict');
-
-    // A malformed workflow list blocks instead of falling through to a run match.
-    const badList: ReleaseForgeFetch = (input) => {
-      const url = new URL(input);
-      return Promise.resolve(
-        url.pathname.endsWith('/actions/workflows')
-          ? json({ total_count: 1, workflows: ['validate.yaml'] })
-          : runList(1, [listedRun]),
-      );
-    };
-    const malformed = await discoverReleaseCi({
-      client: client(badList),
-      identity: IDENTITY,
-      candidate: CANDIDATE,
-      workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
-    });
-    expect(malformed.ok).toBe(false);
-    if (malformed.ok) throw new Error('expected a blocker');
-    expect(malformed.blocker.code).toBe('malformed-response');
+    expect(otherRef.ok).toBe(false);
+    if (otherRef.ok) throw new Error('expected a blocker');
+    expect(otherRef.blocker.code).toBe('ci-workflow-mismatch');
   });
 
-  it('blocks a candidate with several workflow directories, whichever one the server runs', async () => {
-    // Gitea's configured directory order is not observable, so a commit containing both
-    // directories cannot prove which file a run reporting `validate.yaml` executed.
+  it('blocks when several committed files could be the run workflow', async () => {
+    // Two committed files end with the identifier the run reports, so which one executed cannot be
+    // proved for this candidate, whichever directory the server is configured to run.
     const listedRun = run({ id: 40, path: 'validate.yaml@refs/heads/main' });
     const serveRuns = (url: URL) =>
       /\/actions\/runs\/40$/.test(url.pathname) ? json(listedRun) : runList(1, [listedRun]);
 
-    for (const designated of [
-      '.gitea/workflows/validate.yaml',
-      '.github/workflows/validate.yaml',
-    ]) {
-      const workflows: WorkflowEntry[] = [{ id: 'validate.yaml', path: designated }];
-      const discovery = await discoverReleaseCi({
-        client: client(forge(serveRuns, workflows).fetch),
-        identity: IDENTITY,
-        candidate: CANDIDATE,
-        workflowPath: designated,
-        readEntry: BOTH_TREES,
-      });
-      expect(discovery.ok, designated).toBe(false);
-      if (discovery.ok) throw new Error(`expected a blocker for ${designated}`);
-      expect(discovery.blocker.code, designated).toBe('ci-workflow-mismatch');
+    const trees = [
+      ['both workflow directories', BOTH_TREES],
+      ['a server-specific directory', candidateTree([WORKFLOW, 'ci/workflows/validate.yaml'])],
+    ] as const;
+    for (const [name, tree] of trees) {
+      for (const designated of [
+        '.gitea/workflows/validate.yaml',
+        '.github/workflows/validate.yaml',
+      ]) {
+        const label = `${name}, ${designated}`;
+        const discovery = await discoverReleaseCi({
+          client: client(forge(serveRuns).fetch),
+          identity: IDENTITY,
+          candidate: CANDIDATE,
+          workflowPath: designated,
+          listPaths: tree,
+        });
+        expect(discovery.ok, label).toBe(false);
+        if (discovery.ok) throw new Error(`expected a blocker for ${label}`);
+        expect(discovery.blocker.code, label).toBe('ci-workflow-mismatch');
 
-      const reRead = await verifyReleaseCi({
-        client: client(forge(serveRuns, workflows).fetch),
-        identity: IDENTITY,
-        workflowPath: designated,
-        readEntry: BOTH_TREES,
-        evidence: { ...BOUND, workflowPath: designated },
-      });
-      expect(reRead.ok, designated).toBe(false);
-      if (reRead.ok) throw new Error(`expected a blocker for ${designated}`);
-      expect(reRead.blocker.code, designated).toBe('ci-workflow-mismatch');
+        const reRead = await verifyReleaseCi({
+          client: client(forge(serveRuns).fetch),
+          identity: IDENTITY,
+          workflowPath: designated,
+          listPaths: tree,
+          evidence: { ...BOUND, workflowPath: designated },
+        });
+        expect(reRead.ok, label).toBe(false);
+        if (reRead.ok) throw new Error(`expected a blocker for ${label}`);
+        expect(reRead.blocker.code, label).toBe('ci-evidence-changed');
+      }
     }
-  });
 
-  it('binds workflow provenance to the candidate tree, not the current branch files', async () => {
-    // The branch advanced after the candidate: today's head runs only `.github`, while the
-    // candidate still contains `.gitea`, so the run reporting `validate.yaml` is the `.gitea`
-    // workflow of that candidate and cannot prove the designated `.github` file.
-    const listedRun = run({ id: 40, path: 'validate.yaml@refs/heads/main' });
-    const serveRuns = (url: URL) =>
-      /\/actions\/runs\/40$/.test(url.pathname) ? json(listedRun) : runList(1, [listedRun]);
-    const advanced: WorkflowEntry[] = [
-      { id: 'validate.yaml', path: '.github/workflows/validate.yaml' },
-    ];
-
-    const discovery = await discoverReleaseCi({
-      client: client(forge(serveRuns, advanced).fetch),
+    // A same-named file with another name elsewhere in the candidate does not block.
+    const unrelated = await discoverReleaseCi({
+      client: client(forge(serveRuns).fetch),
       identity: IDENTITY,
       candidate: CANDIDATE,
-      workflowPath: '.github/workflows/validate.yaml',
-      readEntry: BOTH_TREES,
+      workflowPath: WORKFLOW,
+      listPaths: candidateTree([WORKFLOW, 'docs/other.yaml']),
     });
-    expect(discovery.ok).toBe(false);
-    if (discovery.ok) throw new Error('expected a blocker');
-    expect(discovery.blocker.code).toBe('ci-workflow-mismatch');
-
-    const reRead = await verifyReleaseCi({
-      client: client(forge(serveRuns, advanced).fetch),
-      identity: IDENTITY,
-      workflowPath: '.github/workflows/validate.yaml',
-      readEntry: BOTH_TREES,
-      evidence: { ...BOUND, workflowPath: '.github/workflows/validate.yaml' },
-    });
-    expect(reRead.ok).toBe(false);
-    if (reRead.ok) throw new Error('expected a blocker');
-    expect(reRead.blocker.code).toBe('ci-workflow-mismatch');
+    expect(unrelated.ok).toBe(true);
   });
 
-  it('blocks when the candidate tree cannot establish the workflow directory', async () => {
+  it('blocks when the candidate tree cannot establish the workflow file', async () => {
     const listedRun = run({ id: 40, path: 'validate.yaml@refs/heads/main' });
     const serveRuns = (url: URL) =>
       /\/actions\/runs\/40$/.test(url.pathname) ? json(listedRun) : runList(1, [listedRun]);
 
-    const failures: Array<[string, ReleaseCiTreeReader]> = [
+    const failures: Array<[string, ReleaseCiPathLister]> = [
       [
         'git read failed',
         () =>
@@ -506,42 +407,30 @@ describe('discoverReleaseCi', () => {
       ],
       ['tree reader threw', () => Promise.reject(new Error('boom'))],
     ];
-    for (const [name, readEntry] of failures) {
+    for (const [name, listPaths] of failures) {
       const result = await discoverReleaseCi({
         client: client(forge(serveRuns).fetch),
         identity: IDENTITY,
         candidate: CANDIDATE,
         workflowPath: WORKFLOW,
-        readEntry,
+        listPaths,
       });
       expect(result.ok, name).toBe(false);
       if (result.ok) throw new Error(`expected a blocker for ${name}`);
       expect(result.blocker.code, name).toBe('ci-tree-unavailable');
     }
 
-    // A candidate with none of the workflow directories Gitea runs cannot prove the workflow.
+    // A candidate with no file named like the run's workflow cannot prove the workflow.
     const empty = await discoverReleaseCi({
       client: client(forge(serveRuns).fetch),
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: candidateTree({}),
+      listPaths: candidateTree(['README.md']),
     });
     expect(empty.ok).toBe(false);
     if (empty.ok) throw new Error('expected a blocker');
     expect(empty.blocker.code).toBe('ci-workflow-mismatch');
-
-    // The server reporting another identifier for the configured path is contradictory.
-    const disagree = await discoverReleaseCi({
-      client: client(forge(serveRuns, [{ id: 'other.yaml', path: WORKFLOW }]).fetch),
-      identity: IDENTITY,
-      candidate: CANDIDATE,
-      workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
-    });
-    expect(disagree.ok).toBe(false);
-    if (disagree.ok) throw new Error('expected a blocker');
-    expect(disagree.blocker.code).toBe('ci-evidence-conflict');
   });
 
   it('binds the evidence to the verified repository, candidate, branch and configured workflow', async () => {
@@ -553,7 +442,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: { commit: COMMIT, branch: 'main' },
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
 
     expect(result).toEqual({ ok: true, evidence: BOUND });
@@ -604,7 +493,7 @@ describe('discoverReleaseCi', () => {
         identity: IDENTITY,
         candidate: CANDIDATE,
         workflowPath: WORKFLOW,
-        readEntry: GITEA_TREE,
+        listPaths: GITEA_TREE,
       });
       expect(result.ok, name).toBe(false);
       if (result.ok) throw new Error(`expected a blocker for ${name}`);
@@ -613,16 +502,18 @@ describe('discoverReleaseCi', () => {
     }
   });
 
-  it('never echoes a credential the forge returns as a workflow identifier', async () => {
-    // A hostile or broken server can put anything in a successful workflow-list field; the
-    // blocker must not repeat it, because it can be the dedicated release token.
-    const listed = forge(() => runList(0, []), [{ id: RELEASE_TOKEN, path: WORKFLOW }]);
+  it('never echoes a credential the forge returns in a run path', async () => {
+    // A hostile or broken server can put anything in a run path; the blocker must not repeat it,
+    // because it can be the dedicated release token.
+    const listed = forge(() =>
+      runList(1, [run({ id: 40, path: `${RELEASE_TOKEN}@refs/heads/main` })]),
+    );
     const result = await discoverReleaseCi({
       client: client(listed.fetch),
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected a blocker');
@@ -666,7 +557,7 @@ describe('discoverReleaseCi', () => {
         identity: IDENTITY,
         candidate: CANDIDATE,
         workflowPath: WORKFLOW,
-        readEntry: GITEA_TREE,
+        listPaths: GITEA_TREE,
       });
       expect(result.ok, field).toBe(false);
       if (result.ok) throw new Error(`expected a blocker for ${field}`);
@@ -682,7 +573,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       pageSize: 1,
       maxPages: 2,
     });
@@ -697,7 +588,7 @@ describe('discoverReleaseCi', () => {
         identity: IDENTITY,
         candidate: CANDIDATE,
         workflowPath: WORKFLOW,
-        readEntry: GITEA_TREE,
+        listPaths: GITEA_TREE,
         ...bounds,
       });
       expect(result.ok).toBe(false);
@@ -725,14 +616,14 @@ describe('discoverReleaseCi', () => {
           identity: { ...IDENTITY, baseUrl: 'https://gitea.example.test:443' },
           candidate: CANDIDATE,
           workflowPath: WORKFLOW,
-          readEntry: GITEA_TREE,
+          listPaths: GITEA_TREE,
         }),
       () =>
         verifyReleaseCi({
           client: explicitPort,
           identity: { ...IDENTITY, baseUrl: 'https://gitea.example.test:443' },
           workflowPath: WORKFLOW,
-          readEntry: GITEA_TREE,
+          listPaths: GITEA_TREE,
           evidence: BOUND,
         }),
     ]) {
@@ -751,7 +642,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
     expect(refused.ok).toBe(false);
     if (refused.ok) throw new Error('expected a blocker');
@@ -774,14 +665,14 @@ describe('discoverReleaseCi', () => {
           identity: IDENTITY,
           candidate: CANDIDATE,
           workflowPath: WORKFLOW,
-          readEntry: GITEA_TREE,
+          listPaths: GITEA_TREE,
         }),
       () =>
         verifyReleaseCi({
           client: otherOrigin,
           identity: IDENTITY,
           workflowPath: WORKFLOW,
-          readEntry: GITEA_TREE,
+          listPaths: GITEA_TREE,
           evidence: BOUND,
         }),
     ]) {
@@ -800,7 +691,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       pageSize: 2,
     });
     expect(result.ok).toBe(false);
@@ -816,7 +707,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       pageSize: 2,
       maxPages: 1,
     });
@@ -834,7 +725,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       pageSize: 2,
     });
     expect(emptyResult.ok).toBe(false);
@@ -853,7 +744,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       pageSize: 2,
     });
     expect(repeatedResult.ok).toBe(false);
@@ -870,7 +761,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       pageSize: 2,
     });
     expect(changedResult.ok).toBe(false);
@@ -885,7 +776,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       maxRuns: 5,
     });
     expect(result.ok).toBe(false);
@@ -905,7 +796,7 @@ describe('discoverReleaseCi', () => {
         identity: IDENTITY,
         candidate: CANDIDATE,
         workflowPath,
-        readEntry: GITEA_TREE,
+        listPaths: GITEA_TREE,
       });
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected a blocker');
@@ -919,7 +810,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: { commit: 'abc123', branch: 'main' },
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
     expect(shortCommit.ok).toBe(false);
     if (shortCommit.ok) throw new Error('expected a blocker');
@@ -930,7 +821,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       pageSize: 500,
     });
     expect(oversizedPage.ok).toBe(false);
@@ -943,7 +834,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: { commit: COMMIT, branch: 'release' },
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
     expect(otherBranch.ok).toBe(false);
     if (otherBranch.ok) throw new Error('expected a blocker');
@@ -959,7 +850,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
     expect(outageResult.ok).toBe(false);
     if (outageResult.ok) throw new Error('expected a blocker');
@@ -974,7 +865,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
     expect(redirectResult.ok).toBe(false);
     if (redirectResult.ok) throw new Error('expected a blocker');
@@ -991,7 +882,7 @@ describe('discoverReleaseCi', () => {
       identity: IDENTITY,
       candidate: CANDIDATE,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
     expect(oversizedResult.ok).toBe(false);
     if (oversizedResult.ok) throw new Error('expected a blocker');
@@ -1040,7 +931,7 @@ describe('discoverReleaseCi', () => {
       identity: verified.identity.repository,
       candidate: { commit: COMMIT, branch: 'develop' },
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
     });
 
     expect(result).toEqual({
@@ -1075,7 +966,7 @@ describe('verifyReleaseCi', () => {
       client: releaseClient,
       identity: IDENTITY,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       evidence: BOUND,
     });
 
@@ -1109,7 +1000,7 @@ describe('verifyReleaseCi', () => {
         client: releaseClient,
         identity: IDENTITY,
         workflowPath: WORKFLOW,
-        readEntry: GITEA_TREE,
+        listPaths: GITEA_TREE,
         evidence: BOUND,
       });
       expect(result.ok, name).toBe(false);
@@ -1126,7 +1017,7 @@ describe('verifyReleaseCi', () => {
       client: client(failing.fetch),
       identity: IDENTITY,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       evidence: BOUND,
     });
     expect(failingResult.ok).toBe(false);
@@ -1139,7 +1030,7 @@ describe('verifyReleaseCi', () => {
       client: client(malformed.fetch),
       identity: IDENTITY,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       evidence: BOUND,
     });
     expect(malformedResult.ok).toBe(false);
@@ -1151,7 +1042,7 @@ describe('verifyReleaseCi', () => {
       client: client(oversized.fetch, 200),
       identity: IDENTITY,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       evidence: BOUND,
     });
     expect(oversizedResult.ok).toBe(false);
@@ -1166,7 +1057,7 @@ describe('verifyReleaseCi', () => {
       client: releaseClient,
       identity: IDENTITY,
       workflowPath: WORKFLOW,
-      readEntry: GITEA_TREE,
+      listPaths: GITEA_TREE,
       evidence: { ...BOUND, runId: 99, workflowPath: '.gitea/workflows/other.yaml' },
     });
 
@@ -1191,7 +1082,7 @@ describe('verifyReleaseCi', () => {
         client: releaseClient,
         identity: IDENTITY,
         workflowPath: WORKFLOW,
-        readEntry: GITEA_TREE,
+        listPaths: GITEA_TREE,
         evidence,
       });
       expect(result.ok).toBe(false);

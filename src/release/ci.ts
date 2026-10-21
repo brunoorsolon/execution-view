@@ -15,14 +15,13 @@
  * reports GitHub-style `status`/`conclusion` (from `ToActionsStatus`), `path` as
  * `<WorkflowID>@<Ref>` where `WorkflowID` is the path inside the server's workflow directory,
  * and the run's repository object; the run list filters by `head_sha`. Because that identifier
- * omits the workflow directory, provenance is proved from two read-only observations: the
- * server's workflow list (the full path of each workflow it runs) and the candidate's own
- * committed tree. The candidate must contain exactly one supported workflow directory, so which
- * directory its runs used follows from the tree itself rather than from an assumed server order.
+ * omits the workflow directory, provenance is proved against the candidate's own committed tree:
+ * exactly one committed path may end with the identifier the run reports, and that path must be
+ * the configured workflow path. A same-named file anywhere else in that tree therefore blocks
+ * instead of being assumed to be the file the run executed.
  */
 
 import { workflowPathProblem } from '../config/schema.js';
-import type { ReleaseEntry } from './checkout.js';
 import type {
   ReleaseCandidate,
   ReleaseCiEvidence,
@@ -83,10 +82,10 @@ export const DEFAULT_CI_MAX_PAGES = 20;
 export const DEFAULT_CI_MAX_RUNS = 500;
 
 /**
- * Reads one committed entry at the candidate commit from the container-owned checkout. It is how
- * workflow provenance is bound to the exact tree the run was made for.
+ * Lists every committed path at one commit from the container-owned checkout. It is how workflow
+ * provenance is bound to the exact tree the run was made for.
  */
-export type ReleaseCiTreeReader = (path: string) => Promise<ReleaseGitResult<ReleaseEntry | null>>;
+export type ReleaseCiPathLister = (commit: string) => Promise<ReleaseGitResult<string[]>>;
 
 export interface DiscoverReleaseCiOptions {
   /** Release forge client for the verified forge; only a read-capable client is accepted. */
@@ -97,8 +96,8 @@ export interface DiscoverReleaseCiOptions {
   candidate: ReleaseCandidate;
   /** Configured designated workflow path from `releases.repositories[].ci.workflowPath`. */
   workflowPath: string;
-  /** Reads a committed entry at the candidate commit; binds provenance to that exact tree. */
-  readEntry: ReleaseCiTreeReader;
+  /** Lists the candidate commit's committed paths; binds provenance to that exact tree. */
+  listPaths: ReleaseCiPathLister;
   pageSize?: number;
   maxPages?: number;
   maxRuns?: number;
@@ -111,8 +110,8 @@ export interface VerifyReleaseCiOptions {
   identity: ReleaseRepositoryIdentity;
   /** Configured designated workflow path the evidence was bound to. */
   workflowPath: string;
-  /** Reads a committed entry at the evidence's candidate commit. */
-  readEntry: ReleaseCiTreeReader;
+  /** Lists the committed paths at the evidence's candidate commit. */
+  listPaths: ReleaseCiPathLister;
   /** Evidence bound into an approved plan; read again, never rewritten. */
   evidence: ReleaseCiEvidence;
 }
@@ -150,19 +149,6 @@ interface ExpectedRun {
   branch: string;
   workflowPath: string;
 }
-
-/** One workflow the server reports for the default branch, by identifier and full repository path. */
-interface ParsedWorkflow {
-  id: string;
-  path: string;
-}
-
-/**
- * The workflow directories this release target supports. Gitea's own configured order decides
- * which one it runs when a commit contains several, and that order is not observable through the
- * release API, so a candidate containing more than one of these is ambiguous and blocks.
- */
-const GITEA_WORKFLOW_DIRECTORIES: readonly string[] = ['.gitea/workflows', '.github/workflows'];
 
 /** The bounded enumeration limits one discovery resolved from its options. */
 interface RunBounds {
@@ -369,117 +355,63 @@ function expectedRun(
   };
 }
 
-function parseWorkflowList(raw: unknown, field: string): ParsedWorkflow[] {
-  if (!isRecord(raw)) throw malformed(`${field} did not return a JSON object`);
-  const workflows = raw['workflows'];
-  if (!Array.isArray(workflows)) throw malformed(`${field}.workflows was not a list`);
-  return workflows.map((entry, index) => {
-    if (!isRecord(entry)) throw malformed(`${field}.workflows[${index}] was not a JSON object`);
-    return {
-      id: textField(entry['id'], `${field}.workflows[${index}].id`, 300),
-      path: textField(entry['path'], `${field}.workflows[${index}].path`, 300),
-    };
-  });
+/**
+ * Reads the candidate's committed paths once. Provenance is decided against this listing, so a
+ * failed read blocks instead of leaving the workflow identity unproved.
+ */
+async function candidatePaths(listPaths: ReleaseCiPathLister, commit: string): Promise<string[]> {
+  let listed: ReleaseGitResult<string[]>;
+  try {
+    listed = await listPaths(commit);
+  } catch {
+    throw new CiEvidenceError(
+      'ci-tree-unavailable',
+      `the candidate's committed paths could not be read, so the designated workflow cannot be proved`,
+    );
+  }
+  if (!listed.ok) {
+    throw new CiEvidenceError(
+      'ci-tree-unavailable',
+      `the candidate's committed paths could not be read, so the designated workflow cannot be proved`,
+    );
+  }
+  return listed.value;
+}
+
+/** The workflow identifier part of a run path (`<identifier>@refs/heads/<branch>`), or null. */
+function runWorkflowIdentifier(path: string, branch: string): string | null {
+  const suffix = `@refs/heads/${branch}`;
+  if (!path.endsWith(suffix)) return null;
+  const identifier = path.slice(0, -suffix.length);
+  return identifier === '' ? null : identifier;
 }
 
 /**
- * Binds the configured workflow path to the identifier a run reports, for the exact candidate.
+ * Resolves the run's workflow identifier to the one committed file it can mean.
  *
  * A run's `path` names only the workflow inside the server's workflow directory, so the same file
- * name in another directory is a different workflow. Two read-only observations decide which
- * directory the identifier means for this candidate: the server's workflow list, which reports
- * every workflow it runs by full repository path at the current default-branch head, and the
- * candidate's own committed tree, which shows the workflow directory that commit contains.
- * Gitea runs only the first workflow directory a commit contains, so the candidate's tree picks
- * the directory; the configured path must sit inside it and be one the server reports, and the
- * identifier both observations imply must agree. A configured file the server does not run, or a
- * branch that moved since the candidate, therefore blocks instead of matching a same-named
- * workflow from another directory or from a different tree.
+ * name in another directory is a different workflow. Only the configured file can be the
+ * designated workflow, so the identifier is first required to be a trailing path of the
+ * configured path; every committed path ending with that identifier is then a candidate, and
+ * exactly one may exist. None means the run executed another workflow, several mean the
+ * identifier cannot be attributed to one file at this candidate, and one must be the configured
+ * path. The server's directory configuration is never assumed.
  */
-async function resolveWorkflowIdentifier(
-  client: ReleaseForgeClient,
-  identity: ReleaseRepositoryIdentity,
+function resolveRunWorkflow(
+  paths: readonly string[],
+  identifier: string,
   workflowPath: string,
-  readEntry: ReleaseCiTreeReader,
-): Promise<string> {
-  const path = `${repositoryPath(identity)}/actions/workflows`;
-  let raw: unknown;
-  try {
-    raw = await client.getJson<unknown>(path);
-  } catch (err) {
-    if (err instanceof ReleaseForgeError && err.status === 404) {
-      throw new CiEvidenceError(
-        'ci-workflow-mismatch',
-        `the forge does not expose its workflow list for "${bounded(identity.owner)}/${bounded(identity.repo)}" (status 404), so the designated workflow cannot be proved`,
-      );
-    }
-    throw err;
-  }
-  const workflows = parseWorkflowList(raw, `GET ${path}`);
-  const matching = workflows.filter((workflow) => workflow.path === workflowPath);
-  if (matching.length === 0) {
-    throw new CiEvidenceError(
-      'ci-workflow-mismatch',
-      `the forge does not run ${bounded(workflowPath, 120)} on the default branch (it reports ${workflows.length} other workflow(s)), so the designated workflow cannot be proved`,
-    );
-  }
+): string | null {
+  const trailing = `/${identifier}`;
+  if (workflowPath !== identifier && !workflowPath.endsWith(trailing)) return null;
+  const matching = paths.filter((path) => path === identifier || path.endsWith(trailing));
   if (matching.length > 1) {
     throw new CiEvidenceError(
-      'ci-evidence-conflict',
-      `the forge listed ${bounded(workflowPath, 120)} more than once, so the designated workflow is ambiguous`,
-    );
-  }
-  const serverId = matching[0]!.id;
-
-  // The candidate's own tree decides which workflow directory its runs used. Reading it here, at
-  // this commit, is what keeps a branch that moved from relabelling an older run; a commit with
-  // several workflow directories is left to the server's unobservable order, so it blocks.
-  const present: string[] = [];
-  for (const directory of GITEA_WORKFLOW_DIRECTORIES) {
-    let entry: ReleaseGitResult<ReleaseEntry | null>;
-    try {
-      entry = await readEntry(directory);
-    } catch {
-      throw new CiEvidenceError(
-        'ci-tree-unavailable',
-        `the candidate's committed workflow entries could not be read, so the designated workflow cannot be proved`,
-      );
-    }
-    if (!entry.ok) {
-      throw new CiEvidenceError(
-        'ci-tree-unavailable',
-        `the candidate's committed workflow entries could not be read, so the designated workflow cannot be proved`,
-      );
-    }
-    if (entry.value !== null && entry.value.type === 'tree') present.push(directory);
-  }
-  if (present.length === 0) {
-    throw new CiEvidenceError(
       'ci-workflow-mismatch',
-      `the candidate contains none of the supported workflow directories, so ${bounded(workflowPath, 120)} cannot be proved`,
+      `more than one committed file matches the run's workflow identifier, so ${bounded(workflowPath, 120)} cannot be proved for this candidate`,
     );
   }
-  if (present.length > 1) {
-    throw new CiEvidenceError(
-      'ci-workflow-mismatch',
-      `the candidate contains more than one workflow directory, so which one the server runs for ${bounded(workflowPath, 120)} cannot be proved`,
-    );
-  }
-  const activeDirectory = present[0]!;
-  if (!workflowPath.startsWith(`${activeDirectory}/`)) {
-    throw new CiEvidenceError(
-      'ci-workflow-mismatch',
-      `the candidate's workflow directory is ${activeDirectory}, so ${bounded(workflowPath, 120)} is not the workflow a run of this candidate reports`,
-    );
-  }
-  const candidateId = workflowPath.slice(activeDirectory.length + 1);
-  if (candidateId !== serverId) {
-    throw new CiEvidenceError(
-      'ci-evidence-conflict',
-      `the forge reports a different identifier for ${bounded(workflowPath, 120)} than the candidate's workflow directory implies, so the designated workflow is ambiguous`,
-    );
-  }
-  return serverId;
+  return matching[0] ?? null;
 }
 
 /**
@@ -490,7 +422,7 @@ async function resolveWorkflowIdentifier(
 function classifyRun(
   run: ParsedRun,
   expected: ExpectedRun,
-  workflowId: string,
+  paths: readonly string[],
 ): ReleaseCiEvidence | Rejection {
   if (
     run.repositoryId !== expected.forgeRepositoryId ||
@@ -504,7 +436,11 @@ function classifyRun(
   if (run.headCommit !== expected.commit) return 'commit';
   if (run.branch !== expected.branch) return 'branch';
   if (run.event !== 'push') return 'event';
-  if (run.path !== `${workflowId}@refs/heads/${expected.branch}`) return 'workflow';
+  const identifier = runWorkflowIdentifier(run.path, expected.branch);
+  if (identifier === null) return 'workflow';
+  if (resolveRunWorkflow(paths, identifier, expected.workflowPath) !== expected.workflowPath) {
+    return 'workflow';
+  }
   if (run.status !== 'completed') return 'pending';
   if (run.conclusion !== 'success') return 'failed';
   return {
@@ -538,7 +474,6 @@ function rejectionCode(rejection: Rejection): ReleaseCiBlockerCode {
 function noQualifyingRun(
   counts: ReadonlyMap<Rejection, number>,
   expected: ExpectedRun,
-  workflowId: string,
   listedRuns: number,
 ): CiEvidenceError {
   // Messages carry only configuration-derived values, validated commit ids and counts: a forge
@@ -692,24 +627,19 @@ export async function discoverReleaseCi(
     const bounds = resolveBounds(options);
     assertVerifiedClient(options.client, options.identity);
     const expected = expectedRun(options.identity, options.candidate, options.workflowPath);
-    const workflowId = await resolveWorkflowIdentifier(
-      options.client,
-      options.identity,
-      options.workflowPath,
-      options.readEntry,
-    );
+    const paths = await candidatePaths(options.listPaths, expected.commit);
     const runs = await enumerateRuns(options, expected, bounds);
     const counts = new Map<Rejection, number>();
     let selected: ReleaseCiEvidence | null = null;
     for (const run of runs) {
-      const outcome = classifyRun(run, expected, workflowId);
+      const outcome = classifyRun(run, expected, paths);
       if (typeof outcome === 'string') {
         counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
         continue;
       }
       if (selected === null || outcome.runId > selected.runId) selected = outcome;
     }
-    if (selected === null) throw noQualifyingRun(counts, expected, workflowId, runs.length);
+    if (selected === null) throw noQualifyingRun(counts, expected, runs.length);
     return { ok: true, evidence: selected };
   } catch (err) {
     return { ok: false, blocker: ciBlocker(err) };
@@ -730,14 +660,9 @@ export async function verifyReleaseCi(options: VerifyReleaseCiOptions): Promise<
       { commit: options.evidence.headCommit, branch: options.evidence.branch },
       options.workflowPath,
     );
-    // Provenance is re-proved, not assumed: the designated path must still be a workflow the
-    // server runs, so a same-named workflow in another directory can never satisfy the evidence.
-    const workflowId = await resolveWorkflowIdentifier(
-      options.client,
-      options.identity,
-      options.workflowPath,
-      options.readEntry,
-    );
+    // Provenance is re-proved against the evidence's own candidate tree, so a same-named workflow
+    // elsewhere in that tree can never satisfy the evidence.
+    const paths = await candidatePaths(options.listPaths, expected.commit);
     const path = `${repositoryPath(options.identity)}/actions/runs/${options.evidence.runId}`;
     let raw: unknown;
     try {
@@ -752,7 +677,16 @@ export async function verifyReleaseCi(options: VerifyReleaseCiOptions): Promise<
       throw err;
     }
     const run = parseRun(raw, `GET ${path}`);
-    const outcome = classifyRun(run, expected, workflowId);
+    let outcome: ReleaseCiEvidence | Rejection;
+    try {
+      outcome = classifyRun(run, expected, paths);
+    } catch (err) {
+      // Ambiguous workflow provenance means the bound evidence can no longer be proved.
+      if (err instanceof CiEvidenceError && err.code === 'ci-workflow-mismatch') {
+        throw new CiEvidenceError('ci-evidence-changed', err.message);
+      }
+      throw err;
+    }
     if (typeof outcome === 'string') {
       throw new CiEvidenceError(
         'ci-evidence-changed',

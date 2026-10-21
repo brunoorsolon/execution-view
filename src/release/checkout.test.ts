@@ -463,6 +463,50 @@ describe('release object reads', () => {
     );
   });
 
+  it('lists every committed path of the candidate and nothing outside it', async () => {
+    const fixture = makeFixture();
+    fakeSsh(fixture);
+    const checkout = checkoutFor(fixture);
+    const fetched = await checkout.fetchCandidate();
+    if (!fetched.ok) throw new Error('expected a candidate');
+    const head = fetched.value;
+
+    const listed = await checkout.listPaths(head.commit);
+    if (!listed.ok) throw new Error(`expected a listing, got ${listed.blocker.code}`);
+    expect(listed.value.slice().sort()).toEqual([
+      '.gitattributes',
+      '.gitmodules',
+      'README.md',
+      'RELEASE_NOTES.md',
+      'notes-link',
+      'src/index.ts',
+    ]);
+
+    // A commit outside the fetched candidate's history is never listed as release evidence.
+    const cache = join(fixture.stateDir, 'checkout', 'app.git');
+    git(cache, 'fetch', '--quiet', fixture.remote, '+refs/heads/side:refs/heads/side');
+    expect(blockerOf(await checkout.listPaths(fixture.sideCommit)).code).toBe(
+      'git-unsafe-revision',
+    );
+    expect(blockerOf(await checkout.listPaths('main')).code).toBe('git-unsafe-revision');
+
+    // A listing is bounded like every other child read.
+    const work = join(fixture.root, 'work');
+    writeFileSync(join(work, 'src', 'extra.ts'), 'export const extra = 1;\n');
+    git(work, 'add', '-A');
+    git(work, 'commit', '--quiet', '-m', 'grow the tree');
+    execFileSync('git', ['push', '--quiet', fixture.remote, 'main'], {
+      cwd: work,
+      env: { ...GIT_ENV, PATH: REAL_PATH },
+    });
+    const bounded = checkoutFor(fixture, { maxOutputBytes: 80 });
+    const boundedFetch = await bounded.fetchCandidate();
+    if (!boundedFetch.ok) throw new Error('expected a candidate');
+    expect(blockerOf(await bounded.listPaths(boundedFetch.value.commit)).code).toBe(
+      'git-output-too-large',
+    );
+  });
+
   it('exposes read-only operations and no mutation surface', async () => {
     const fixture = makeFixture();
     fakeSsh(fixture);
@@ -471,6 +515,7 @@ describe('release object reads', () => {
       'candidate',
       'fetchCandidate',
       'isAncestor',
+      'listPaths',
       'readCommitSubjects',
       'readEntry',
     ]);

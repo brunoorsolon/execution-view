@@ -66,6 +66,12 @@ export interface ReleaseCheckout {
     options?: { content?: boolean },
   ): Promise<ReleaseGitResult<ReleaseEntry | null>>;
   /**
+   * Every committed path at `<commit>`, in Git order. Used to prove that one workflow file, not a
+   * same-named file elsewhere in the tree, is the one a run executed. Bounded by the child
+   * output bound like every other release Git read.
+   */
+  listPaths(commit: string): Promise<ReleaseGitResult<string[]>>;
+  /**
    * True when `ancestor` is reachable from `descendant`. Both are full commit ids, and the
    * descendant must belong to the fetched candidate, so a tag observation can be placed against
    * the candidate history without trusting a caller-supplied answer.
@@ -408,6 +414,28 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
           cache,
         );
         return { ok: true, value: { mode, type, bytes: blob.stdout } };
+      } catch (err) {
+        return { ok: false, blocker: releaseGitBlocker(err) };
+      }
+    },
+
+    async listPaths(commit: string): Promise<ReleaseGitResult<string[]>> {
+      try {
+        const rev = assertSafeCommit(commit);
+        await requireSealedCandidate(rev, 'verify a release tree belongs to the candidate');
+        const listed = await git(
+          ['ls-tree', '-r', '-z', '--name-only', rev],
+          'list committed release paths',
+          cache,
+        );
+        // The child output bound already limits how many paths one listing can return.
+        return {
+          ok: true,
+          value: listed.stdout
+            .toString('utf8')
+            .split('\0')
+            .filter((path) => path !== ''),
+        };
       } catch (err) {
         return { ok: false, blocker: releaseGitBlocker(err) };
       }
