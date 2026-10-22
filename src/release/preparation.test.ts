@@ -189,7 +189,6 @@ releases:
     sshLog,
     commit,
     runtime,
-    config,
     setRelease(tag = 'v0.1.0') {
       release = {
         id: 1,
