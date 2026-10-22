@@ -54,7 +54,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Fastif
   try {
     if (reconciliation !== null) {
       // Queue read-only recovery before serving new release work; forge outages leave Planning up.
-      void reconciliation.reconcileInterrupted()
+      void reconciliation
+        .reconcileInterrupted()
         .catch(() =>
           console.error(
             'Release recovery could not inspect durable publication evidence. Inspect the original jobs, plans and intents; restore readable private state and reconcile again before publication.',

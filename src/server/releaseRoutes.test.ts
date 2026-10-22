@@ -139,12 +139,24 @@ function setup(opts: SetupOptions = {}) {
     errorCode: null,
   }));
   const publishJob: ReleaseJob = {
-    jobId: 'publish-test', kind: 'publish', planId: 'plan-test', planDigest: 'a'.repeat(64),
-    state: 'queued', step: null, remote: { tag: 'absent', release: 'absent' }, errorCode: null,
+    jobId: 'publish-test',
+    kind: 'publish',
+    planId: 'plan-test',
+    planDigest: 'a'.repeat(64),
+    state: 'queued',
+    step: null,
+    remote: { tag: 'absent', release: 'absent' },
+    errorCode: null,
   };
   const approve = vi.fn(async () => publishJob);
-  const reconcile = vi.fn(async () => ({ ...publishJob, jobId: 'reconcile-test', kind: 'reconcile' as const }));
-  const receipt = vi.fn(() => 'Receipt unavailable; restore /var/lib/forge-desk and reconcile. token-app-secret');
+  const reconcile = vi.fn(async () => ({
+    ...publishJob,
+    jobId: 'reconcile-test',
+    kind: 'reconcile' as const,
+  }));
+  const receipt = vi.fn(
+    () => 'Receipt unavailable; restore /var/lib/forge-desk and reconcile. token-app-secret',
+  );
   const webDir = mkdtempSync(path.join(tmpdir(), 'ev-release-web-'));
   cleanups.push(() => rmSync(webDir, { recursive: true, force: true }));
   const app: FastifyInstance = buildApp(cfg, new PlanService(cfg), {
@@ -294,12 +306,19 @@ describe('release routes exist only for an enabled, owned runtime', () => {
 function storedPublication(store: ReleaseStateStore, repositoryId = 'app') {
   const payload = planPayload(repositoryId);
   const plan = store.writePlan({
-    planId: 'plan-test', digest: releasePlanDigest(payload),
-    approvalDeadline: '2026-10-22T12:00:00.000Z', payload,
+    planId: 'plan-test',
+    digest: releasePlanDigest(payload),
+    approvalDeadline: '2026-10-22T12:00:00.000Z',
+    payload,
   });
   const job = store.writeJob({
-    jobId: 'publish-test', kind: 'publish', planId: plan.planId, planDigest: plan.digest,
-    state: 'needs-inspection', step: null, remote: { tag: 'unknown', release: 'unknown' },
+    jobId: 'publish-test',
+    kind: 'publish',
+    planId: plan.planId,
+    planDigest: plan.digest,
+    state: 'needs-inspection',
+    step: null,
+    remote: { tag: 'unknown', release: 'unknown' },
     errorCode: 'attempt-unresolved',
   });
   return { plan, job };
@@ -311,38 +330,61 @@ describe('publication, reconciliation and receipt HTTP contracts', () => {
     const { plan } = storedPublication(store);
     const { cookie, csrf } = await login(app);
     const response = await app.inject({
-      method: 'POST', url: '/api/releases/plans/plan-test/publish',
-      headers: browser(cookie, { 'x-csrf-token': csrf }), payload: { digest: plan.digest },
+      method: 'POST',
+      url: '/api/releases/plans/plan-test/publish',
+      headers: browser(cookie, { 'x-csrf-token': csrf }),
+      payload: { digest: plan.digest },
     });
     expect(response.statusCode).toBe(202);
     expect(response.headers['cache-control']).toBe('no-store');
-    expect(response.json()).toMatchObject({ jobId: 'publish-test', state: 'queued', statusUrl: '/api/releases/jobs/publish-test' });
-    expect(approve).toHaveBeenCalledWith({ planId: plan.planId, digest: plan.digest }, LOGIN.username);
+    expect(response.json()).toMatchObject({
+      jobId: 'publish-test',
+      state: 'queued',
+      statusUrl: '/api/releases/jobs/publish-test',
+    });
+    expect(approve).toHaveBeenCalledWith(
+      { planId: plan.planId, digest: plan.digest },
+      LOGIN.username,
+    );
   });
 
-  it.each([null, [], {}, { digest: 'wrong' }, { digest: 'a'.repeat(64), operator: 'attacker' }, { digest: 'a'.repeat(2048) }])(
-    'rejects malformed or oversized approval without reaching execution: %j', async (payload) => {
-      const { app, approve } = setup({ api: true });
-      const response = await app.inject({
-        method: 'POST', url: '/api/releases/plans/plan-test/publish',
-        headers: { authorization: basic(), 'content-type': 'application/json' },
-        payload: JSON.stringify(payload),
-      });
-      expect(response.statusCode).toBe(400);
-      expect(response.headers['cache-control']).toBe('no-store');
-      expect(approve).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    null,
+    [],
+    {},
+    { digest: 'wrong' },
+    { digest: 'a'.repeat(64), operator: 'attacker' },
+    { digest: 'a'.repeat(2048) },
+  ])('rejects malformed or oversized approval without reaching execution: %j', async (payload) => {
+    const { app, approve } = setup({ api: true });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/releases/plans/plan-test/publish',
+      headers: { authorization: basic(), 'content-type': 'application/json' },
+      payload: JSON.stringify(payload),
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(approve).not.toHaveBeenCalled();
+  });
 
   it.each([
-    ['plan-stale', 409], ['repository-ineligible', 409], ['attempt-unresolved', 409],
-    ['plan-expired', 410], ['execution-unavailable', 503], ['internal-error', 500],
+    ['plan-stale', 409],
+    ['repository-ineligible', 409],
+    ['attempt-unresolved', 409],
+    ['plan-expired', 410],
+    ['execution-unavailable', 503],
+    ['internal-error', 500],
   ] as const)('maps approval %s to %s', async (code, status) => {
     const { app, store, approve } = setup({ api: true });
     const { plan } = storedPublication(store);
     approve.mockRejectedValueOnce(new ReleaseApprovalError(code, 'safe admission failure'));
-    const response = await app.inject({ method: 'POST', url: '/api/releases/plans/plan-test/publish',
-      headers: { authorization: basic() }, payload: { digest: plan.digest } });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/releases/plans/plan-test/publish',
+      headers: { authorization: basic() },
+      payload: { digest: plan.digest },
+    });
     expect(response.statusCode).toBe(status);
     expect(response.json().code).toBe(code);
   });
@@ -351,9 +393,16 @@ describe('publication, reconciliation and receipt HTTP contracts', () => {
     const { app, store, reconcile, receipt } = setup({ api: true });
     storedPublication(store);
     const headers = { authorization: basic() };
-    const response = await app.inject({ method: 'POST', url: '/api/releases/jobs/publish-test/reconcile', headers });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/releases/jobs/publish-test/reconcile',
+      headers,
+    });
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toMatchObject({ jobId: 'reconcile-test', statusUrl: '/api/releases/jobs/reconcile-test' });
+    expect(response.json()).toMatchObject({
+      jobId: 'reconcile-test',
+      statusUrl: '/api/releases/jobs/reconcile-test',
+    });
     expect(reconcile).toHaveBeenCalledWith('publish-test');
     const text = await app.inject({ url: '/api/releases/jobs/publish-test/receipt', headers });
     expect(text.statusCode).toBe(200);
@@ -363,7 +412,12 @@ describe('publication, reconciliation and receipt HTTP contracts', () => {
     expect(text.body).not.toContain('/var/lib/forge-desk');
     expect(text.body).not.toContain('token-app-secret');
     expect(receipt).toHaveBeenCalledWith('publish-test');
-    const invalid = await app.inject({ method: 'POST', url: '/api/releases/jobs/publish-test/reconcile', headers, payload: {} });
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/api/releases/jobs/publish-test/reconcile',
+      headers,
+      payload: {},
+    });
     expect(invalid.statusCode).toBe(400);
     expect(reconcile).toHaveBeenCalledTimes(1);
   });
@@ -376,7 +430,8 @@ describe('publication, reconciliation and receipt HTTP contracts', () => {
     const { app, store, approve, reconcile, receipt } = setup({ api: true });
     const { plan } = storedPublication(store);
     const payload = url.endsWith('/publish') ? { digest: plan.digest } : undefined;
-    const send = (headers: Record<string, string>, target = url) => app.inject({ method, url: target, headers, ...(payload ? { payload } : {}) });
+    const send = (headers: Record<string, string>, target: string = url) =>
+      app.inject({ method, url: target, headers, ...(payload ? { payload } : {}) });
     const { cookie } = await login(app);
     const missingAuth = await send({});
     expect(missingAuth.statusCode).toBe(401);
@@ -393,7 +448,8 @@ describe('publication, reconciliation and receipt HTTP contracts', () => {
     expect(missing.json().code).toBe('not-found');
     const oversized = await send(headers, url.replace(/plan-test|publish-test/, 'a'.repeat(129)));
     expect([400, 404]).toContain(oversized.statusCode);
-    for (const response of [missingAuth, foreign, missing, oversized]) expect(response.headers['cache-control']).toBe('no-store');
+    for (const response of [missingAuth, foreign, missing, oversized])
+      expect(response.headers['cache-control']).toBe('no-store');
     expect(approve).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
     expect(receipt).not.toHaveBeenCalled();
@@ -404,21 +460,44 @@ describe('publication, reconciliation and receipt HTTP contracts', () => {
     const { plan, job } = storedPublication(store, 'removed');
     const headers = { authorization: basic() };
     for (const request of [
-      { method: 'POST' as const, url: '/api/releases/plans/plan-test/publish', payload: { digest: plan.digest } },
+      {
+        method: 'POST' as const,
+        url: '/api/releases/plans/plan-test/publish',
+        payload: { digest: plan.digest },
+      },
       { method: 'POST' as const, url: '/api/releases/jobs/publish-test/reconcile' },
       { url: '/api/releases/jobs/publish-test/receipt' },
-    ]) expect((await app.inject({ ...request, headers })).statusCode).toBe(404);
+    ])
+      expect((await app.inject({ ...request, headers })).statusCode).toBe(404);
     expect(approve).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
-    store.writeJob({ ...job, jobId: 'prepare-only', kind: 'prepare', planId: null, planDigest: null });
+    store.writeJob({
+      ...job,
+      jobId: 'prepare-only',
+      kind: 'prepare',
+      planId: null,
+      planDigest: null,
+    });
     for (const suffix of ['reconcile', 'receipt']) {
-      const response = await app.inject({ method: suffix === 'reconcile' ? 'POST' : 'GET', url: `/api/releases/jobs/prepare-only/${suffix}`, headers });
+      const response = await app.inject({
+        method: suffix === 'reconcile' ? 'POST' : 'GET',
+        url: `/api/releases/jobs/prepare-only/${suffix}`,
+        headers,
+      });
       expect(response.statusCode).toBe(409);
       expect(response.json().code).toBe('attempt-unresolved');
     }
     const stopped = setup({ api: true, accepting: false });
-    for (const url of ['/api/releases/plans/plan-test/publish', '/api/releases/jobs/publish-test/reconcile']) {
-      const response = await stopped.app.inject({ method: 'POST', url, headers, ...(url.endsWith('/publish') ? { payload: { digest: plan.digest } } : {}) });
+    for (const url of [
+      '/api/releases/plans/plan-test/publish',
+      '/api/releases/jobs/publish-test/reconcile',
+    ]) {
+      const response = await stopped.app.inject({
+        method: 'POST',
+        url,
+        headers,
+        ...(url.endsWith('/publish') ? { payload: { digest: plan.digest } } : {}),
+      });
       expect(response.statusCode).toBe(503);
       expect(response.json().code).toBe('execution-unavailable');
     }

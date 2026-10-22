@@ -223,9 +223,13 @@ export function registerReleaseRoutes(
     async (request, reply) => {
       const body = request.body;
       if (
-        typeof body !== 'object' || body === null || Array.isArray(body) ||
-        Object.keys(body).length !== 1 || !('digest' in body) ||
-        typeof body.digest !== 'string' || !/^[0-9a-f]{64}$/.test(body.digest) ||
+        typeof body !== 'object' ||
+        body === null ||
+        Array.isArray(body) ||
+        Object.keys(body).length !== 1 ||
+        !('digest' in body) ||
+        typeof body.digest !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(body.digest) ||
         !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(request.params.planId)
       ) {
         throw new RouteError('invalid-request', 'publication accepts only a valid digest');
@@ -285,9 +289,9 @@ export function registerReleaseRoutes(
       if (mount.reconciliation === undefined) {
         throw new RouteError('execution-unavailable', 'release receipt reader is unavailable');
       }
-      return reply.type('text/plain; charset=utf-8').send(
-        scrub(mount.reconciliation.receipt(request.params.jobId)),
-      );
+      return reply
+        .type('text/plain; charset=utf-8')
+        .send(scrub(mount.reconciliation.receipt(request.params.jobId)));
     },
   );
 
@@ -346,7 +350,7 @@ export function releaseRouteError(
   error: unknown,
 ): { status: number; body: { code: ReleaseErrorCode; error: string } } | null {
   const statusCode = (error as { statusCode?: unknown } | null)?.statusCode;
-  if (statusCode === 400 || statusCode === 413 || statusCode === 415) {
+  if (statusCode === 400 || statusCode === 413 || statusCode === 414 || statusCode === 415) {
     const code: ReleaseErrorCode = statusCode === 413 ? 'evidence-too-large' : 'invalid-request';
     return {
       status: 400,
