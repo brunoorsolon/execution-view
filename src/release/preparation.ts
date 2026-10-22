@@ -334,15 +334,25 @@ export class ReleasePreparation {
           otherTags: [],
         };
       } else {
-        metadata = value(await deriveReleaseMetadata({ checkout, candidate, tags }));
-        // A stable tag already at this candidate is not permission to mint an empty next patch.
-        if (metadata.baseline.commit === candidate.commit) {
-          const existingTag = metadata.baseline.tag!;
-          const earlier = tags.filter((tag) => tag.name !== existingTag);
-          const previous = stable.at(-2);
-          if (previous !== undefined) value(await checkout.readRemoteTag(previous.name));
-          metadata = value(await deriveReleaseMetadata({ checkout, candidate, tags: earlier }));
-          if (metadata.version !== existingTag) {
+        // Any stable tag at this candidate, not just the highest version, takes precedence.
+        const candidateTags = stable.filter((tag) => tag.peeledCommit === candidate.commit);
+        if (candidateTags.length > 1) {
+          throw new Blocked(
+            {
+              code: 'attempt-unresolved',
+              message: 'multiple candidate versions need original-version inspection',
+            },
+            'attempt-unresolved',
+          );
+        }
+        const existingTag = candidateTags[0];
+        const earlier =
+          existingTag === undefined ? tags : stable.slice(0, stable.indexOf(existingTag));
+        const previous = existingTag === undefined ? undefined : earlier.at(-1);
+        if (previous !== undefined) value(await checkout.readRemoteTag(previous.name));
+        metadata = value(await deriveReleaseMetadata({ checkout, candidate, tags: earlier }));
+        if (existingTag !== undefined) {
+          if (metadata.version !== existingTag.name) {
             throw new Blocked(
               {
                 code: 'attempt-unresolved',
@@ -375,10 +385,7 @@ export class ReleasePreparation {
         },
       });
       const alreadyTargeted =
-        recorded !== undefined ||
-        stable.some(
-          (tag) => tag.peeledCommit === candidate.commit && tag.name === metadata.version,
-        );
+        recorded !== undefined || stable.some((tag) => tag.peeledCommit === candidate.commit);
       const blockers: ReleasePlanWarning[] = [...observation.reasons];
       if (
         alreadyTargeted &&

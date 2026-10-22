@@ -314,6 +314,24 @@ describe('tracked release preparation', () => {
     noRemoteWrites(f);
   });
 
+  it('returns the original no-op version even when a newer stable tag targets another commit', async () => {
+    const f = await fixture({ baseline: true });
+    const older = git(f.remote, 'rev-parse', 'v0.1.0^{}');
+    git(f.remote, 'tag', '-a', 'v0.1.1', older, '-m', 'v0.1.1');
+    git(f.remote, 'tag', '-f', '-a', 'v0.1.0', f.commit, '-m', 'v0.1.0');
+    f.setRelease();
+    const refs = git(f.remote, 'show-ref');
+    expect((await prepared(f)).payload).toMatchObject({
+      tagName: 'v0.1.0',
+      actions: [],
+      candidate: { commit: f.commit },
+      tag: { state: 'exact' },
+      release: { state: 'exact' },
+    });
+    expect(git(f.remote, 'show-ref')).toBe(refs);
+    noRemoteWrites(f);
+  });
+
   it('blocks an incomplete existing candidate rather than deriving a next patch', async () => {
     const f = await fixture({ baseline: true, sameCandidate: true });
     const done = await terminal(f.store, await f.service().prepare('app'));
