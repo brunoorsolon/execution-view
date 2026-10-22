@@ -422,7 +422,8 @@ export function createReleasesView() {
     // only when the operator happens to click it.
     clearTimeout(expiryTimer);
     const remaining = Date.parse(reviewed.approvalDeadline) - Date.now();
-    if (!Number.isFinite(remaining)) return;
+    // An already expired plan is rendered disabled; scheduling again would redraw it forever.
+    if (!Number.isFinite(remaining) || remaining <= 0) return;
     expiryTimer = setTimeout(
       () => {
         if (currentPlan !== reviewed) return;
@@ -482,8 +483,14 @@ export function createReleasesView() {
   /**
    * Renders a terminal publication or reconciliation job without ever offering a write.
    * `original` is the publication named by a reconciliation job: attempted effects stay on it.
+   * A failed read of that record is reported as unavailable, never as an empty history.
    */
-  function showOutcome(job: ReleaseJob, token: number, original?: ReleaseJob): void {
+  function showOutcome(
+    job: ReleaseJob,
+    token: number,
+    original?: ReleaseJob,
+    historyUnavailable = false,
+  ): void {
     if (token !== generation) return;
     clear(outcome);
     if (job.kind === 'prepare') return;
@@ -556,13 +563,15 @@ export function createReleasesView() {
           ),
           field(
             'Attempted steps',
-            (attempts?.length ?? 0) === 0
-              ? 'None recorded'
-              : h(
-                  'ul',
-                  null,
-                  ...attempts!.map((effect) => h('li', null, `${effect.kind}: ${effect.tag}`)),
-                ),
+            historyUnavailable
+              ? 'Unavailable: the original publication record could not be read'
+              : (attempts?.length ?? 0) === 0
+                ? 'None recorded'
+                : h(
+                    'ul',
+                    null,
+                    ...attempts!.map((effect) => h('li', null, `${effect.kind}: ${effect.tag}`)),
+                  ),
           ),
           field('Observed tag', job.remote.tag),
           field('Observed release', job.remote.release),
@@ -626,16 +635,22 @@ export function createReleasesView() {
       if (token !== generation) return;
       // A reconciliation job reports observed state; its attempted effects belong to the
       // original publication it names, so show that history instead of "None recorded".
+      // An unreadable publication is a read failure, never a claim that nothing was attempted.
       let original: ReleaseJob | undefined;
+      let historyUnavailable = false;
       if (job.kind === 'reconcile' && job.publicationJobId !== undefined) {
         try {
           original = await fetchReleaseJob(job.publicationJobId);
-        } catch {
-          original = undefined;
+        } catch (e) {
+          historyUnavailable = true;
+          error.textContent = `The original publication record could not be read: ${errorMessage(e)}`;
+          error.hidden = false;
+          status.textContent =
+            'Reconciliation outcome shown; the original attempt history is unavailable.';
         }
         if (token !== generation) return;
       }
-      showOutcome(job, token, original);
+      showOutcome(job, token, original, historyUnavailable);
       if (route.repositoryId !== null) {
         await history(route.repositoryId, token);
       }

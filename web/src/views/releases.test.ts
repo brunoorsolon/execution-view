@@ -385,6 +385,28 @@ describe('publish action', () => {
     expect(calls.filter((call) => call.init?.method === 'POST')).toHaveLength(0);
   });
 
+  it('does not rebuild an already expired review', async () => {
+    const plan = planFixture({ approvalDeadline: '2000-01-01T00:00:00.000Z' });
+    stubFetch(reads(plan));
+    const view = createReleasesView();
+    await view.open({ repositoryId: 'app', jobId: null, planId: 'plan-1' });
+    expect(button(view.el, 'Publish example/app v0.1.0').disabled).toBe(true);
+
+    const document = (globalThis as { document: { createElement: (tag: string) => FakeElement } })
+      .document;
+    const createElement = document.createElement;
+    let created = 0;
+    document.createElement = (tag: string) => {
+      created += 1;
+      return createElement(tag);
+    };
+    await vi.advanceTimersByTimeAsync(100);
+    document.createElement = createElement;
+
+    expect(created).toBe(0);
+    view.close();
+  });
+
   it('keeps an unresolved-attempt refusal truthful instead of calling it a stale plan', async () => {
     const plan = planFixture();
     stubFetch((path, init) =>
@@ -619,6 +641,37 @@ describe('progress polling', () => {
     expect(view.el.textContent).toContain('create-tag: v0.1.0');
     expect(view.el.textContent).not.toContain('Attempted stepsNone recorded');
     expect(view.el.textContent).toContain('Observed tagexact');
+  });
+
+  it('reports a failed original-publication read instead of claiming no attempted steps', async () => {
+    const plan = planFixture();
+    stubFetch((path, init) => {
+      if (path === 'api/releases/jobs/reconcile-9')
+        return Response.json({
+          ...jobFixture(),
+          jobId: 'reconcile-9',
+          kind: 'reconcile',
+          publicationJobId: 'publish-9',
+          state: 'blocked',
+          step: 'finished',
+          errorCode: 'attempt-unresolved',
+          remote: { tag: 'exact', release: 'absent' },
+        });
+      if (path === 'api/releases/jobs/publish-9')
+        return Response.json(
+          { code: 'internal-error', error: 'release state is unavailable' },
+          { status: 503 },
+        );
+      return reads(plan)(path, init);
+    });
+    const view = createReleasesView();
+    await view.open({ repositoryId: 'app', jobId: 'reconcile-9', planId: 'plan-1' });
+
+    expect(view.el.textContent).toContain('release state is unavailable');
+    expect(view.el.textContent).toContain(
+      'Unavailable: the original publication record could not be read',
+    );
+    expect(view.el.textContent).not.toContain('Attempted stepsNone recorded');
   });
 
   it('explains the changed fact of a stale executing publication and never offers reconciliation', async () => {
