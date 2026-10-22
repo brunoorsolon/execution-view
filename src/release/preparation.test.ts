@@ -1932,7 +1932,10 @@ describe('read-only publication reconciliation and original-version recovery', (
       }
       return new Response('', { status: mode === 'error' ? 500 : 201 });
     });
-    const result = await f.publication(f.store, { timeoutMs: 50 }).execute(job.jobId);
+    // The deadline also bounds Git reads; only timeout cases need a short, scheduling-safe bound.
+    const result = await f
+      .publication(f.store, mode === 'timeout' ? { timeoutMs: 2_000 } : {})
+      .execute(job.jobId);
     const exact = effect && !['conflict', 'unreadable', 'tag-disappears'].includes(mode);
     expect(result.state).toBe(exact ? 'complete' : effect ? 'needs-inspection' : 'blocked');
     expect(result.remote.release).toBe(
