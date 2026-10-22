@@ -696,6 +696,39 @@ describe('release repository capability', () => {
     expect(missingPlan.headers['cache-control']).toBe('no-store');
   });
 
+  it('redacts private state paths from persisted job and history diagnostics', async () => {
+    const { app, store } = setup({ api: true });
+    const key = {
+      forge: 'gitea' as const,
+      baseUrl: 'https://gitea.example.com',
+      owner: 'example',
+      repo: 'app',
+    };
+    const jobId = `prepare-${contentHash(repositoryOperationKey(key)).slice(0, 32)}-unsafe`;
+    store.writeJob({
+      jobId,
+      kind: 'prepare',
+      planId: null,
+      planDigest: null,
+      state: 'blocked',
+      step: 'finished',
+      remote: { tag: 'unknown', release: 'unknown' },
+      errorCode: 'repository-ineligible',
+      blocker: {
+        code: 'git-unsafe-cache',
+        message: 'release path "/var/lib/forge-desk/checkout/app.git" is not private',
+      },
+    });
+    const headers = { authorization: basic(), host: PUBLIC_HOST };
+    const job = await app.inject({ url: `/api/releases/jobs/${jobId}`, headers });
+    const history = await app.inject({ url: '/api/releases/repositories/app/jobs', headers });
+    for (const response of [job, history]) {
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toContain('/var/lib/forge-desk');
+      expect(response.body).toContain('***');
+    }
+  });
+
   it('returns stable conflicts and unavailable errors for rejected preparation', async () => {
     const { app, prepare } = setup({ api: true });
     const headers = { authorization: basic(), host: PUBLIC_HOST };

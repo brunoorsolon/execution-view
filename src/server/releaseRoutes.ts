@@ -76,6 +76,12 @@ function scrubber(runtime: ReleaseRuntime): (text: string) => string {
   };
 }
 
+function sanitizeJob(job: ReleaseJob, scrub: (text: string) => string): ReleaseJob {
+  return job.blocker === undefined
+    ? job
+    : { ...job, blocker: { ...job.blocker, message: scrub(job.blocker.message) } };
+}
+
 /**
  * Register `GET /api/releases/repositories`. The caller has already enforced the release access
  * gate; this route only reports what the configured allowlist can currently do.
@@ -189,7 +195,12 @@ export function registerReleaseRoutes(
       const { entry } = repository(request.params.id);
       const { limit, offset } = pagination(request.query.limit, request.query.offset);
       const jobs = repoJobs(entry.config.id).sort((a, b) => b.jobId.localeCompare(a.jobId));
-      return { items: jobs.slice(offset, offset + limit), limit, offset, total: jobs.length };
+      return {
+        items: jobs.slice(offset, offset + limit).map((job) => sanitizeJob(job, scrub)),
+        limit,
+        offset,
+        total: jobs.length,
+      };
     },
   );
 
@@ -221,7 +232,7 @@ export function registerReleaseRoutes(
     ) {
       throw new RouteError('not-found', 'unknown release job');
     }
-    return job;
+    return sanitizeJob(job, scrub);
   });
 }
 

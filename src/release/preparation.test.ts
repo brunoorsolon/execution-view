@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   fstatSync,
   fsyncSync,
   mkdirSync,
@@ -329,6 +330,57 @@ describe('tracked release preparation', () => {
     expect(plan.statusCode).toBe(200);
     expect(plan.json().digest).toBe(f.store.readPlan(status.json().planId).digest);
     expect(plan.json().payload.candidate.commit).toBe(f.commit);
+    noRemoteWrites(f);
+  });
+
+  it('redacts an unsafe checkout path from blocked API job and history responses', async () => {
+    const f = await fixture();
+    const checkoutCache = join(f.stateDir, 'checkout');
+    mkdirSync(checkoutCache, { mode: 0o755 });
+    chmodSync(checkoutCache, 0o755);
+    const app = buildApp(f.config, new PlanService(f.config), {
+      logger: false,
+      webDir: f.root,
+      releases: {
+        runtime: f.runtime,
+        gate: f.owner,
+        store: f.store,
+        preparation: f.service(),
+      },
+    });
+    cleanups.push(() => app.close());
+    const headers = {
+      authorization: `Basic ${Buffer.from('admin:password').toString('base64')}`,
+    };
+    const accepted = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+    });
+    expect(accepted.statusCode).toBe(202);
+
+    let status = await app.inject({ url: accepted.json().statusUrl, headers });
+    for (
+      let tries = 0;
+      tries < 500 && ['queued', 'running'].includes(status.json().state);
+      tries++
+    ) {
+      await delay(10);
+      status = await app.inject({ url: accepted.json().statusUrl, headers });
+    }
+    expect(status.json()).toMatchObject({
+      state: 'blocked',
+      blocker: { code: 'git-unsafe-cache' },
+    });
+    const history = await app.inject({
+      url: '/api/releases/repositories/app/jobs?limit=1',
+      headers,
+    });
+    for (const response of [status, history]) {
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toContain(f.stateDir);
+    }
+    expect(status.json().blocker.message).toContain('***');
     noRemoteWrites(f);
   });
 
