@@ -483,6 +483,7 @@ function checkJobBody(job: ReleaseJob): void {
   for (const field of ['publicationJobId', 'reconciliationJobId']) {
     if (body[field] !== undefined) assertId('job', stringAt(body, field, at));
   }
+  if (body.attemptedEffects !== undefined) checkActions(body.attemptedEffects, at);
   if (body.blocker !== undefined) {
     const blocker = objectAt(body.blocker, `${at}.blocker`);
     stringAt(blocker, 'code', `${at}.blocker`);
@@ -531,6 +532,7 @@ function checkReceiptBody(receipt: ReleaseReceipt): void {
     nullableStringAt(evidence, 'approvedAt', at);
     stringAt(evidence, 'observedAt', at);
     if (evidence.interruptedStep !== null) enumAt(JOB_STEPS, evidence, 'interruptedStep', at);
+    if (evidence.attemptedEffects !== undefined) checkActions(evidence.attemptedEffects, at);
     stringAt(evidence, 'instruction', at);
     checkObjectObservations(evidence);
     const tag = objectAt(evidence.tag, 'receipt.tag');

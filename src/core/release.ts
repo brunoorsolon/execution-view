@@ -238,6 +238,8 @@ export interface ReleaseJob {
   /** Reconciliation jobs name their original publication; publications name their latest receipt. */
   publicationJobId?: string;
   reconciliationJobId?: string;
+  /** Durable pre-launch markers: each effect may have reached the remote, never replay it. */
+  attemptedEffects?: ReleaseIntendedAction[];
 }
 
 /**
@@ -292,6 +294,7 @@ export interface ReleaseReceipt {
     approvedAt: string | null;
     observedAt: string;
     interruptedStep: ReleaseJobStep | null;
+    attemptedEffects?: ReleaseIntendedAction[];
     tag: ReleaseTagObservation;
     release: ReleaseObservation;
     instruction: string;

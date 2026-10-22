@@ -140,6 +140,8 @@ releases:
   let releaseStatus = 404;
   let ciWait: Promise<void> = Promise.resolve();
   const methods: string[] = [];
+  const creates: Array<{ input: string; init: RequestInit }> = [];
+  let create: (input: string, init: RequestInit) => Promise<Response> = async () => json({}, 500);
   const baseFetch = async (input: string, init: RequestInit) => {
     methods.push(init.method ?? 'GET');
     const path = new URL(input).pathname;
@@ -177,6 +179,11 @@ releases:
   };
   let transform: (path: string, body: Record<string, unknown>) => unknown = (_path, body) => body;
   const fetch = async (input: string, init: RequestInit) => {
+    if (init.method === 'POST') {
+      methods.push('POST');
+      creates.push({ input, init });
+      return create(input, init);
+    }
     const response = await baseFetch(input, init);
     return json(
       transform(new URL(input).pathname, (await response.json()) as Record<string, unknown>),
@@ -197,6 +204,10 @@ releases:
     service,
     owner,
     methods,
+    creates,
+    onCreate(handler: typeof create) {
+      create = handler;
+    },
     sshLog,
     commit,
     runtime,
@@ -1075,6 +1086,18 @@ describe('read-only publication reconciliation and original-version recovery', (
     git(f.remote, 'update-ref', `refs/tags/${plan.payload.tagName}`, objectId);
   }
 
+  async function acceptedWithTag(f: Awaited<ReturnType<typeof fixture>>) {
+    const original = await accepted(f);
+    installTag(f, original.plan);
+    await f.reconciliation().reconcile(original.job.jobId);
+    const plan = await prepared(f);
+    const job = await original.approval.approve(
+      { planId: plan.planId, digest: plan.digest },
+      'admin',
+    );
+    return { plan, job };
+  }
+
   it.each(['queued', 'running', 'needs-inspection', 'internal-error'] as const)(
     'restarts %s jobs as read-only exact/no-op and re-inspects completed candidates',
     async (state) => {
@@ -1338,12 +1361,14 @@ describe('read-only publication reconciliation and original-version recovery', (
       'refs/heads/main\nrefs/tags/v0.1.0',
     );
     const receipt = f.reconciliation().receipt(job.jobId);
-    expect(receipt).toContain('One non-force tag push returned');
+    expect(receipt).toContain('create-tag');
+    expect(receipt).toContain('create-release');
     expect(receipt).toContain('fresh recovery plan');
     expect(receipt).not.toContain(TOKEN);
     await Promise.all([engine.execute(job.jobId), f.publication().execute(job.jobId)]);
     expect(readFileSync(f.sshLog, 'utf8').match(/git-receive-pack/g)).toHaveLength(1);
-    expect(new Set(f.methods)).toEqual(new Set(['GET']));
+    expect(new Set(f.methods)).toEqual(new Set(['GET', 'POST']));
+    expect(f.creates).toHaveLength(1);
   });
 
   it.each([
@@ -1574,12 +1599,254 @@ describe('read-only publication reconciliation and original-version recovery', (
     const f = await fixture({ baseline: true, sameCandidate: true });
     f.setRelease();
     const { job } = await accepted(f);
-    expect(await f.publication().execute(job.jobId)).toMatchObject({
+    const result = await f.publication().execute(job.jobId);
+    expect(result).toMatchObject({
       state: 'complete',
       remote: { tag: 'exact', release: 'exact' },
     });
+    expect(f.store.readReceipt(result.reconciliationJobId!).evidence?.release.author).toBe(
+      'Actual Author',
+    );
+    expect(result.attemptedEffects ?? []).toEqual([]);
     noRemoteWrites(f);
   });
+
+  it.each([false, true])(
+    'creates the approved release once (existing tag=%s)',
+    async (existing) => {
+      const f = await fixture();
+      const { plan, job } = await (existing ? acceptedWithTag(f) : accepted(f));
+      f.enablePush();
+      f.onCreate(async (input, init) => {
+        expect(input).toBe(`${BASE}/api/v1/repos/acme/api/releases`);
+        expect(init.redirect).toBe('manual');
+        expect(init.headers).toMatchObject({
+          Authorization: `token ${TOKEN}`,
+          'Content-Type': 'application/json',
+        });
+        expect(JSON.parse(init.body as string)).toEqual({
+          tag_name: plan.payload.tagName,
+          name: plan.payload.title,
+          body: plan.payload.notes.text,
+          draft: false,
+          prerelease: false,
+        });
+        expect(git(f.remote, 'rev-parse', `refs/tags/${plan.payload.tagName}`)).toBe(
+          plan.payload.tag.objectId,
+        );
+        expect(f.store.readJob(job.jobId)).toMatchObject({
+          state: 'running',
+          step: 'creating-release',
+        });
+        expect(f.store.readIntent(plan.planId).jobId).toBe(job.jobId);
+        f.setRelease();
+        return new Response('not evidence', { status: 201 });
+      });
+      const write = f.store.writeJob.bind(f.store);
+      vi.spyOn(f.store, 'writeJob').mockImplementation((record) => {
+        if (record.jobId === job.jobId && record.state === 'complete') {
+          expect(f.store.readReceipt(record.reconciliationJobId!).remote).toEqual({
+            tag: 'exact',
+            release: 'exact',
+          });
+        }
+        return write(record);
+      });
+      const result = await f.publication().execute(job.jobId);
+      expect(result).toMatchObject({
+        state: 'complete',
+        remote: { tag: 'exact', release: 'exact' },
+      });
+      const effects = existing ? ['create-release'] : ['create-tag', 'create-release'];
+      expect(f.store.readReceipt(result.reconciliationJobId!).evidence).toMatchObject({
+        attemptedEffects: effects.map((kind) => ({ kind, tag: plan.payload.tagName })),
+        release: { author: 'Actual Author' },
+      });
+      await Promise.all([f.publication().execute(job.jobId), f.publication().execute(job.jobId)]);
+      expect(f.creates).toHaveLength(1);
+      expect(readFileSync(f.sshLog, 'utf8').match(/git-receive-pack/g) ?? []).toHaveLength(
+        existing ? 0 : 1,
+      );
+      expect(f.reconciliation().receipt(job.jobId)).not.toContain(TOKEN);
+    },
+  );
+
+  it.each([
+    ['error', false],
+    ['error', true],
+    ['lost', false],
+    ['lost', true],
+    ['silent', false],
+    ['silent', true],
+    ['timeout', false],
+    ['timeout', true],
+    ['conflict', true],
+    ['unreadable', true],
+    ['tag-disappears', true],
+  ])('independently proves create outcome after %s (remote effect=%s)', async (mode, effect) => {
+    const f = await fixture();
+    const { plan, job } = await acceptedWithTag(f);
+    f.onCreate(async (_input, init) => {
+      if (effect) f.setRelease();
+      if (mode === 'conflict')
+        f.alterResponse((path, body) =>
+          path.includes('/releases/tags/') ? { ...body, body: 'conflicting notes' } : body,
+        );
+      if (mode === 'unreadable') f.unknownRelease();
+      if (mode === 'unreadable') f.fail('/api/v1/repos/acme/api/releases/tags/v0.1.0');
+      if (mode === 'tag-disappears') git(f.remote, 'update-ref', '-d', 'refs/tags/v0.1.0');
+      if (mode === 'lost') throw new Error(`lost ${TOKEN}`);
+      if (mode === 'timeout') {
+        await new Promise<void>((_resolve, reject) => {
+          init.signal!.addEventListener('abort', () => reject(new Error(`timeout ${TOKEN}`)), {
+            once: true,
+          });
+        });
+      }
+      return new Response('', { status: mode === 'error' ? 500 : 201 });
+    });
+    const result = await f.publication(f.store, { timeoutMs: 50 }).execute(job.jobId);
+    const exact = effect && !['conflict', 'unreadable', 'tag-disappears'].includes(mode);
+    expect(result.state).toBe(exact ? 'complete' : effect ? 'needs-inspection' : 'blocked');
+    expect(result.remote.release).toBe(
+      mode === 'conflict'
+        ? 'conflict'
+        : mode === 'unreadable'
+          ? 'unknown'
+          : effect
+            ? 'exact'
+            : 'absent',
+    );
+    expect(result.remote.tag).toBe(mode === 'tag-disappears' ? 'absent' : 'exact');
+    expect(f.store.readReceipt(result.reconciliationJobId!).evidence?.attemptedEffects).toEqual([
+      { kind: 'create-release', tag: plan.payload.tagName },
+    ]);
+    await f.publication().execute(job.jobId);
+    expect(f.creates).toHaveLength(1);
+    expect(f.reconciliation().receipt(job.jobId)).not.toContain(TOKEN);
+    if (!exact) expect(f.reconciliation().receipt(job.jobId)).toMatch(/recovery|reconcile|Inspect/);
+    if (mode === 'lost' && !effect) {
+      f.setRelease(); // Late effect: only new reads, never another POST.
+      await f.reconciliation().reconcile(job.jobId);
+      expect(f.store.readJob(job.jobId).state).toBe('complete');
+      expect(f.creates).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    'tag-disappears',
+    'release-conflict',
+    'identity',
+    'ci',
+    'candidate',
+    'configuration',
+    'intent',
+  ])('blocks release creation when %s changes during the tag attempt', async (fact) => {
+    const f = await fixture();
+    const { plan, job } = await accepted(f);
+    f.enablePush();
+    let changed = false;
+    f.alterResponse((path, body) => {
+      if (
+        !changed &&
+        path.endsWith('/actions/runs/9') &&
+        readFileSync(f.sshLog, 'utf8').includes('git-receive-pack')
+      ) {
+        changed = true;
+        if (fact === 'tag-disappears') git(f.remote, 'update-ref', '-d', 'refs/tags/v0.1.0');
+        if (fact === 'release-conflict') f.setRelease();
+        if (fact === 'configuration') f.runtime.repositories[0]!.config.tagger.name = 'changed';
+        if (fact === 'intent') rmSync(join(f.stateDir, 'intents', `${plan.planId}.json`));
+        if (fact === 'candidate') {
+          writeFileSync(join(f.work, 'advance'), 'new');
+          git(f.work, 'add', '.');
+          git(f.work, 'commit', '--quiet', '-m', 'Advanced during push');
+          git(f.work, 'push', '--quiet', f.remote, 'main');
+        }
+      }
+      if (changed && fact === 'identity' && path.endsWith('/user')) return { ...body, id: 8 };
+      if (changed && fact === 'ci' && path.endsWith('/actions/runs/9'))
+        return { ...body, conclusion: 'failure' };
+      if (fact === 'release-conflict' && path.includes('/releases/tags/'))
+        return { ...body, name: 'unapproved title' };
+      return body;
+    });
+    const result = await f.publication().execute(job.jobId);
+    expect(result.state).not.toBe('complete');
+    expect(f.creates).toHaveLength(0);
+    expect(readFileSync(f.sshLog, 'utf8').match(/git-receive-pack/g)).toHaveLength(1);
+  });
+
+  it.each(['intent', 'attempt-marker', 'receipt', 'publication-complete'])(
+    'does not claim successful release after %s storage failure',
+    async (checkpoint) => {
+      const f = await fixture();
+      const { plan, job } = await acceptedWithTag(f);
+      f.onCreate(async () => {
+        f.setRelease();
+        return json({}, 201);
+      });
+      if (checkpoint === 'intent')
+        vi.spyOn(f.store, 'writeIntent').mockImplementation(() => {
+          throw new Error('disk');
+        });
+      if (checkpoint === 'receipt')
+        vi.spyOn(f.store, 'writeReceipt').mockImplementation(() => {
+          throw new Error('disk');
+        });
+      const write = f.store.writeJob.bind(f.store);
+      vi.spyOn(f.store, 'writeJob').mockImplementation((record) => {
+        if (checkpoint === 'attempt-marker' && record.step === 'creating-release')
+          throw new Error('disk');
+        if (
+          checkpoint === 'publication-complete' &&
+          record.jobId === job.jobId &&
+          record.state === 'complete'
+        )
+          throw new Error('disk');
+        return write(record);
+      });
+      const result = await f.publication().execute(job.jobId);
+      expect(result.state).toBe('internal-error');
+      expect(f.creates).toHaveLength(['intent', 'attempt-marker'].includes(checkpoint) ? 0 : 1);
+      expect(f.store.readIntent(plan.planId).jobId).toBe(job.jobId);
+      await f.publication().execute(job.jobId);
+      vi.restoreAllMocks();
+      if (!['intent', 'attempt-marker'].includes(checkpoint)) {
+        await f.reconciliation().reconcile(job.jobId);
+        expect(f.store.readJob(job.jobId).state).toBe('complete');
+        expect(f.creates).toHaveLength(1);
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'drains independent reads during release-request shutdown (effect=%s)',
+    async (effect) => {
+      const f = await fixture();
+      const { job } = await acceptedWithTag(f);
+      const controller = new AbortController();
+      let shutdown: ReturnType<typeof f.owner.shutdown> | undefined;
+      f.onCreate(async (_input, init) => {
+        if (effect) f.setRelease();
+        shutdown = f.owner.shutdown();
+        const rejected = new Promise<never>((_resolve, reject) =>
+          init.signal!.addEventListener('abort', () => reject(new Error('interrupted')), {
+            once: true,
+          }),
+        );
+        controller.abort();
+        return rejected;
+      });
+      const result = await f.publication(f.store, { signal: controller.signal }).execute(job.jobId);
+      expect(result.state).toBe(effect ? 'complete' : 'blocked');
+      expect(f.store.readReceipt(result.reconciliationJobId!).remote.release).toBe(
+        effect ? 'exact' : 'absent',
+      );
+      expect(await shutdown).toEqual({ drained: true, pending: [], lockReleased: true });
+      expect(f.creates).toHaveLength(1);
+    },
+  );
 
   it('requires fresh original-version approval after an uncertain absent effect', async () => {
     const f = await fixture();

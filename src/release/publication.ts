@@ -5,7 +5,7 @@ import { assertReleasePlanEligible, ReleaseApprovalError } from './approval.js';
 import { activePublications, publicationIntent } from './attempts.js';
 import { createReleaseTagCheckout } from './checkout.js';
 import { verifyReleaseCi } from './ci.js';
-import { createReleaseForgeClient } from './forgeClient.js';
+import { createReleaseForgeClient, createReleaseForgeWriter } from './forgeClient.js';
 import { verifyReleaseIdentity } from './identity.js';
 import { ReleasePreparationError, type ReleasePreparationOptions } from './preparation.js';
 import { ReleaseReconciliation } from './reconciliation.js';
@@ -26,7 +26,7 @@ function value<T>(result: { ok: true; value: T } | { ok: false; blocker: Release
 export class ReleasePublication {
   constructor(
     private readonly options: ReleasePreparationOptions & {
-      /** Shutdown interrupts the push, never its independent reconciliation reads. */
+      /** Shutdown interrupts mutations, never their independent reconciliation reads. */
       signal?: AbortSignal;
       timeoutMs?: number;
     },
@@ -139,48 +139,55 @@ export class ReleasePublication {
           );
           if (prepared !== p.tag.objectId) changed('The frozen annotated tag object changed.');
         }
-        save({ step: 'reading-ci' });
-        const ci = await verifyReleaseCi({
-          client: forge,
-          identity: p.repository,
-          evidence: p.ci,
-          workflowPath: loaded.config.ci.workflowPath,
-          listPaths: (commit) => checkout.listPaths(commit),
-        });
-        if (!ci.ok) throw new Stale(ci.blocker);
-        if (p.ci.headCommit !== p.candidate.commit) {
-          changed('The bound CI candidate does not match the plan.');
-        }
-        // Candidate/tree reads can span slow CI; renew identity, branch and baseline afterwards.
-        await verifyIdentity();
-        if (contentHash(value(await checkout.fetchCandidate())) !== contentHash(candidate)) {
-          changed('The default-branch candidate changed during freshness checks.');
-        }
-        const tags = value(await checkout.listRemoteTags());
-        const stable = tags.filter((tag) =>
-          /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(tag.name),
-        );
-        if (
-          contentHash(stable.map((tag) => tag.name).sort()) !==
-            contentHash([...p.baseline.stableTags].sort()) ||
-          (p.baseline.tag !== null &&
-            stable.find((tag) => tag.name === p.baseline.tag)?.peeledCommit !== p.baseline.commit)
-        ) {
-          changed('The observed stable tags or baseline target changed.');
-        }
+        const verifyFreshness = async (tagCreated = false) => {
+          save({ step: 'reading-ci' });
+          const ci = await verifyReleaseCi({
+            client: forge,
+            identity: p.repository,
+            evidence: p.ci,
+            workflowPath: loaded.config.ci.workflowPath,
+            listPaths: (commit) => checkout.listPaths(commit),
+          });
+          if (!ci.ok) throw new Stale(ci.blocker);
+          if (p.ci.headCommit !== p.candidate.commit) {
+            changed('The bound CI candidate does not match the plan.');
+          }
+          // Candidate/tree reads can span slow CI or a push; renew identity and branch afterwards.
+          await verifyIdentity();
+          if (contentHash(value(await checkout.fetchCandidate())) !== contentHash(candidate)) {
+            changed('The default-branch candidate changed during freshness checks.');
+          }
+          const tags = value(await checkout.listRemoteTags());
+          const stable = tags.filter(
+            (tag) =>
+              /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(tag.name) &&
+              !(tagCreated && tag.name === p.tagName),
+          );
+          if (
+            contentHash(stable.map((tag) => tag.name).sort()) !==
+              contentHash([...p.baseline.stableTags].sort()) ||
+            (p.baseline.tag !== null &&
+              stable.find((tag) => tag.name === p.baseline.tag)?.peeledCommit !== p.baseline.commit)
+          ) {
+            changed('The observed stable tags or baseline target changed.');
+          }
+        };
+        await verifyFreshness();
         save({ step: 'observing-tag' });
-        const observed = await observeReleaseRemoteState({
-          repository: p.repository,
-          checkout,
-          forge,
-          tag: {
-            name: p.tagName,
-            commit: p.candidate.commit,
-            message: p.tagName,
-            objectId: p.tag.objectId,
-          },
-          release: { tag: p.tagName, title: p.title, notesDigest: p.notes.digest },
-        });
+        const observe = () =>
+          observeReleaseRemoteState({
+            repository: p.repository,
+            checkout,
+            forge,
+            tag: {
+              name: p.tagName,
+              commit: p.candidate.commit,
+              message: p.tagName,
+              objectId: p.tag.objectId,
+            },
+            release: { tag: p.tagName, title: p.title, notesDigest: p.notes.digest },
+          });
+        let observed = await observe();
         const expectedTag = { ...p.tag, ...(p.tag.state === 'absent' ? { objectId: null } : {}) };
         if (
           observed.reasons.length > 0 ||
@@ -189,19 +196,30 @@ export class ReleasePublication {
         ) {
           changed('The reviewed remote tag or release state changed or could not be proved.');
         }
-        assertReleasePlanEligible(store.readPlan(plan.planId), this.options);
-        if (intent!.operator !== config.server.basicAuth?.username) {
-          changed('The authenticated application operator changed.');
-        }
-        if (!ownership.accepting || this.options.signal?.aborted) {
-          changed('Release execution was interrupted before mutation.');
-        }
-        // Re-establish intent durability before the attempt marker and the first remote effect.
-        store.writeIntent(intent!);
+        const beforeMutation = () => {
+          assertReleasePlanEligible(store.readPlan(plan.planId), this.options);
+          if (intent!.operator !== config.server.basicAuth?.username) {
+            changed('The authenticated application operator changed.');
+          }
+          if (!ownership.accepting || this.options.signal?.aborted) {
+            changed('Release execution was interrupted before mutation.');
+          }
+          // Re-establish approval/intent binding and durability before each remote effect.
+          const current = publicationIntent(store, job, store.readPlan(plan.planId));
+          if (current === undefined || contentHash(current) !== contentHash(intent)) {
+            changed('Durable approval intent changed.');
+          }
+          store.writeIntent(current!);
+        };
+        beforeMutation();
         if (p.tag.state !== 'absent') {
-          inspect = true;
+          inspect = p.actions.length === 0;
         } else {
-          save({ step: 'creating-tag', remote: { tag: 'unknown', release: 'unknown' } });
+          save({
+            step: 'creating-tag',
+            attemptedEffects: [{ kind: 'create-tag', tag: p.tagName }],
+            remote: { tag: 'unknown', release: 'unknown' },
+          });
           inspect = true;
           const pushed = await checkout.pushPreparedTag(p.tagName, p.tag.objectId!);
           // Never persist subprocess output or trust a successful response as remote truth.
@@ -211,6 +229,57 @@ export class ReleasePublication {
               message: pushed.ok
                 ? 'One non-force tag push returned; independent inspection is required.'
                 : `One non-force tag push ended with ${pushed.blocker.code}; independent inspection is required.`,
+            },
+          });
+          if (!ownership.accepting || this.options.signal?.aborted) {
+            changed('Release execution was interrupted after the tag attempt.');
+          }
+          await verifyFreshness(true);
+          save({ step: 'observing-tag' });
+          observed = await observe();
+        }
+        if (p.actions.some((action) => action.kind === 'create-release')) {
+          if (
+            observed.tag.state !== 'exact' ||
+            observed.release.state !== 'absent' ||
+            observed.reasons.length > 0
+          ) {
+            changed(
+              'Release creation requires an independently proved exact tag and authoritative release absence.',
+            );
+          }
+          beforeMutation();
+          save({
+            step: 'creating-release',
+            attemptedEffects: [
+              ...(job.attemptedEffects ?? []),
+              { kind: 'create-release', tag: p.tagName },
+            ],
+            remote: { tag: 'exact', release: 'unknown' },
+          });
+          inspect = true;
+          let code = 'release-create-returned';
+          try {
+            await createReleaseForgeWriter({
+              baseUrl: p.repository.baseUrl,
+              token: loaded.token,
+              ...(this.options.fetch !== undefined ? { fetch: this.options.fetch } : {}),
+              ...(this.options.timeoutMs !== undefined
+                ? { timeoutMs: this.options.timeoutMs }
+                : {}),
+            }).createRelease(
+              p.repository,
+              { tag: p.tagName, title: p.title, notes: p.notes.text },
+              this.options.signal,
+            );
+          } catch {
+            code = 'release-create-uncertain';
+          }
+          save({
+            blocker: {
+              code,
+              message:
+                'One release create request was attempted; only independent remote reads establish its outcome. Never retry this job.',
             },
           });
         }
@@ -232,7 +301,7 @@ export class ReleasePublication {
             blocker: detail,
           });
         } catch {
-          // The durable running/creating-tag marker and intent remain recovery-visible.
+          // Durable effect markers and intent remain recovery-visible.
         }
       }
       // Drain inspection with the already-admitted operation, even after shutdown closes admission.
