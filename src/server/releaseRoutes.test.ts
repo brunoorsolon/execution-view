@@ -243,8 +243,16 @@ describe('release routes exist only for an enabled, owned runtime', () => {
       { authorization: basic() },
       { authorization: basic(), host: PUBLIC_HOST },
     ]) {
-      const res = await app.inject({ url: '/api/releases/repositories', headers });
-      expect(res.statusCode, JSON.stringify(headers)).toBe(404);
+      for (const request of [
+        { url: '/api/releases/repositories' },
+        { method: 'POST' as const, url: '/api/releases/repositories/app/prepare' },
+        { url: '/api/releases/repositories/app/jobs' },
+        { url: '/api/releases/plans/plan-1' },
+        { url: '/api/releases/jobs/job-1' },
+      ]) {
+        const res = await app.inject({ ...request, headers });
+        expect(res.statusCode, JSON.stringify({ headers, request })).toBe(404);
+      }
     }
     expect(verify).not.toHaveBeenCalled();
   });
@@ -671,9 +679,16 @@ describe('release repository capability', () => {
     expect(hiddenPlan.statusCode).toBe(404);
     expect(hiddenPlan.json().code).toBe('not-found');
 
-    const unauthenticated = await app.inject({ url: '/api/releases/plans/plan-test' });
-    expect(unauthenticated.statusCode).toBe(401);
-    expect(unauthenticated.json().code).toBe('not-authenticated');
+    for (const url of [
+      '/api/releases/plans/plan-test',
+      `/api/releases/jobs/${newest.jobId}`,
+      '/api/releases/repositories/app/jobs',
+    ]) {
+      const unauthenticated = await app.inject({ url });
+      expect(unauthenticated.statusCode).toBe(401);
+      expect(unauthenticated.json().code).toBe('not-authenticated');
+      expect(unauthenticated.headers['cache-control']).toBe('no-store');
+    }
 
     const missingPlan = await app.inject({ url: '/api/releases/plans/missing', headers });
     expect(missingPlan.statusCode).toBe(404);
