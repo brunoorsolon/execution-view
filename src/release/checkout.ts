@@ -73,6 +73,8 @@ export interface ReleaseCheckout {
     name: string,
     tagger: ReleaseTagger,
     createdAt: string,
+    /** Server-recorded recovery commit, which must still be reachable from the fetched head. */
+    recoveryCommit?: string,
   ): Promise<ReleaseGitResult<string>>;
   /**
    * Reads one committed entry at `<commit>:<path>`, or null when the path is absent. Only
@@ -448,7 +450,7 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
       }
     },
 
-    async prepareTag(name, tagger, createdAt): Promise<ReleaseGitResult<string>> {
+    async prepareTag(name, tagger, createdAt, recoveryCommit): Promise<ReleaseGitResult<string>> {
       try {
         const tagName = assertSafeTag(name);
         const seconds = Math.floor(Date.parse(createdAt) / 1000);
@@ -474,9 +476,11 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
             'fetch the candidate before preparing its tag',
           );
         }
-        await requireSealedCandidate(sealedCandidate, 'verify the prepared tag candidate');
+        const target =
+          recoveryCommit === undefined ? sealedCandidate : assertSafeCommit(recoveryCommit);
+        await requireSealedCandidate(target, 'verify the prepared tag candidate');
         const bytes = Buffer.from(
-          `object ${sealedCandidate}\ntype commit\ntag ${tagName}\ntagger ${tagger.name} <${tagger.email}> ${seconds} +0000\n\n${tagName}\n`,
+          `object ${target}\ntype commit\ntag ${tagName}\ntagger ${tagger.name} <${tagger.email}> ${seconds} +0000\n\n${tagName}\n`,
         );
         const prepared = await git(
           ['mktag'],

@@ -59,6 +59,11 @@ function payload(overrides: Partial<ReleasePlanPayload> = {}): ReleasePlanPayloa
       { code: 'recovered-attempt', message: 'Recovering the earlier interrupted attempt.' },
     ],
     blockers: [],
+    recovery: {
+      jobId: 'original-publication',
+      defaultBranchHead: 'a'.repeat(40),
+      tagCreatedAt: '2026-01-01T00:00:00.000Z',
+    },
     tag: { state: 'absent', name: 'v0.2.0', commit: null, objectId: null, tagger: null },
     release: {
       state: 'absent',
@@ -112,6 +117,9 @@ describe('releasePlanDigest', () => {
       changed({ baseline: { tag: 'v0.1.1', commit: 'b'.repeat(40), stableTags: ['v0.1.0'] } }),
     ).not.toBe(base);
     expect(changed({ baseline: { tag: null, commit: null, stableTags: [] } })).not.toBe(base);
+    expect(
+      changed({ recovery: { ...payload().recovery!, defaultBranchHead: 'd'.repeat(40) } }),
+    ).not.toBe(base);
   });
 
   it('changes for every approval-relevant CI and policy input', () => {
@@ -217,6 +225,7 @@ describe('releasePlanDigest', () => {
       actions: true,
       warnings: true,
       blockers: true,
+      recovery: true,
       tag: true,
       release: true,
     };

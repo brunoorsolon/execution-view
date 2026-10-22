@@ -16,6 +16,7 @@ import {
   repositoryOperationKey,
 } from '../service/releaseOwnership.js';
 import { ReleaseStateError, ReleaseStateStore } from '../service/releaseState.js';
+import { activePublications, attemptReceipt, recoverable, samePublication } from './attempts.js';
 
 export interface ReleaseApprovalOptions {
   config: AppConfig;
@@ -108,7 +109,8 @@ export class ReleaseApproval {
         const intent = optional(() => store.readIntent(planId));
         if (intent !== undefined) return this.existing(stored, intent);
         this.eligible(stored);
-        const jobs = store.listJobs();
+        const jobs = activePublications(store);
+        let recoveryFound = false;
         for (const job of jobs) {
           if (job.kind !== 'publish') continue;
           if (job.planId === null) {
@@ -124,13 +126,27 @@ export class ReleaseApproval {
           ) {
             continue;
           }
+          const receipt = attemptReceipt(store, job);
+          if (stored.payload.recovery?.jobId === job.jobId) {
+            if (
+              job.state !== 'blocked' ||
+              !recoverable(receipt) ||
+              !samePublication(previous, stored)
+            ) {
+              throw new ReleaseApprovalError(
+                'attempt-unresolved',
+                'the original recovery evidence changed; reconcile and prepare again',
+              );
+            }
+            recoveryFound = true;
+            continue;
+          }
           if (job.planId === planId || job.state !== 'complete') {
             throw new ReleaseApprovalError(
               'attempt-unresolved',
               'a prior publication needs inspection',
             );
           }
-          const receipt = optional(() => store.readReceipt(job.jobId));
           if (
             receipt?.state !== 'complete' ||
             receipt.planId !== job.planId ||
@@ -151,6 +167,12 @@ export class ReleaseApproval {
               'this version already has a completed publication',
             );
           }
+        }
+        if (stored.payload.recovery !== undefined && !recoveryFound) {
+          throw new ReleaseApprovalError(
+            'attempt-unresolved',
+            'recovery no longer names the active original attempt',
+          );
         }
         const approvedAt = new Date().toISOString();
         if (Date.parse(approvedAt) >= Date.parse(stored.approvalDeadline)) {
