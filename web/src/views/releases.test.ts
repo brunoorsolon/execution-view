@@ -337,6 +337,35 @@ describe('publish action', () => {
     }
   });
 
+  it('reviews a recovery plan for the original version and submits its new digest', async () => {
+    const plan = planFixture({
+      recovery: {
+        jobId: 'publish-original',
+        defaultBranchHead: COMMIT,
+        tagCreatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    plan.digest = 'e'.repeat(64);
+    const calls = stubFetch((path, init) =>
+      path === 'api/releases/plans/plan-1/publish'
+        ? Response.json(jobFixture(), { status: 202 })
+        : reads(plan)(path, init),
+    );
+    const view = createReleasesView();
+    await view.open({ repositoryId: 'app', jobId: null, planId: 'plan-1' });
+
+    expect(view.el.textContent).toContain('Recovery of');
+    expect(view.el.textContent).toContain('publish-original');
+    expect(view.el.textContent).toContain(
+      'This recovery plan publishes only the original version, candidate and notes shown above.',
+    );
+    button(view.el, 'Publish example/app v0.1.0').click();
+    await settle();
+    const submits = calls.filter((call) => call.init?.method === 'POST');
+    expect(submits).toHaveLength(1);
+    expect(submits[0]?.init?.body).toBe(JSON.stringify({ digest: 'e'.repeat(64) }));
+  });
+
   it('refuses to submit an approval that expires while the plan is on screen', async () => {
     const deadline = new Date(Date.now() + 1000).toISOString();
     const plan = planFixture({ approvalDeadline: deadline });
