@@ -2166,6 +2166,70 @@ button.issue-pill:hover {
     justify-self: start;
   }
 }
+/* Independent product areas keep Planning's existing flex layout. */
+.planning {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.area-nav {
+  display: flex;
+  flex-shrink: 0;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+.area-nav [aria-current='page'] {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
+.releases {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px clamp(16px, 4vw, 64px);
+}
+.releases h1,
+.releases h2 {
+  scroll-margin: 16px;
+}
+.releases label {
+  display: block;
+  margin-top: 20px;
+  margin-bottom: 6px;
+}
+.releases select {
+  max-width: 100%;
+  padding: 8px;
+  background: var(--bg);
+}
+.releases [role='alert'] {
+  border-left: 3px solid var(--accent);
+  padding: 8px 12px;
+}
+.release-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 16px 32px;
+}
+.release-field {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.release-field dt {
+  font-weight: 600;
+}
+.release-field dd {
+  margin: 4px 0 0;
+}
+.release-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  padding: 16px;
+  border: 1px solid var(--border);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
