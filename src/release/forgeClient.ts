@@ -1,5 +1,5 @@
 /**
- * Read-only HTTP client for the release forge.
+ * Origin-restricted, non-retrying HTTP transport for the release forge.
  *
  * It is deliberately separate from the planning provider client: authenticated release reads must
  * never follow a redirect with the credential attached, never buffer an unbounded response, never
@@ -230,7 +230,7 @@ async function readResponseText(
   }
 }
 
-export function createReleaseForgeClient(opts: ReleaseForgeClientOptions): ReleaseForgeClient {
+function createReleaseTransport(opts: ReleaseForgeClientOptions) {
   const baseUrl = normalizeBaseUrl(opts.baseUrl);
   const token = requireToken(opts.token);
   const redact = (text: string): string => redactSecrets(text, [token]);
@@ -244,7 +244,12 @@ export function createReleaseForgeClient(opts: ReleaseForgeClientOptions): Relea
     'User-Agent': 'forge-desk',
   };
 
-  async function getJson<T>(path: string): Promise<T> {
+  async function request(
+    method: 'GET' | 'POST',
+    path: string,
+    body?: string,
+    signal?: AbortSignal,
+  ): Promise<Response> {
     // Callers pass fixed API paths. An absolute URL would allow a redirect or an API-returned
     // link to move the credential to another host, so only a rooted path is accepted.
     if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) {
@@ -254,15 +259,19 @@ export function createReleaseForgeClient(opts: ReleaseForgeClientOptions): Relea
       );
     }
     const url = apiBase + path;
-    const describe = `GET ${redact(sanitizeUrl(url))}`;
+    const describe = `${method} ${redact(sanitizeUrl(url))}`;
 
     let res: Response;
     try {
       res = await fetchFn(url, {
-        method: 'GET',
-        headers,
+        method,
+        headers: body === undefined ? headers : { ...headers, 'Content-Type': 'application/json' },
+        ...(body !== undefined ? { body } : {}),
         redirect: 'manual',
-        signal: AbortSignal.timeout(timeoutMs),
+        signal:
+          signal === undefined
+            ? AbortSignal.timeout(timeoutMs)
+            : AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
       });
     } catch (err) {
       const cause = err instanceof Error ? err.message : String(err);
@@ -286,6 +295,13 @@ export function createReleaseForgeClient(opts: ReleaseForgeClientOptions): Relea
       throw new ReleaseForgeError(code, `${describe} failed with status ${status}`, status);
     }
 
+    return res;
+  }
+
+  async function getJson<T>(path: string): Promise<T> {
+    const res = await request('GET', path);
+    const describe = `GET ${redact(sanitizeUrl(apiBase + path))}`;
+    const status = res.status;
     const text = await readResponseText(res, describe, maxBytes, redact);
     try {
       return JSON.parse(text) as T;
@@ -298,5 +314,39 @@ export function createReleaseForgeClient(opts: ReleaseForgeClientOptions): Relea
     }
   }
 
+  return { baseUrl, getJson, request };
+}
+
+/** Read-only callers never receive a mutation interface. */
+export function createReleaseForgeClient(opts: ReleaseForgeClientOptions): ReleaseForgeClient {
+  const { baseUrl, getJson } = createReleaseTransport(opts);
   return { baseUrl, getJson };
+}
+
+/** Only stable, asset-free creation is exposed: no generic POST, edit, delete or upload. */
+export function createReleaseForgeWriter(opts: ReleaseForgeClientOptions) {
+  const { request } = createReleaseTransport(opts);
+  return {
+    async createRelease(
+      repository: { owner: string; repo: string },
+      release: { tag: string; title: string; notes: string },
+      signal?: AbortSignal,
+    ): Promise<void> {
+      const path = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/releases`;
+      const response = await request(
+        'POST',
+        path,
+        JSON.stringify({
+          tag_name: release.tag,
+          name: release.title,
+          body: release.notes,
+          draft: false,
+          prerelease: false,
+        }),
+        signal,
+      );
+      // The mutation response is never evidence; independent tag/release reads prove the result.
+      await discardBody(response);
+    },
+  };
 }

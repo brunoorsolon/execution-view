@@ -1,8 +1,11 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import {
   MAX_RESPONSE_BYTES,
   ReleaseForgeError,
   createReleaseForgeClient,
+  createReleaseForgeWriter,
   type ReleaseForgeFetch,
 } from './forgeClient.js';
 
@@ -44,6 +47,75 @@ async function expectError(fn: () => Promise<unknown>): Promise<ReleaseForgeErro
   }
   throw new Error('expected a ReleaseForgeError');
 }
+
+describe('non-retrying release creation', () => {
+  it.each(['success', 'error', 'redirect', 'lost', 'silent'])(
+    'sends one fixed stable request through real HTTP after %s',
+    async (mode) => {
+      const requests: Array<{ method?: string; url?: string; token?: string; body: string }> = [];
+      const server = createServer(async (req, res) => {
+        let body = '';
+        for await (const chunk of req) body += String(chunk);
+        requests.push({ method: req.method, url: req.url, token: req.headers.authorization, body });
+        if (mode === 'silent') return;
+        if (mode === 'lost') {
+          req.socket.destroy();
+          return;
+        }
+        res.writeHead(
+          mode === 'error' ? 500 : mode === 'redirect' ? 307 : 201,
+          mode === 'redirect' ? { location: '/credential-sink' } : {},
+        );
+        res.end(`untrusted ${TOKEN}`);
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/gitea`;
+      try {
+        const reader = createReleaseForgeClient({ baseUrl, token: TOKEN });
+        expect(Object.keys(reader).sort()).toEqual(['baseUrl', 'getJson']);
+        const writer = createReleaseForgeWriter({ baseUrl, token: TOKEN, timeoutMs: 100 });
+        const operation = () =>
+          writer.createRelease(
+            { owner: 'acme', repo: 'api' },
+            {
+              tag: 'v0.1.0',
+              title: 'v0.1.0',
+              notes: '# Exact\n\né é\r\n',
+            },
+          );
+        if (mode === 'success') await expect(operation()).resolves.toBeUndefined();
+        else {
+          const error = await expectError(operation);
+          expect(error.code).toBe(
+            mode === 'redirect'
+              ? 'redirect-refused'
+              : mode === 'error'
+                ? 'http-error'
+                : 'network-error',
+          );
+          expect(error.message).not.toContain(TOKEN);
+        }
+        expect(requests).toEqual([
+          {
+            method: 'POST',
+            url: '/gitea/api/v1/repos/acme/api/releases',
+            token: `token ${TOKEN}`,
+            body: JSON.stringify({
+              tag_name: 'v0.1.0',
+              name: 'v0.1.0',
+              body: '# Exact\n\né é\r\n',
+              draft: false,
+              prerelease: false,
+            }),
+          },
+        ]);
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+});
 
 describe('createReleaseForgeClient request', () => {
   it('sends one GET with the dedicated token and manual redirect handling', async () => {
