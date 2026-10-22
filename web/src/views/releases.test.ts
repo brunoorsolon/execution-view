@@ -149,7 +149,9 @@ interface Call {
   init: RequestInit | undefined;
 }
 
-function stubFetch(handler: (path: string, init: RequestInit | undefined) => Response): Call[] {
+function stubFetch(
+  handler: (path: string, init: RequestInit | undefined) => Response | Promise<Response>,
+): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal('fetch', (path: string, init?: RequestInit) => {
     calls.push({ path, init });
@@ -672,6 +674,52 @@ describe('progress polling', () => {
       'Unavailable: the original publication record could not be read',
     );
     expect(view.el.textContent).not.toContain('Attempted stepsNone recorded');
+  });
+
+  it('ignores a delayed attempt-history failure after the operator navigates away', async () => {
+    const plan = planFixture();
+    let failHistory: () => void = () => undefined;
+    const history = new Promise<Response>((resolve) => {
+      failHistory = () =>
+        resolve(
+          Response.json(
+            { code: 'internal-error', error: 'release state is unavailable' },
+            { status: 503 },
+          ),
+        );
+    });
+    stubFetch((path, init) => {
+      if (path === 'api/releases/jobs/reconcile-9')
+        return Response.json({
+          ...jobFixture(),
+          jobId: 'reconcile-9',
+          kind: 'reconcile',
+          publicationJobId: 'publish-9',
+          state: 'blocked',
+          step: 'finished',
+          errorCode: 'attempt-unresolved',
+          remote: { tag: 'exact', release: 'absent' },
+        });
+      if (path === 'api/releases/jobs/publish-9') return history;
+      return reads(plan)(path, init);
+    });
+    const view = createReleasesView();
+    const opening = view.open({ repositoryId: 'app', jobId: 'reconcile-9', planId: 'plan-1' });
+    await settle();
+    // Navigate to the repository page while that read is still outstanding.
+    await view.open({ repositoryId: 'app', jobId: null, planId: null });
+    const currentStatus = descendants(view.el, (node) => node.getAttribute('role') === 'status')[0]
+      ?.textContent;
+
+    failHistory();
+    await settle();
+    await opening;
+
+    const status = descendants(view.el, (node) => node.getAttribute('role') === 'status')[0];
+    expect(status?.textContent).toBe(currentStatus);
+    expect(view.el.textContent).not.toContain('The original publication record could not be read');
+    const alert = descendants(view.el, (node) => node.getAttribute('role') === 'alert')[0];
+    expect(alert?.hidden).toBe(true);
   });
 
   it('explains the changed fact of a stale executing publication and never offers reconciliation', async () => {

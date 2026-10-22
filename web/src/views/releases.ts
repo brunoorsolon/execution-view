@@ -642,6 +642,8 @@ export function createReleasesView() {
         try {
           original = await fetchReleaseJob(job.publicationJobId);
         } catch (e) {
+          // This page may already be abandoned: write nothing until it still owns the view.
+          if (token !== generation) return;
           historyUnavailable = true;
           error.textContent = `The original publication record could not be read: ${errorMessage(e)}`;
           error.hidden = false;
