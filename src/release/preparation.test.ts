@@ -25,6 +25,7 @@ import { ReleaseStateStore } from '../service/releaseState.js';
 import { ReleasePreparation } from './preparation.js';
 import { ReleaseApproval } from './approval.js';
 import { ReleaseReconciliation } from './reconciliation.js';
+import { ReleasePublication } from './publication.js';
 
 const PATH = process.env['PATH'];
 const NOTES = '# Changes\n\n- Exact committed bytes: é\n';
@@ -139,7 +140,7 @@ releases:
   let releaseStatus = 404;
   let ciWait: Promise<void> = Promise.resolve();
   const methods: string[] = [];
-  const fetch = async (input: string, init: RequestInit) => {
+  const baseFetch = async (input: string, init: RequestInit) => {
     methods.push(init.method ?? 'GET');
     const path = new URL(input).pathname;
     if (path === failPath) return json({ secret: TOKEN }, 500);
@@ -154,29 +155,33 @@ releases:
         ssh_url: 'git@gitea.example.test:acme/api.git',
       });
     }
-    if (path.endsWith('/actions/runs')) {
+    if (path.endsWith('/actions/runs') || path.endsWith('/actions/runs/9')) {
       await ciWait;
-      return json({
-        total_count: 1,
-        workflow_runs: [
-          {
-            id: 9,
-            head_sha: commit,
-            head_branch: 'main',
-            event: 'push',
-            status: 'completed',
-            conclusion: 'success',
-            path: 'validate.yaml@refs/heads/main',
-            repository: { id: 42, full_name: 'acme/api' },
-          },
-        ],
-      });
+      const run = {
+        id: 9,
+        head_sha: commit,
+        head_branch: 'main',
+        event: 'push',
+        status: 'completed',
+        conclusion: 'success',
+        path: 'validate.yaml@refs/heads/main',
+        repository: { id: 42, full_name: 'acme/api' },
+      };
+      return json(path.endsWith('/9') ? run : { total_count: 1, workflow_runs: [run] });
     }
     if (path.includes('/releases/tags/')) {
       return json(release, release === null ? releaseStatus : 200);
     }
     if (path.endsWith('/releases')) return json(release === null ? [] : [release]);
     throw new Error(`unexpected read ${path}`);
+  };
+  let transform: (path: string, body: Record<string, unknown>) => unknown = (_path, body) => body;
+  const fetch = async (input: string, init: RequestInit) => {
+    const response = await baseFetch(input, init);
+    return json(
+      transform(new URL(input).pathname, (await response.json()) as Record<string, unknown>),
+      response.status,
+    );
   };
   const service = (state = store, ownership: ReleaseOwnership = owner) =>
     new ReleasePreparation({ config, runtime, ownership, store: state, fetch });
@@ -195,6 +200,27 @@ releases:
     sshLog,
     commit,
     runtime,
+    alterResponse(change: typeof transform) {
+      transform = change;
+    },
+    enablePush(mode = 'success') {
+      const actions: Record<string, string> = {
+        reject: 'exit 1',
+        timeout: 'sleep 60',
+        lost: `git-receive-pack '${remote}'; exit 1`,
+        'timeout-after': `git-receive-pack '${remote}'; sleep 60`,
+        conflict: `git -C '${remote}' update-ref refs/tags/v0.1.0 '${commit}'; exec git-receive-pack '${remote}'`,
+        'success-absent': `git-receive-pack '${remote}'; git -C '${remote}' update-ref -d refs/tags/v0.1.0`,
+      };
+      const action = actions[mode] ?? `exec git-receive-pack '${remote}'`;
+      writeFileSync(
+        join(bin, 'ssh'),
+        `#!/bin/sh\nprintf '%s\\n' "$@" >> '${sshLog}'\nfor arg do last=$arg; done\ncase "$last" in *git-upload-pack*) exec git-upload-pack '${remote}';; *git-receive-pack*) ${action};; *) exit 91;; esac\n`,
+        { mode: 0o755 },
+      );
+    },
+    publication: (state = store, extra: { signal?: AbortSignal; timeoutMs?: number } = {}) =>
+      new ReleasePublication({ config, runtime, ownership: owner, store: state, fetch, ...extra }),
     reconciliation: (state = store, ownership: ReleaseOwnership = owner) =>
       new ReleaseReconciliation({ config, runtime, ownership, store: state, fetch }),
     setRelease(tag = 'v0.1.0') {
@@ -772,41 +798,48 @@ describe('durable approval admission', () => {
     expect(f.store.readIntent(plan.planId).jobId).toBe(job.jobId);
   });
 
-  it.each(['expired', 'blocker', 'unknown', 'actions', 'legacy', 'future', 'config'] as const)(
-    'rejects %s plans before intent',
-    async (failure) => {
-      const f = await fixture();
-      const original = await prepared(f);
-      const plan = variant(f, original, (p) => {
-        if (failure === 'expired') {
-          p.preparedAt = new Date(Date.now() - 31 * 60_000).toISOString();
-          p.approvalDeadline = new Date(Date.parse(p.preparedAt) + 30 * 60_000).toISOString();
-        }
-        if (failure === 'future') {
-          p.preparedAt = new Date(Date.now() + 60_000).toISOString();
-          p.approvalDeadline = new Date(Date.parse(p.preparedAt) + 30 * 60_000).toISOString();
-        }
-        if (failure === 'blocker') {
-          p.payload.blockers = [{ code: 'blocked', message: 'Unresolved evidence' }];
-        }
-        if (failure === 'unknown') p.payload.tag.state = 'unknown';
-        if (failure === 'actions') p.payload.actions = [];
-        if (failure === 'legacy') delete p.preparedAt;
-        if (failure === 'config') p.payload.ci.workflowPath = '.gitea/workflows/other.yml';
-      });
-      await expect(approval(f).approve(request(plan), 'admin')).rejects.toMatchObject({
-        code:
-          failure === 'expired'
-            ? 'plan-expired'
-            : failure === 'config'
-              ? 'plan-stale'
-              : 'repository-ineligible',
-      });
-      expect(f.store.listJobs().filter((job) => job.kind === 'publish')).toEqual([]);
-      expect(() => f.store.readIntent(plan.planId)).toThrow();
-      noRemoteWrites(f);
-    },
-  );
+  it.each([
+    'expired',
+    'blocker',
+    'unknown',
+    'actions',
+    'legacy',
+    'legacy-config',
+    'future',
+    'config',
+  ] as const)('rejects %s plans before intent', async (failure) => {
+    const f = await fixture();
+    const original = await prepared(f);
+    const plan = variant(f, original, (p) => {
+      if (failure === 'expired') {
+        p.preparedAt = new Date(Date.now() - 31 * 60_000).toISOString();
+        p.approvalDeadline = new Date(Date.parse(p.preparedAt) + 30 * 60_000).toISOString();
+      }
+      if (failure === 'future') {
+        p.preparedAt = new Date(Date.now() + 60_000).toISOString();
+        p.approvalDeadline = new Date(Date.parse(p.preparedAt) + 30 * 60_000).toISOString();
+      }
+      if (failure === 'blocker') {
+        p.payload.blockers = [{ code: 'blocked', message: 'Unresolved evidence' }];
+      }
+      if (failure === 'unknown') p.payload.tag.state = 'unknown';
+      if (failure === 'actions') p.payload.actions = [];
+      if (failure === 'legacy') delete p.preparedAt;
+      if (failure === 'legacy-config') delete p.payload.configurationDigest;
+      if (failure === 'config') p.payload.ci.workflowPath = '.gitea/workflows/other.yml';
+    });
+    await expect(approval(f).approve(request(plan), 'admin')).rejects.toMatchObject({
+      code:
+        failure === 'expired'
+          ? 'plan-expired'
+          : failure === 'config' || failure === 'legacy-config'
+            ? 'plan-stale'
+            : 'repository-ineligible',
+    });
+    expect(f.store.listJobs().filter((job) => job.kind === 'publish')).toEqual([]);
+    expect(() => f.store.readIntent(plan.planId)).toThrow();
+    noRemoteWrites(f);
+  });
 
   it('blocks a competing plan and preparation until the accepted attempt is reconciled', async () => {
     const f = await fixture();
@@ -1288,5 +1321,286 @@ describe('read-only publication reconciliation and original-version recovery', (
     await expect(engine.reconcileInterrupted()).rejects.toMatchObject({ code: 'malformed-record' });
     await expect(f.service().prepare('app')).rejects.toMatchObject({ code: 'internal-error' });
     noRemoteWrites(f);
+  });
+
+  it('pushes the frozen tag once after timely acceptance, even after expiry', async () => {
+    const f = await fixture();
+    const { plan, job } = await accepted(f);
+    f.enablePush();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse(plan.approvalDeadline) + 60_000);
+    const engine = f.publication();
+    const result = await engine.execute(job.jobId);
+    expect(result).toMatchObject({ state: 'blocked', remote: { tag: 'exact', release: 'absent' } });
+    expect(git(f.remote, 'rev-parse', `refs/tags/${plan.payload.tagName}`)).toBe(
+      plan.payload.tag.objectId,
+    );
+    expect(git(f.remote, 'for-each-ref', '--format=%(refname)')).toBe(
+      'refs/heads/main\nrefs/tags/v0.1.0',
+    );
+    const receipt = f.reconciliation().receipt(job.jobId);
+    expect(receipt).toContain('One non-force tag push returned');
+    expect(receipt).toContain('fresh recovery plan');
+    expect(receipt).not.toContain(TOKEN);
+    await Promise.all([engine.execute(job.jobId), f.publication().execute(job.jobId)]);
+    expect(readFileSync(f.sshLog, 'utf8').match(/git-receive-pack/g)).toHaveLength(1);
+    expect(new Set(f.methods)).toEqual(new Set(['GET']));
+  });
+
+  it.each([
+    ['reject', 'absent'],
+    ['timeout', 'absent'],
+    ['interrupt', 'absent'],
+    ['lost', 'exact'],
+    ['timeout-after', 'exact'],
+    ['conflict', 'conflict'],
+    ['unreadable', 'exact'],
+    ['success-absent', 'absent'],
+  ])('independently reconciles %s without retry or false completion', async (mode, tagState) => {
+    const f = await fixture();
+    const { plan, job } = await accepted(f);
+    f.enablePush(mode === 'interrupt' ? 'timeout' : mode);
+    if (mode === 'unreadable') {
+      f.alterResponse((path, body) => {
+        if (
+          path.includes('/releases') &&
+          readFileSync(f.sshLog, 'utf8').includes('git-receive-pack')
+        ) {
+          throw new Error(`unreadable ${TOKEN}`);
+        }
+        return body;
+      });
+    }
+    const controller = new AbortController();
+    const task = f
+      .publication(f.store, { signal: controller.signal, timeoutMs: 500 })
+      .execute(job.jobId);
+    if (mode === 'interrupt') {
+      for (
+        let i = 0;
+        i < 500 && !readFileSync(f.sshLog, 'utf8').includes('git-receive-pack');
+        i++
+      ) {
+        await delay(10);
+      }
+      controller.abort();
+    }
+    const result = await task;
+    expect(result.state).toBe(
+      mode === 'conflict' || mode === 'unreadable' ? 'needs-inspection' : 'blocked',
+    );
+    expect(result.remote.tag).toBe(tagState);
+    expect(result.remote.release).toBe(mode === 'unreadable' ? 'unknown' : 'absent');
+    expect(f.store.readIntent(plan.planId).jobId).toBe(job.jobId);
+    const log = readFileSync(f.sshLog, 'utf8');
+    expect(log.slice(log.indexOf('git-receive-pack'))).toContain('git-upload-pack');
+    await f.publication().execute(job.jobId);
+    expect(readFileSync(f.sshLog, 'utf8').match(/git-receive-pack/g)).toHaveLength(1);
+    expect(f.reconciliation().receipt(job.jobId)).not.toContain(TOKEN);
+    if (mode === 'timeout') {
+      installTag(f, plan); // A late effect is discoverable, never a reason to replay the write.
+      await f.reconciliation().reconcile(job.jobId);
+      expect(f.store.readJob(job.jobId).remote.tag).toBe('exact');
+      expect(readFileSync(f.sshLog, 'utf8').match(/git-receive-pack/g)).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    'account',
+    'repository',
+    'default-branch',
+    'origin',
+    'tagger',
+    'workflow',
+    'ci-result',
+    'ci-commit',
+    'candidate',
+    'stable-tags',
+    'baseline-target',
+    'existing-tag',
+    'release',
+    'missing-intent',
+    'corrupt-plan',
+  ])('stops before mutation when %s changes', async (fact) => {
+    const f = await fixture({ baseline: fact === 'baseline-target' });
+    const { plan, job } = await accepted(f);
+    f.enablePush();
+    const configured = f.runtime.repositories[0]!.config;
+    if (fact === 'origin') configured.origin = 'ssh://other@gitea.example.test/acme/api.git';
+    if (fact === 'tagger') configured.tagger.name = 'Changed Bot';
+    if (fact === 'workflow') configured.ci.workflowPath = '.gitea/workflows/other.yaml';
+    if (fact === 'candidate') {
+      writeFileSync(join(f.work, 'advanced'), 'new');
+      git(f.work, 'add', '.');
+      git(f.work, 'commit', '--quiet', '-m', 'Advanced');
+      git(f.work, 'push', '--quiet', f.remote, 'main');
+    }
+    if (fact === 'stable-tags') git(f.remote, 'tag', 'v0.9.0');
+    if (fact === 'baseline-target') {
+      git(f.remote, 'update-ref', 'refs/tags/v0.1.0', f.commit);
+    }
+    if (fact === 'existing-tag') installTag(f, plan);
+    if (fact === 'release') f.setRelease();
+    if (fact === 'missing-intent') rmSync(join(f.stateDir, 'intents', `${plan.planId}.json`));
+    if (fact === 'corrupt-plan') {
+      const file = join(f.stateDir, 'plans', `${plan.planId}.json`);
+      writeFileSync(file, '{malformed');
+      await expect(f.publication().execute(job.jobId)).rejects.toMatchObject({
+        code: 'malformed-record',
+      });
+      noRemoteWrites(f);
+      return;
+    }
+    f.alterResponse((path, body) => {
+      if (fact === 'account' && path.endsWith('/user')) return { ...body, id: 8 };
+      if (fact === 'repository' && path === '/api/v1/repos/acme/api') return { ...body, id: 43 };
+      if (fact === 'default-branch' && path === '/api/v1/repos/acme/api') {
+        return { ...body, default_branch: 'other' };
+      }
+      if (fact === 'ci-result' && path.endsWith('/actions/runs/9')) {
+        return { ...body, conclusion: 'failure' };
+      }
+      if (fact === 'ci-commit' && path.endsWith('/actions/runs/9')) {
+        return { ...body, head_sha: 'a'.repeat(40) };
+      }
+      return body;
+    });
+    const result = await f.publication().execute(job.jobId);
+    expect(result).toMatchObject({ state: 'blocked', errorCode: 'plan-stale' });
+    expect(result.blocker?.message).toBeTruthy();
+    noRemoteWrites(f);
+  });
+
+  it.each(['intent', 'attempt-marker', 'receipt'])(
+    'fails safely on durable %s failure',
+    async (checkpoint) => {
+      const f = await fixture();
+      const { plan, job } = await accepted(f);
+      f.enablePush();
+      if (checkpoint === 'intent') {
+        vi.spyOn(f.store, 'writeIntent').mockImplementation(() => {
+          throw new Error('disk');
+        });
+      }
+      if (checkpoint === 'receipt') {
+        vi.spyOn(f.store, 'writeReceipt').mockImplementation(() => {
+          throw new Error('disk');
+        });
+      }
+      if (checkpoint === 'attempt-marker') {
+        const write = f.store.writeJob.bind(f.store);
+        vi.spyOn(f.store, 'writeJob').mockImplementation((record) => {
+          if (record.step === 'creating-tag') throw new Error('disk');
+          return write(record);
+        });
+      }
+      const result = await f.publication().execute(job.jobId);
+      expect(result.state).toBe('internal-error');
+      expect(f.store.readIntent(plan.planId).jobId).toBe(job.jobId);
+      await f.publication().execute(job.jobId);
+      if (checkpoint === 'receipt') {
+        expect(result.remote.tag).toBe('exact');
+        expect(readFileSync(f.sshLog, 'utf8').match(/git-receive-pack/g)).toHaveLength(1);
+      } else noRemoteWrites(f);
+    },
+  );
+
+  it.each(['candidate', 'configuration', 'account'])(
+    'renews %s after slow CI reads before any push',
+    async (fact) => {
+      const f = await fixture();
+      const { job } = await accepted(f);
+      f.enablePush();
+      let ciRead = false;
+      f.alterResponse((path, body) => {
+        if (path.endsWith('/actions/runs/9')) {
+          ciRead = true;
+          if (fact === 'candidate') {
+            writeFileSync(join(f.work, 'advanced'), 'new');
+            git(f.work, 'add', '.');
+            git(f.work, 'commit', '--quiet', '-m', 'Advanced during CI');
+            git(f.work, 'push', '--quiet', f.remote, 'main');
+          }
+          if (fact === 'configuration') {
+            f.runtime.repositories[0]!.config.origin =
+              'ssh://changed@gitea.example.test/acme/api.git';
+          }
+        }
+        return fact === 'account' && ciRead && path.endsWith('/user') ? { ...body, id: 8 } : body;
+      });
+      const result = await f.publication().execute(job.jobId);
+      expect(result).toMatchObject({ state: 'blocked', errorCode: 'plan-stale' });
+      noRemoteWrites(f);
+    },
+  );
+
+  it.each(['timeout', 'timeout-after'])(
+    'reconciles %s inside the admitted operation during actual owner shutdown',
+    async (mode) => {
+      const f = await fixture();
+      const { job } = await accepted(f);
+      f.enablePush(mode);
+      const controller = new AbortController();
+      const running = f.publication(f.store, { signal: controller.signal }).execute(job.jobId);
+      let launched = false;
+      for (let i = 0; i < 500; i++) {
+        launched = readFileSync(f.sshLog, 'utf8').includes('git-receive-pack');
+        const effectReady =
+          mode === 'timeout' ||
+          git(f.remote, 'for-each-ref', '--format=%(refname)').includes('refs/tags/v0.1.0');
+        if (launched && effectReady) break;
+        await delay(10);
+      }
+      expect(launched).toBe(true);
+      const shutdown = f.owner.shutdown();
+      expect(f.owner.accepting).toBe(false);
+      controller.abort();
+      const result = await running;
+      const remote = { tag: mode === 'timeout' ? 'absent' : 'exact', release: 'absent' };
+      expect(result).toMatchObject({ state: 'blocked', remote });
+      expect(f.store.readReceipt(result.reconciliationJobId!)).toMatchObject({
+        state: 'blocked',
+        remote,
+        evidence: { publicationJobId: job.jobId, interruptedStep: 'creating-tag' },
+      });
+      expect(await shutdown).toEqual({ drained: true, pending: [], lockReleased: true });
+      const log = readFileSync(f.sshLog, 'utf8');
+      expect(log.slice(log.indexOf('git-receive-pack'))).toContain('git-upload-pack');
+      expect(log.match(/git-receive-pack/g)).toHaveLength(1);
+      expect(new Set(f.methods)).toEqual(new Set(['GET']));
+    },
+  );
+
+  it('keeps an exact existing tag/release as a durably verified no-op', async () => {
+    const f = await fixture({ baseline: true, sameCandidate: true });
+    f.setRelease();
+    const { job } = await accepted(f);
+    expect(await f.publication().execute(job.jobId)).toMatchObject({
+      state: 'complete',
+      remote: { tag: 'exact', release: 'exact' },
+    });
+    noRemoteWrites(f);
+  });
+
+  it('requires fresh original-version approval after an uncertain absent effect', async () => {
+    const f = await fixture();
+    const { plan, job, approval } = await accepted(f);
+    f.enablePush('reject');
+    await f.publication().execute(job.jobId);
+    writeFileSync(join(f.work, 'advanced'), 'new');
+    git(f.work, 'add', '.');
+    git(f.work, 'commit', '--quiet', '-m', 'Advanced before recovery');
+    git(f.work, 'push', '--quiet', f.remote, 'main');
+    const recovery = await prepared(f);
+    expect(recovery.payload.recovery?.jobId).toBe(job.jobId);
+    expect(recovery.payload.tag.objectId).toBe(plan.payload.tag.objectId);
+    const acceptedRecovery = await approval.approve(
+      { planId: recovery.planId, digest: recovery.digest },
+      'admin',
+    );
+    f.enablePush();
+    const result = await f.publication().execute(acceptedRecovery.jobId);
+    expect(result.remote).toEqual({ tag: 'exact', release: 'absent' });
+    expect(git(f.remote, 'rev-parse', 'refs/tags/v0.1.0')).toBe(plan.payload.tag.objectId);
+    expect(readFileSync(f.sshLog, 'utf8').match(/git-receive-pack/g)).toHaveLength(2);
   });
 });

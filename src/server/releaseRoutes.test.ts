@@ -432,18 +432,20 @@ describe('release CSRF gate', () => {
     expect(res.json().code).toBe('invalid-csrf');
   });
 
-  it('lets a proven browser mutation reach routing (no release mutation route exists yet)', async () => {
-    const { app } = setup();
-    const { cookie, csrf } = await login(app);
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/releases/repositories',
-      headers: browser(cookie, { 'x-csrf-token': csrf }),
-    });
-    // This slice adds no plan/job/publish/reconcile route, so the gate passes and routing says 404.
-    expect(res.statusCode).toBe(404);
-    expect(res.json()).toEqual({ error: 'Not found' });
-  });
+  it.each(['/api/releases/repositories', '/api/releases/plans/test/publish'])(
+    'does not expose publication through a proven browser mutation at %s',
+    async (url) => {
+      const { app } = setup();
+      const { cookie, csrf } = await login(app);
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        headers: browser(cookie, { 'x-csrf-token': csrf }),
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: 'Not found' });
+    },
+  );
 
   it('does not let a webhook signature authenticate a release request', async () => {
     const { app } = setup({ webhookSecret: 'webhook-secret' });

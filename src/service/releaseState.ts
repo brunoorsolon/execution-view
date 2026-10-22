@@ -370,6 +370,9 @@ function checkPlanBody(body: Record<string, unknown>): void {
   }
   const payload = objectAt(body.payload, `${at}.payload`);
   checkVersions(payload, `${at}.payload`);
+  if (payload.configurationDigest !== undefined) {
+    hexAt(payload, 'configurationDigest', `${at}.payload`);
+  }
   const repository = objectAt(payload.repository, `${at}.payload.repository`);
   stringAt(repository, 'repositoryId', `${at}.payload.repository`);
   enumAt({ gitea: true }, repository, 'forge', `${at}.payload.repository`);

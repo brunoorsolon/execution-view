@@ -451,14 +451,54 @@ export async function runReleaseGit(
       `release Git reads accept only the read-only verbs ${RELEASE_GIT_READ_ONLY_VERBS.join(', ')} without executable or repository overrides`,
     );
   }
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
-  const maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_GIT_MAX_OUTPUT_BYTES;
   if (opts.input !== undefined && (verb !== 'mktag' || opts.input.byteLength > 4096)) {
     throw new ReleaseGitError(
       'git-invalid-request',
       'only a bounded local tag object may use stdin',
     );
   }
+  return runControlledGit(argv, opts);
+}
+
+/** The only remote write: one explicit object-to-tag refspec, never a generic or force push. */
+export function runReleaseTagPush(
+  origin: string,
+  objectId: string,
+  tag: string,
+  opts: ReleaseGitRunOptions,
+): Promise<ReleaseGitOutput> {
+  if (
+    !/^ssh:\/\/[^\s\x00-\x1f\x7f]+$/.test(origin) ||
+    !/^[0-9a-f]{40}$/.test(objectId) ||
+    !/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(tag) ||
+    opts.input !== undefined
+  ) {
+    throw new ReleaseGitError(
+      'git-invalid-request',
+      'tag push requires a fixed SSH origin, object and canonical version',
+    );
+  }
+  return runControlledGit(
+    [
+      'push',
+      '--porcelain',
+      '--no-force',
+      '--no-follow-tags',
+      '--no-verify',
+      '--recurse-submodules=no',
+      origin,
+      `${objectId}:refs/tags/${tag}`,
+    ],
+    opts,
+  );
+}
+
+async function runControlledGit(
+  argv: readonly string[],
+  opts: ReleaseGitRunOptions,
+): Promise<ReleaseGitOutput> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
+  const maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_GIT_MAX_OUTPUT_BYTES;
   const secrets = [opts.ssh.privateKeyFile, opts.ssh.knownHostsFile];
   const env = childEnvironment(opts.cwd, opts.ssh);
   const command = [...RELEASE_GIT_CONFIG.flatMap((value) => ['-c', value]), ...argv];

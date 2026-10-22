@@ -24,6 +24,7 @@ import {
 } from '../service/releaseOwnership.js';
 import { ReleaseStateError, ReleaseStateStore } from '../service/releaseState.js';
 import { createReleaseCheckout } from './checkout.js';
+import { releaseConfigurationDigest } from './configuration.js';
 import { discoverReleaseCi } from './ci.js';
 import { createReleaseForgeClient, type ReleaseForgeFetch } from './forgeClient.js';
 import { verifyReleaseIdentity } from './identity.js';
@@ -434,6 +435,7 @@ export class ReleasePreparation {
         stateSchemaVersion: RELEASE_STATE_SCHEMA_VERSION,
         repository: identity.repository,
         account: identity.account,
+        configurationDigest: releaseConfigurationDigest(configured, identity.repository.baseUrl),
         tagger: { ...configured.tagger },
         candidate,
         baseline: metadata.baseline,
