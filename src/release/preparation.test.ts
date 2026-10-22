@@ -283,6 +283,233 @@ function noRemoteWrites(f: Awaited<ReturnType<typeof fixture>>) {
   expect(readFileSync(f.sshLog, 'utf8')).not.toContain('receive-pack');
 }
 
+describe('release publication through HTTP', () => {
+  function http(f: Awaited<ReturnType<typeof fixture>>, store = f.store) {
+    const publication = f.publication(store);
+    const execute = vi.spyOn(publication, 'execute');
+    const approval = new ReleaseApproval({
+      config: f.config,
+      runtime: f.runtime,
+      ownership: f.owner,
+      store,
+      publication,
+    });
+    const app = buildApp(f.config, new PlanService(f.config), {
+      releases: {
+        runtime: f.runtime,
+        gate: f.owner,
+        store,
+        preparation: f.service(store),
+        approval,
+        reconciliation: f.reconciliation(store),
+      },
+    });
+    cleanups.push(async () => {
+      await app.close();
+    });
+    const headers = { authorization: `Basic ${Buffer.from('admin:password').toString('base64')}` };
+    return { app, headers, execute };
+  }
+
+  it('prepares, publishes once despite duplicate/lost-response retries, and reads the durable receipt', async () => {
+    const f = await fixture();
+    f.enablePush();
+    f.onCreate(async () => {
+      f.setRelease();
+      return json({}, 201);
+    });
+    const { app, headers, execute } = http(f);
+    const preparation = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+    });
+    expect(preparation.statusCode).toBe(202);
+    const ready = await terminal(f.store, f.store.readJob(preparation.json().jobId));
+    const planResponse = await app.inject({ url: `/api/releases/plans/${ready.planId}`, headers });
+    expect(planResponse.statusCode).toBe(200);
+    const plan = planResponse.json<ReleasePlan>();
+    const submit = () =>
+      app.inject({
+        method: 'POST',
+        url: `/api/releases/plans/${plan.planId}/publish`,
+        headers,
+        payload: { digest: plan.digest },
+      });
+    const [accepted, duplicate] = await Promise.all([submit(), submit()]);
+    expect(accepted.statusCode).toBe(202);
+    expect(duplicate.statusCode).toBe(202);
+    expect(duplicate.json().jobId).toBe(accepted.json().jobId);
+    expect(execute).toHaveBeenCalledTimes(1);
+    const result = await terminal(f.store, f.store.readJob(accepted.json().jobId));
+    expect(result).toMatchObject({ state: 'complete', remote: { tag: 'exact', release: 'exact' } });
+    // Treat the first response as lost: a later retry must return the original durable job.
+    const retried = await submit();
+    expect(retried.json().jobId).toBe(result.jobId);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(f.creates).toHaveLength(1);
+    expect(readFileSync(f.sshLog, 'utf8').match(/git-receive-pack/g)).toHaveLength(1);
+    const receipt = await app.inject({
+      url: `/api/releases/jobs/${result.jobId}/receipt`,
+      headers,
+    });
+    expect(receipt.statusCode).toBe(200);
+    expect(receipt.body).toContain('Outcome complete');
+    expect(receipt.body).toContain('Actual Author');
+    expect(receipt.body).toContain(NOTES);
+    for (const value of [TOKEN, f.stateDir, f.runtime.repositories[0]!.config.ssh.privateKeyFile])
+      expect(receipt.body).not.toContain(value);
+  });
+
+  it('never starts an existing queued approval on retry and reconciles uncertain work read-only', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    const approval = new ReleaseApproval({
+      config: f.config,
+      runtime: f.runtime,
+      ownership: f.owner,
+      store: f.store,
+    });
+    const original = await approval.approve({ planId: plan.planId, digest: plan.digest }, 'admin');
+    const { app, headers, execute } = http(f);
+    const retry = await app.inject({
+      method: 'POST',
+      url: `/api/releases/plans/${plan.planId}/publish`,
+      headers,
+      payload: { digest: plan.digest },
+    });
+    expect(retry.statusCode).toBe(202);
+    expect(retry.json().jobId).toBe(original.jobId);
+    expect(execute).not.toHaveBeenCalled();
+    const reconcile = () =>
+      app.inject({
+        method: 'POST',
+        url: `/api/releases/jobs/${original.jobId}/reconcile`,
+        headers,
+      });
+    const [first, second] = await Promise.all([reconcile(), reconcile()]);
+    expect(first.statusCode).toBe(202);
+    expect(second.json().jobId).toBe(first.json().jobId);
+    expect(first.json()).toMatchObject({
+      kind: 'reconcile',
+      state: 'blocked',
+      remote: { tag: 'absent', release: 'absent' },
+    });
+    const receipt = await app.inject({
+      url: `/api/releases/jobs/${original.jobId}/receipt`,
+      headers,
+    });
+    expect(receipt.body).toContain('fresh recovery plan');
+    noRemoteWrites(f);
+  });
+
+  it('keeps runtime blockers and failed finalization in accepted jobs and honest receipts', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    f.enablePush();
+    f.onCreate(async () => {
+      f.setRelease();
+      return json({}, 201);
+    });
+    const store = new ReleaseStateStore({ stateDir: f.stateDir });
+    vi.spyOn(store, 'writeReceipt').mockImplementation(() => {
+      throw new Error('private storage failed');
+    });
+    const { app, headers } = http(f, store);
+    const accepted = await app.inject({
+      method: 'POST',
+      url: `/api/releases/plans/${plan.planId}/publish`,
+      headers,
+      payload: { digest: plan.digest },
+    });
+    expect(accepted.statusCode).toBe(202);
+    const result = await terminal(f.store, f.store.readJob(accepted.json().jobId));
+    expect(result).toMatchObject({
+      state: 'internal-error',
+      errorCode: 'internal-error',
+      remote: { tag: 'exact', release: 'exact' },
+    });
+    const receipt = await app.inject({
+      url: `/api/releases/jobs/${result.jobId}/receipt`,
+      headers,
+    });
+    expect(receipt.statusCode).toBe(200);
+    expect(receipt.body).toContain('Receipt finalization failed');
+    expect(receipt.body).not.toContain('Outcome complete');
+    expect(f.creates).toHaveLength(1);
+  });
+
+  it('does not execute when durable approval persistence fails', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    const store = new ReleaseStateStore({ stateDir: f.stateDir });
+    vi.spyOn(store, 'writeIntent').mockImplementation(() => {
+      throw new Error('private intent storage failed');
+    });
+    const { app, headers, execute } = http(f, store);
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/releases/plans/${plan.planId}/publish`,
+      headers,
+      payload: { digest: plan.digest },
+    });
+    expect(response.statusCode).toBe(500);
+    expect(response.json().code).toBe('internal-error');
+    expect(execute).not.toHaveBeenCalled();
+    noRemoteWrites(f);
+  });
+
+  it('rejects stale digests, expiry, ineligible plans and unresolved attempts without remote effects', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    const { app, headers, execute } = http(f);
+    const submit = (planId: string, digest: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/releases/plans/${planId}/publish`,
+        headers,
+        payload: { digest },
+      });
+    const stale = await submit(plan.planId, 'f'.repeat(64));
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().code).toBe('plan-stale');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.parse(plan.approvalDeadline) + 1);
+    const expired = await submit(plan.planId, plan.digest);
+    expect(expired.statusCode).toBe(410);
+    expect(expired.json().code).toBe('plan-expired');
+    vi.useRealTimers();
+    const blockedPayload = {
+      ...plan.payload,
+      blockers: [{ code: 'test-blocker', message: 'not eligible' }],
+    };
+    const blocked = f.store.writePlan({
+      ...plan,
+      planId: 'blocked-plan',
+      payload: blockedPayload,
+      digest: releasePlanDigest(blockedPayload),
+    });
+    const ineligible = await submit(blocked.planId, blocked.digest);
+    expect(ineligible.statusCode).toBe(409);
+    expect(ineligible.json().code).toBe('repository-ineligible');
+    f.store.writeJob({
+      jobId: 'orphan-publication',
+      kind: 'publish',
+      planId: plan.planId,
+      planDigest: plan.digest,
+      state: 'needs-inspection',
+      step: null,
+      remote: { tag: 'unknown', release: 'unknown' },
+      errorCode: 'attempt-unresolved',
+    });
+    const unresolved = await submit(plan.planId, plan.digest);
+    expect(unresolved.statusCode).toBe(409);
+    expect(unresolved.json().code).toBe('attempt-unresolved');
+    expect(execute).not.toHaveBeenCalled();
+    noRemoteWrites(f);
+  });
+});
+
 describe('tracked release preparation', () => {
   it.each([false, true])('prepares immutable first/later plans (baseline=%s)', async (baseline) => {
     const f = await fixture({ baseline });
@@ -1705,7 +1932,10 @@ describe('read-only publication reconciliation and original-version recovery', (
       }
       return new Response('', { status: mode === 'error' ? 500 : 201 });
     });
-    const result = await f.publication(f.store, { timeoutMs: 50 }).execute(job.jobId);
+    // The deadline also bounds Git reads; only timeout cases need a short, scheduling-safe bound.
+    const result = await f
+      .publication(f.store, mode === 'timeout' ? { timeoutMs: 2_000 } : {})
+      .execute(job.jobId);
     const exact = effect && !['conflict', 'unreadable', 'tag-disappears'].includes(mode);
     expect(result.state).toBe(exact ? 'complete' : effect ? 'needs-inspection' : 'blocked');
     expect(result.remote.release).toBe(

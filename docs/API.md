@@ -1,6 +1,6 @@
 # HTTP API
 
-The Forge Desk server (`execution-view serve`, or `npm start`) exposes a small JSON API next to the web UI (read-only, apart from the optional webhook receivers). All paths are at the root (there is no base-path option). The examples assume a local server on port 8080 started with the demo config:
+The Forge Desk server (`execution-view serve`, or `npm start`) exposes a small API next to the web UI. Planning reads tracker state; opt-in release publication can create approved tags and releases. All paths are at the root (there is no base-path option). The examples assume a local server on port 8080 started with the demo config:
 
 ```sh
 EV_CONFIG=config.demo.yaml npm start
@@ -16,22 +16,25 @@ Contents:
 
 ## Endpoints
 
-| Method | Path                            | Description                                                              | Success                               |
-| ------ | ------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
-| GET    | `/healthz`                      | Liveness check. **No authentication.**                                   | `200` `{"status":"ok"}`               |
-| GET    | `/api/views`                    | The configured views                                                     | `200` array of view summaries         |
-| GET    | `/api/settings`                 | Settings for the web UI and the running version                          | `200` `{"refreshMinutes":5,...}`      |
-| GET    | `/api/views/:id/snapshot`       | The plan and layout of a view                                            | `200` snapshot with `ETag`, or `304`  |
-| POST   | `/api/views/:id/refresh`        | Force a refetch from the tracker, ignoring the cache                     | `200` snapshot with `ETag`            |
-| GET    | `/api/views/:id/export.:format` | The snapshot rendered as a file: `json`, `md`, `mmd` (Mermaid) or `dot`  | `200` text with `Content-Disposition` |
-| POST   | `/api/webhooks/github`          | Webhook receiver for GitHub issue events (only with a secret)            | `202` `{"invalidated":[...]}`         |
-| POST   | `/api/webhooks/gitea`           | Webhook receiver for Gitea / Forgejo issue events (only with a secret)   | `202` `{"invalidated":[...]}`         |
-| GET    | `/api/session`                  | The signed-in user and session CSRF token (only with a login configured) | `200` `{"username","csrfToken"}`      |
-| GET    | `/api/releases/repositories`    | Configured release repositories and their capability (releases only)     | `200` array of capabilities           |
-| GET    | `/login`                        | The login page (only with a login configured). **No authentication.**    | `200` HTML                            |
-| POST   | `/login`                        | Form login: `username` and `password`, form-encoded                      | `303` to the UI, with session cookie  |
-| POST   | `/logout`                       | Ends the session and clears the cookie                                   | `303` to the login page               |
-| GET    | `/` and other paths             | The web UI (static files)                                                | `200` HTML/JS/CSS                     |
+| Method | Path                                  | Description                                                              | Success                                  |
+| ------ | ------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------- |
+| GET    | `/healthz`                            | Liveness check. **No authentication.**                                   | `200` `{"status":"ok"}`                  |
+| GET    | `/api/views`                          | The configured views                                                     | `200` array of view summaries            |
+| GET    | `/api/settings`                       | Settings for the web UI and the running version                          | `200` `{"refreshMinutes":5,...}`         |
+| GET    | `/api/views/:id/snapshot`             | The plan and layout of a view                                            | `200` snapshot with `ETag`, or `304`     |
+| POST   | `/api/views/:id/refresh`              | Force a refetch from the tracker, ignoring the cache                     | `200` snapshot with `ETag`               |
+| GET    | `/api/views/:id/export.:format`       | The snapshot rendered as a file: `json`, `md`, `mmd` (Mermaid) or `dot`  | `200` text with `Content-Disposition`    |
+| POST   | `/api/webhooks/github`                | Webhook receiver for GitHub issue events (only with a secret)            | `202` `{"invalidated":[...]}`            |
+| POST   | `/api/webhooks/gitea`                 | Webhook receiver for Gitea / Forgejo issue events (only with a secret)   | `202` `{"invalidated":[...]}`            |
+| GET    | `/api/session`                        | The signed-in user and session CSRF token (only with a login configured) | `200` `{"username","csrfToken"}`         |
+| GET    | `/api/releases/repositories`          | Configured release repositories and their capability (releases only)     | `200` array of capabilities              |
+| POST   | `/api/releases/plans/:planId/publish` | Approve a stored plan digest and start publication (releases only)       | `202` durable job and `statusUrl`        |
+| POST   | `/api/releases/jobs/:jobId/reconcile` | Inspect a publication through reads only (releases only)                 | `202` reconciliation job and `statusUrl` |
+| GET    | `/api/releases/jobs/:jobId/receipt`   | Human-readable publication evidence (releases only)                      | `200` plain text                         |
+| GET    | `/login`                              | The login page (only with a login configured). **No authentication.**    | `200` HTML                               |
+| POST   | `/login`                              | Form login: `username` and `password`, form-encoded                      | `303` to the UI, with session cookie     |
+| POST   | `/logout`                             | Ends the session and clears the cookie                                   | `303` to the login page                  |
+| GET    | `/` and other paths                   | The web UI (static files)                                                | `200` HTML/JS/CSS                        |
 
 ### `GET /api/views`
 
@@ -136,7 +139,7 @@ Everything else is served from the built web UI directory (`dist/web`). A `GET` 
 - Every response under `/api/` carries `Cache-Control: no-store`. Caching is done by the server (see `cache.ttlSeconds`) and by `ETag`.
 - Successful fetches are cached in memory per view for `cache.ttlSeconds` (default 300). The snapshot's `fetchedAt` tells you when the data was read. A failed fetch is not cached.
 - Concurrent requests for the same view share one fetch.
-- All requests to the tracker are `GET`s; this API never writes to your tracker (the webhook endpoints only receive deliveries and drop cached data).
+- Planning requests to the tracker are `GET`s. Only explicitly approved release publication can create remote tags and releases; webhook receivers only invalidate cached planning data.
 - The cache can also be dropped by [webhooks](#post-apiwebhooksgithub-and-post-apiwebhooksgitea); the TTL remains as a safety net.
 
 ## Authentication
@@ -184,6 +187,16 @@ Foreign origins, a missing or invalid credential or CSRF proof, and the webhook 
   }
 ]
 ```
+
+### Publication, reconciliation and receipts
+
+`POST /api/releases/plans/:planId/publish` accepts only JSON `{ "digest": "<64 lowercase hex characters>" }`, with a 1 KiB body limit and a bounded stored plan ID. The server derives the approver from the authenticated application login, persists approval intent, and starts publication independently of the connection. The `202` body contains the durable job fields and `statusUrl`; it means accepted, not published. Duplicate or lost-response retries return the same job without restarting execution, even after expiry. Poll `GET /api/releases/jobs/:jobId` for runtime blockers and the final outcome.
+
+`POST /api/releases/jobs/:jobId/reconcile` accepts no body. It inspects the original publication and returns a reconciliation job, sharing concurrent requests for that publication. It never repeats a tag push or release create. A missing effect requires a fresh recovery plan and approval, not a repeated publication request.
+
+`GET /api/releases/jobs/:jobId/receipt` returns `text/plain; charset=utf-8` for a publication job, joining its immutable plan and latest durable receipt. Missing or failed finalization remains visible as unavailable evidence or an artifact failure, never successful publication. Preparation jobs have no publication receipt.
+
+These routes use stable `{ "code": "...", "error": "..." }` errors: invalid input or excessive body size (`400`), missing login (`401`), rejected origin or CSRF proof (`403`), unknown resources (`404`), stale/ineligible plans or unresolved attempts (`409`), expired new approval (`410`), and unavailable execution (`503`). Runtime failures after durable acceptance belong to the job. IDs are at most 128 ASCII letters, digits, dots, underscores or hyphens and begin with a letter or digit; the router can reject overlong paths before admission. Every response is `Cache-Control: no-store`.
 
 ## Snapshot schema
 

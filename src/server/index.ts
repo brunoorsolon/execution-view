@@ -8,6 +8,8 @@ import { acquireReleaseOwnership } from '../service/releaseOwnership.js';
 import { ReleaseStateStore } from '../service/releaseState.js';
 import { ReleasePreparation } from '../release/preparation.js';
 import { ReleaseReconciliation } from '../release/reconciliation.js';
+import { ReleaseApproval } from '../release/approval.js';
+import { ReleasePublication } from '../release/publication.js';
 import { buildApp } from './app.js';
 
 export interface StartServerOptions {
@@ -44,15 +46,15 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Fastif
         });
   const releaseStore =
     releaseRuntime === null ? null : new ReleaseStateStore({ stateDir: releaseRuntime.stateDir });
+  const releaseOptions =
+    releaseRuntime === null || ownership === null || releaseStore === null
+      ? null
+      : { config, runtime: releaseRuntime, ownership, store: releaseStore };
+  const reconciliation = releaseOptions === null ? null : new ReleaseReconciliation(releaseOptions);
   try {
-    if (releaseRuntime !== null && ownership !== null) {
+    if (reconciliation !== null) {
       // Queue read-only recovery before serving new release work; forge outages leave Planning up.
-      void new ReleaseReconciliation({
-        config,
-        runtime: releaseRuntime,
-        ownership,
-        store: releaseStore!,
-      })
+      void reconciliation
         .reconcileInterrupted()
         .catch(() =>
           console.error(
@@ -69,12 +71,12 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Fastif
               runtime: releaseRuntime,
               gate: ownership,
               store: releaseStore!,
-              preparation: new ReleasePreparation({
-                config,
-                runtime: releaseRuntime,
-                ownership,
-                store: releaseStore!,
+              preparation: new ReleasePreparation(releaseOptions!),
+              approval: new ReleaseApproval({
+                ...releaseOptions!,
+                publication: new ReleasePublication(releaseOptions!),
               }),
+              reconciliation: reconciliation!,
             },
           }
         : {}),

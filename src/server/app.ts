@@ -252,7 +252,19 @@ export function buildApp(
   service: PlanService,
   opts: BuildAppOptions = {},
 ): FastifyInstance {
-  const app: FastifyInstance = Fastify({ logger: opts.logger ?? false });
+  const app: FastifyInstance = Fastify({
+    logger: opts.logger ?? false,
+    frameworkErrors(error, request, reply: FastifyReply) {
+      // Router-level URL/ID failures bypass application hooks and the normal error handler.
+      if (request.url.startsWith('/api/releases/')) {
+        return reply.header('Cache-Control', 'no-store').code(400).send({
+          code: 'invalid-request',
+          error: 'malformed release URL or resource ID',
+        });
+      }
+      return reply.send(error);
+    },
+  });
   const webDir = path.resolve(opts.webDir ?? defaultWebDir());
   const hasWebDir = isDirectory(webDir);
   const basicAuth = config.server.basicAuth;
