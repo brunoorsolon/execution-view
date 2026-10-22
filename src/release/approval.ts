@@ -18,12 +18,15 @@ import {
 import { ReleaseStateError, ReleaseStateStore } from '../service/releaseState.js';
 import { activePublications, attemptReceipt, recoverable, samePublication } from './attempts.js';
 import { releaseConfigurationDigest } from './configuration.js';
+import type { ReleasePublication } from './publication.js';
 
 export interface ReleaseApprovalOptions {
   config: AppConfig;
   runtime: ReleaseRuntime;
   ownership: ReleaseOwnership;
   store: ReleaseStateStore;
+  /** Only newly durable approvals start execution; retries and startup never replay writes. */
+  publication?: Pick<ReleasePublication, 'execute'>;
 }
 
 export class ReleaseApprovalError extends Error {
@@ -45,7 +48,7 @@ function optional<T>(read: () => T): T | undefined {
   }
 }
 
-/** Engine-only admission. No remote effects or execution are started by approval or retry. */
+/** Durable admission, optionally connected to publication by the server. Retries never execute. */
 export class ReleaseApproval {
   constructor(private readonly options: ReleaseApprovalOptions) {
     if (
@@ -204,7 +207,10 @@ export class ReleaseApproval {
         });
         // Replacement can be visible even when its directory sync fails.
         try {
-          return store.writeJob({ ...job, state: 'queued', step: null, errorCode: null });
+          const accepted = store.writeJob({ ...job, state: 'queued', step: null, errorCode: null });
+          // Execution queues behind this repository gate and survives the HTTP connection.
+          void this.options.publication?.execute(accepted.jobId).catch(() => undefined);
+          return accepted;
         } catch (error) {
           try {
             store.writeJob(job);

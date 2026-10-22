@@ -1,7 +1,6 @@
 /**
- * Release HTTP routes (source specification section 10). This slice mounts the private runtime
- * and its access gate plus the repository capability read; plan, job, publish and reconcile
- * routes belong to later slices.
+ * Release HTTP routes (source specification section 10), mounted behind the application login
+ * and release access gate. Execution belongs to the durable engine, not the HTTP connection.
  *
  * Every outward value is sanitized: no token, key, header, credential-bearing URL or private
  * filesystem path leaves this module, and a forge outage becomes a repository blocker rather
@@ -20,8 +19,14 @@ import type { AppConfig } from '../config/schema.js';
 import type { ReleaseBlocker } from '../release/forgeClient.js';
 import { verifyReleaseIdentity, type ReleaseIdentityCheck } from '../release/identity.js';
 import { ReleasePreparation, ReleasePreparationError } from '../release/preparation.js';
+import { ReleaseApproval, ReleaseApprovalError } from '../release/approval.js';
+import { ReleaseReconciliation } from '../release/reconciliation.js';
 import { ReleaseStateError, ReleaseStateStore } from '../service/releaseState.js';
-import { repositoryOperationKey, type ReleaseRepositoryKey } from '../service/releaseOwnership.js';
+import {
+  ReleaseOwnershipError,
+  repositoryOperationKey,
+  type ReleaseRepositoryKey,
+} from '../service/releaseOwnership.js';
 import { sanitizeUrl } from '../providers/http.js';
 
 /** The admission state release execution needs; `ReleaseOwnership` satisfies it. */
@@ -33,6 +38,8 @@ export interface ReleaseMount {
   runtime: ReleaseRuntime;
   gate: ReleaseExecutionGate;
   preparation?: ReleasePreparation;
+  approval?: ReleaseApproval;
+  reconciliation?: ReleaseReconciliation;
   store?: ReleaseStateStore;
   /** Identity check for repository capability; overridable in tests. */
   verifyIdentity?: (options: {
@@ -210,6 +217,80 @@ export function registerReleaseRoutes(
     return plan;
   });
 
+  app.post<{ Params: { planId: string } }>(
+    '/api/releases/plans/:planId/publish',
+    { bodyLimit: 1024 },
+    async (request, reply) => {
+      const body = request.body;
+      if (
+        typeof body !== 'object' || body === null || Array.isArray(body) ||
+        Object.keys(body).length !== 1 || !('digest' in body) ||
+        typeof body.digest !== 'string' || !/^[0-9a-f]{64}$/.test(body.digest) ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(request.params.planId)
+      ) {
+        throw new RouteError('invalid-request', 'publication accepts only a valid digest');
+      }
+      if (!gate.accepting || mount.approval === undefined) {
+        throw new RouteError('execution-unavailable', 'release execution is unavailable');
+      }
+      const plan = store.readPlan(request.params.planId);
+      repository(plan.payload.repository.repositoryId);
+      // The shared access gate has verified this configured application identity.
+      const job = await mount.approval.approve(
+        { planId: request.params.planId, digest: body.digest },
+        config.server.basicAuth?.username ?? null,
+      );
+      return reply.code(202).send({
+        ...sanitizeJob(job, scrub),
+        statusUrl: `/api/releases/jobs/${encodeURIComponent(job.jobId)}`,
+      });
+    },
+  );
+
+  app.post<{ Params: { jobId: string } }>(
+    '/api/releases/jobs/:jobId/reconcile',
+    { bodyLimit: 1024 },
+    async (request, reply) => {
+      if (request.body !== undefined && request.body !== null && request.body !== '') {
+        throw new RouteError('invalid-request', 'reconciliation does not accept a request body');
+      }
+      if (!gate.accepting || mount.reconciliation === undefined) {
+        throw new RouteError('execution-unavailable', 'release execution is unavailable');
+      }
+      publicationJob(request.params.jobId);
+      const job = await mount.reconciliation.reconcile(request.params.jobId);
+      return reply.code(202).send({
+        ...sanitizeJob(job, scrub),
+        statusUrl: `/api/releases/jobs/${encodeURIComponent(job.jobId)}`,
+      });
+    },
+  );
+
+  const publicationJob = (jobId: string): ReleaseJob => {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(jobId)) {
+      throw new RouteError('invalid-request', 'invalid release job ID');
+    }
+    const job = store.readJob(jobId);
+    if (job.planId !== null) repository(store.readPlan(job.planId).payload.repository.repositoryId);
+    if (job.kind !== 'publish' || job.planId === null) {
+      throw new RouteError('attempt-unresolved', 'this job has no publication evidence');
+    }
+    return job;
+  };
+
+  app.get<{ Params: { jobId: string } }>(
+    '/api/releases/jobs/:jobId/receipt',
+    async (request, reply) => {
+      publicationJob(request.params.jobId);
+      if (mount.reconciliation === undefined) {
+        throw new RouteError('execution-unavailable', 'release receipt reader is unavailable');
+      }
+      return reply.type('text/plain; charset=utf-8').send(
+        scrub(mount.reconciliation.receipt(request.params.jobId)),
+      );
+    },
+  );
+
   app.get<{ Params: { jobId: string } }>('/api/releases/jobs/:jobId', async (request) => {
     const job = store.readJob(request.params.jobId);
     if (job.planId !== null) {
@@ -280,7 +361,17 @@ export function releaseRouteError(
   }
   if (statusCode === 404)
     return { status: 404, body: { code: 'not-found', error: 'unknown release resource' } };
-  if (error instanceof RouteError || error instanceof ReleasePreparationError) {
+  if (error instanceof ReleaseOwnershipError) {
+    return {
+      status: 503,
+      body: { code: 'execution-unavailable', error: 'release execution is unavailable' },
+    };
+  }
+  if (
+    error instanceof RouteError ||
+    error instanceof ReleasePreparationError ||
+    error instanceof ReleaseApprovalError
+  ) {
     return {
       status: RELEASE_ERROR_HTTP_STATUS[error.code],
       body: { code: error.code, error: error.message },
