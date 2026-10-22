@@ -60,6 +60,12 @@ function errorMessage(err: unknown): string {
 // connection and authentication
 // ---------------------------------------------------------------------------
 
+/** Loopback is the one place plain HTTP is allowed: an isolated local test deployment. */
+function isLoopback(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '');
+  return host === 'localhost' || host === '::1' || /^127\./.test(host);
+}
+
 function connectionFor(opts: ReleaseOptions, io: CliIo): Connection {
   if (opts.server === undefined) throw new InvocationError('--server <url> is required');
   let server: URL;
@@ -74,6 +80,12 @@ function connectionFor(opts: ReleaseOptions, io: CliIo): Connection {
   // Credentials in the URL would reach fetch error messages, so they are refused outright.
   if (server.username !== '' || server.password !== '') {
     throw new InvocationError('--server must not carry credentials; use --auth-env or --auth-file');
+  }
+  // A Basic header over plain HTTP is readable on the path, so only loopback may skip TLS.
+  if (server.protocol === 'http:' && !isLoopback(server.hostname)) {
+    throw new InvocationError(
+      '--server must use https; http is allowed only on loopback for local testing',
+    );
   }
   return {
     baseUrl: server.toString().replace(/\/+$/, ''),
@@ -244,6 +256,16 @@ function describeWarnings(warnings: { code: string; message: string }[]): string
     : warnings.map((warning) => `${warning.code}: ${warning.message}`).join('; ');
 }
 
+/**
+ * Repository-controlled text reaches a terminal, so control bytes are shown inert: an escape or
+ * carriage return must not redraw the review the operator is about to approve.
+ */
+function inert(text: string): string {
+  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, (char) => {
+    return `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`;
+  });
+}
+
 /** The whole reviewed plan as text: every approval-relevant fact and the complete notes. */
 export function renderPlan(plan: ReleasePlan): string {
   const payload = plan.payload;
@@ -275,7 +297,7 @@ export function renderPlan(plan: ReleasePlan): string {
     `Notes (${payload.notes.source}, sha256 ${payload.notes.digest}):`,
     payload.notes.text,
   );
-  return lines.join('\n');
+  return inert(lines.join('\n'));
 }
 
 export function renderJob(job: ReleaseJob): string {
@@ -294,7 +316,7 @@ export function renderJob(job: ReleaseJob): string {
   if (job.reconciliationJobId !== undefined) {
     lines.push(`Reconciliation job: ${job.reconciliationJobId}`);
   }
-  return lines.join('\n');
+  return inert(lines.join('\n'));
 }
 
 function isTerminal(state: ReleaseJob['state']): boolean {
@@ -393,8 +415,11 @@ async function publish(
   deps: CliDeps,
 ): Promise<number> {
   const plan = await getPlan(connection, planId);
-  // The plan is the human review affordance; --json prints only the server response.
+  // The plan is the human review affordance: before an interactive answer it must be visible,
+  // and with --json it goes to stderr so stdout stays one JSON document.
+  const interactive = opts.approve === undefined && deps.confirm !== undefined;
   if (opts.json !== true) io.stdout(renderPlan(plan) + '\n');
+  else if (interactive) io.stderr(renderPlan(plan) + '\n');
 
   if (opts.approve !== undefined) {
     if (opts.approve !== plan.digest) {

@@ -367,6 +367,38 @@ describe('release authentication', () => {
     expect(result.stderr).toContain('must not carry credentials');
     expect(result.stderr).not.toContain('pw');
   });
+
+  it('sends no credential to a non-loopback plain-HTTP server', async () => {
+    const result = await run(
+      [
+        'releases',
+        'publish',
+        PLAN.planId,
+        '--server',
+        'http://release.example.test',
+        '--auth-env',
+        AUTH_ENV,
+        '--approve',
+        PLAN.digest,
+      ],
+      { env: { [AUTH_ENV]: MATERIAL } },
+    );
+    expect(result.code).toBe(RELEASE_EXIT.cancelled);
+    expect(result.stderr).toContain('--server must use https');
+    expect(result.stderr).not.toContain(MATERIAL);
+    expect(result.stdout).toBe('');
+  });
+
+  it('admits https and loopback http', async () => {
+    // A refused connection on an admitted scheme proves the URL passed the transport gate.
+    const result = await run(
+      ['releases', 'status', 'job-1', '--server', 'https://127.0.0.1:1', '--auth-env', AUTH_ENV],
+      { env: { [AUTH_ENV]: MATERIAL } },
+    );
+    expect(result.code).toBe(RELEASE_EXIT.internal);
+    expect(result.stderr).toContain('cannot reach the server');
+    expect(result.stderr).not.toContain('must use https');
+  });
 });
 
 describe('prepare', () => {
@@ -460,6 +492,28 @@ describe('plan', () => {
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual(PLAN);
   });
+
+  it('shows repository-controlled control bytes inertly, keeping JSON exact', async () => {
+    const hostile: ReleasePlan = {
+      ...PLAN,
+      payload: {
+        ...PLAN.payload,
+        title: 'release\u001b[2Jtitle',
+        notes: { text: 'before\u001b[2J\u001b[H\rafter', digest: 'd'.repeat(64), source: 'file' },
+      },
+    };
+    const stub = await startStub(() => ({ status: 200, body: hostile }));
+    const human = await run(rel(stub.url, 'plan', PLAN.planId));
+    expect(human.code).toBe(0);
+    expect(human.stdout).not.toContain('\u001b');
+    expect(human.stdout).not.toContain('\r');
+    expect(human.stdout).toContain('before\\u001b[2J\\u001b[H\\u000dafter');
+    expect(human.stdout).toContain('release\\u001b[2Jtitle');
+
+    const machine = await run(rel(stub.url, 'plan', PLAN.planId, '--json'));
+    expect(machine.code).toBe(0);
+    expect(JSON.parse(machine.stdout).payload.notes.text).toBe('before\u001b[2J\u001b[H\rafter');
+  });
 });
 
 describe('publish', () => {
@@ -527,6 +581,24 @@ describe('publish', () => {
       jobId: 'publish-1',
       statusUrl: '/api/releases/jobs/publish-1',
     });
+  });
+
+  it('shows the plan before an interactive answer in JSON mode', async () => {
+    const stub = await startStub((request) =>
+      request.method === 'GET' ? planGet : accepted('publish-1'),
+    );
+    const result = await run(rel(stub.url, 'publish', PLAN.planId, '--json'), {
+      confirm: () => Promise.resolve(true),
+    });
+    expect(result.code).toBe(0);
+    // stdout stays one JSON document; the review the operator approves is on stderr.
+    expect(JSON.parse(result.stdout)).toEqual({
+      jobId: 'publish-1',
+      statusUrl: '/api/releases/jobs/publish-1',
+    });
+    expect(result.stderr).toContain(PLAN.digest);
+    expect(result.stderr).toContain(PLAN.payload.notes.text);
+    expect(stub.requests.some((request) => request.method === 'POST')).toBe(true);
   });
 
   it('refuses a digest that is not the reviewed plan', async () => {
