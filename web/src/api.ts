@@ -24,7 +24,7 @@ export class ApiError extends Error {
 // Relative URLs, so the UI also works when it is served below a sub-path.
 const API = 'api';
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function send(path: string, init?: RequestInit): Promise<Response> {
   let res: Response;
   try {
     res = await fetch(path, { ...init, headers: { accept: 'application/json', ...init?.headers } });
@@ -48,11 +48,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(message, res.status);
   }
+  return res;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await send(path, init);
   try {
     return (await res.json()) as T;
   } catch {
     throw new ApiError('The server returned an invalid response.', res.status);
   }
+}
+
+async function requestText(path: string): Promise<string> {
+  return await (await send(path)).text();
+}
+
+/** Session-bound CSRF proof for every release mutation; signing in again is required. */
+async function csrfHeaders(): Promise<Record<string, string>> {
+  const { csrfToken } = await fetchSession();
+  if (csrfToken === null) throw new ApiError('Sign in again before changing a release.', 403);
+  return { 'x-csrf-token': csrfToken };
 }
 
 export function fetchViews(): Promise<ViewSummary[]> {
@@ -102,12 +118,35 @@ export function fetchReleaseRepositories(): Promise<ReleaseRepository[]> {
 }
 
 export async function prepareRelease(repositoryId: string): Promise<{ jobId: string }> {
-  const { csrfToken } = await fetchSession();
-  if (csrfToken === null) throw new ApiError('Sign in again before preparing a release.', 403);
   return request(`${API}/releases/repositories/${encodeURIComponent(repositoryId)}/prepare`, {
     method: 'POST',
-    headers: { 'x-csrf-token': csrfToken },
+    headers: await csrfHeaders(),
   });
+}
+
+/**
+ * Submits the digest of the plan on screen. The server accepts only the stored digest, so a
+ * changed or stale plan is rejected instead of publishing something the operator did not see.
+ */
+export async function publishRelease(planId: string, digest: string): Promise<ReleaseJob> {
+  return request(`${API}/releases/plans/${encodeURIComponent(planId)}/publish`, {
+    method: 'POST',
+    headers: { ...(await csrfHeaders()), 'content-type': 'application/json' },
+    body: JSON.stringify({ digest }),
+  });
+}
+
+/** Starts one read-only remote reconciliation; it never publishes a missing effect. */
+export async function reconcileRelease(jobId: string): Promise<ReleaseJob> {
+  return request(`${API}/releases/jobs/${encodeURIComponent(jobId)}/reconcile`, {
+    method: 'POST',
+    headers: await csrfHeaders(),
+  });
+}
+
+/** The plain-text receipt of one publication, converted to text nodes by the caller. */
+export function fetchReleaseReceipt(jobId: string): Promise<string> {
+  return requestText(`${API}/releases/jobs/${encodeURIComponent(jobId)}/receipt`);
 }
 
 export function fetchReleaseJobs(
