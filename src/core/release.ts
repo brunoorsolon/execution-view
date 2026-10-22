@@ -172,6 +172,8 @@ export interface ReleasePlanPayload {
   tagName: string;
   actions: ReleaseIntendedAction[];
   warnings: ReleasePlanWarning[];
+  /** Preparation blockers. Absent in older schema-1 plans, which predate preparation. */
+  blockers?: ReleasePlanWarning[];
   tag: ReleaseTagObservation;
   release: ReleaseObservation;
 }
@@ -183,6 +185,8 @@ export interface ReleasePlan {
   digest: string;
   /** ISO timestamp after which the plan no longer accepts approval. Not approval content. */
   approvalDeadline: string;
+  /** Frozen tag creation time for newly prepared objects; absent on pre-preparation schema-1 plans. */
+  preparedAt?: string;
   payload: ReleasePlanPayload;
 }
 
@@ -218,13 +222,15 @@ export interface ReleaseJob {
   kind: ReleaseJobKind;
   /** Plan the job belongs to; null while a preparation plan does not exist yet. */
   planId: string | null;
-  /** Digest of the accepted plan; null for preparation jobs. */
+  /** Digest of the stored plan; null until preparation has produced a plan. */
   planDigest: string | null;
   state: ReleaseJobState;
   step: ReleaseJobStep | null;
   /** Remote truth, which can stay `exact` while a storage failure makes the job `internal-error`. */
   remote: ReleaseRemoteClassification;
   errorCode: ReleaseErrorCode | null;
+  /** Sanitized preparation failure detail, absent in older schema-1 jobs. */
+  blocker?: ReleasePlanWarning;
 }
 
 /**

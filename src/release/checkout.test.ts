@@ -516,12 +516,18 @@ describe('release object reads', () => {
       'fetchCandidate',
       'isAncestor',
       'listPaths',
+      'listRemoteTags',
+      'prepareTag',
       'readCommitSubjects',
       'readEntry',
       'readRemoteTag',
     ]);
     // Reads cannot precede a verified candidate fetch, and no candidate is exposed yet.
     expect(checkout.candidate()).toBeNull();
+    const tagger = { name: 'Bot', email: 'bot@example.test' };
+    expect(
+      blockerOf(await checkout.prepareTag('v0.1.0', tagger, '2026-01-01T00:00:00Z')).code,
+    ).toBe('git-invalid-request');
     expect(blockerOf(await checkout.readEntry('0'.repeat(40), 'README.md')).code).toBe(
       'git-invalid-request',
     );

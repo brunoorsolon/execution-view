@@ -9,6 +9,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  opendirSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -358,6 +359,15 @@ function checkPlanBody(body: Record<string, unknown>): void {
   const at = 'plan';
   hexAt(body, 'digest', at);
   stringAt(body, 'approvalDeadline', at);
+  if (body.preparedAt !== undefined) {
+    const preparedAt = Date.parse(stringAt(body, 'preparedAt', at));
+    if (
+      !Number.isFinite(preparedAt) ||
+      Date.parse(body.approvalDeadline as string) !== preparedAt + 30 * 60_000
+    ) {
+      throw malformed('plan: preparation time and 30-minute deadline do not agree');
+    }
+  }
   const payload = objectAt(body.payload, `${at}.payload`);
   checkVersions(payload, `${at}.payload`);
   const repository = objectAt(payload.repository, `${at}.payload.repository`);
@@ -405,6 +415,13 @@ function checkPlanBody(body: Record<string, unknown>): void {
     stringAt(entry, 'code', `${at}.payload.warnings[${index}]`);
     stringAt(entry, 'message', `${at}.payload.warnings[${index}]`);
   });
+  if (payload.blockers !== undefined) {
+    listAt(payload.blockers, `${at}.payload.blockers`).forEach((blocker, index) => {
+      const entry = objectAt(blocker, `${at}.payload.blockers[${index}]`);
+      stringAt(entry, 'code', `${at}.payload.blockers[${index}]`);
+      stringAt(entry, 'message', `${at}.payload.blockers[${index}]`);
+    });
+  }
   const tag = objectAt(payload.tag, `${at}.payload.tag`);
   enumAt(REMOTE_STATES, tag, 'state', `${at}.payload.tag`);
   stringAt(tag, 'name', `${at}.payload.tag`);
@@ -445,6 +462,11 @@ function checkJobBody(job: ReleaseJob): void {
   if (step !== null) enumAt(JOB_STEPS, body, 'step', at);
   checkRemote(body.remote, `${at}.remote`);
   if (body.errorCode !== null) enumAt(ERROR_CODES, body, 'errorCode', at);
+  if (body.blocker !== undefined) {
+    const blocker = objectAt(body.blocker, `${at}.blocker`);
+    stringAt(blocker, 'code', `${at}.blocker`);
+    stringAt(blocker, 'message', `${at}.blocker`);
+  }
 }
 
 function checkIntentBody(intent: ReleaseIntent): void {
@@ -484,7 +506,7 @@ function checkReceiptBody(receipt: ReleaseReceipt): void {
 }
 
 export class ReleaseStateStore {
-  private readonly stateDir: string;
+  readonly stateDir: string;
   private readonly uid: () => number | undefined;
   private readonly fsync: (fd: number) => void;
 
@@ -557,6 +579,33 @@ export class ReleaseStateStore {
     }
     this.assertJobPlan(job);
     return job;
+  }
+
+  /** Complete bounded history for safety decisions; never silently skips malformed evidence. */
+  listJobs(): ReleaseJob[] {
+    const dir = this.checkRecordDir('job');
+    if (dir === null) return [];
+    const jobs: ReleaseJob[] = [];
+    const handle = opendirSync(dir);
+    let entries = 0;
+    try {
+      for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+        if (++entries > 10_000) {
+          throw new ReleaseStateError(
+            'read-failed',
+            'release job history exceeds the 10000-entry safety bound',
+          );
+        }
+        if (entry.name.startsWith('.') && entry.name.endsWith('.tmp')) continue;
+        if (!entry.name.endsWith('.json')) {
+          throw malformed('release job history has an unexpected entry');
+        }
+        jobs.push(this.readJob(entry.name.slice(0, -5)));
+      }
+    } finally {
+      handle.closeSync();
+    }
+    return jobs;
   }
 
   /** A job names a plan only together with that plan's digest, and it must match the stored plan. */
