@@ -254,7 +254,7 @@ export function buildApp(
 ): FastifyInstance {
   const app: FastifyInstance = Fastify({
     logger: opts.logger ?? false,
-    frameworkErrors(error, request, reply) {
+    frameworkErrors(error, request, reply: FastifyReply) {
       // Router-level URL/ID failures bypass application hooks and the normal error handler.
       if (request.url.startsWith('/api/releases/')) {
         return reply.header('Cache-Control', 'no-store').code(400).send({
