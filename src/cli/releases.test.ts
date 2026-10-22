@@ -349,6 +349,24 @@ describe('release authentication', () => {
     expect(result.stderr).toContain('--password');
     expect(stub.requests).toHaveLength(0);
   });
+
+  it('refuses credentials inside the server URL instead of echoing them', async () => {
+    const result = await run(
+      [
+        'releases',
+        'status',
+        'job-1',
+        '--server',
+        'https://user:pw@127.0.0.1:9',
+        '--auth-env',
+        AUTH_ENV,
+      ],
+      { env: { [AUTH_ENV]: MATERIAL } },
+    );
+    expect(result.code).toBe(RELEASE_EXIT.cancelled);
+    expect(result.stderr).toContain('must not carry credentials');
+    expect(result.stderr).not.toContain('pw');
+  });
 });
 
 describe('prepare', () => {
@@ -395,6 +413,17 @@ describe('prepare', () => {
     expect(result.stdout).toContain('Job prepare-1');
     expect(result.stdout).toContain('complete');
     expect(result.stderr).toContain('running');
+  });
+
+  it('prints one JSON document per command, including while waiting', async () => {
+    const stub = await startStub((request) =>
+      request.method === 'POST'
+        ? accepted('prepare-1')
+        : { status: 200, body: jobOf('complete', { jobId: 'prepare-1', kind: 'prepare' }) },
+    );
+    const result = await run(rel(stub.url, 'prepare', 'app', '--json', '--wait'));
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ jobId: 'prepare-1', state: 'complete' });
   });
 });
 
@@ -486,6 +515,20 @@ describe('publish', () => {
     expect(JSON.parse(post.body)).toEqual({ digest: PLAN.digest });
   });
 
+  it('prints only the server response as JSON', async () => {
+    const stub = await startStub((request) =>
+      request.method === 'GET' ? planGet : accepted('publish-1'),
+    );
+    const result = await run(
+      rel(stub.url, 'publish', PLAN.planId, '--approve', PLAN.digest, '--json'),
+    );
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      jobId: 'publish-1',
+      statusUrl: '/api/releases/jobs/publish-1',
+    });
+  });
+
   it('refuses a digest that is not the reviewed plan', async () => {
     const stub = await startStub(() => planGet);
     const result = await run(rel(stub.url, 'publish', PLAN.planId, '--approve', 'e'.repeat(64)));
@@ -552,6 +595,21 @@ describe('status', () => {
       state: 'needs-inspection',
       attemptedEffects: [{ kind: 'create-tag', tag: 'v1.2.4' }],
     });
+  });
+
+  it('follows a queued job when asked to wait', async () => {
+    const states: ReleaseJob['state'][] = ['queued', 'running', 'complete'];
+    let reads = 0;
+    const stub = await startStub(() => {
+      const state = states[Math.min(reads, states.length - 1)] as ReleaseJob['state'];
+      reads += 1;
+      return { status: 200, body: jobOf(state) };
+    });
+    const result = await run(rel(stub.url, 'status', 'publish-1', '--wait'));
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('Job publish-1');
+    expect(result.stdout).toContain('complete');
+    expect(reads).toBe(3);
   });
 });
 

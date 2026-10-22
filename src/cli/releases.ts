@@ -71,6 +71,10 @@ function connectionFor(opts: ReleaseOptions, io: CliIo): Connection {
   if (server.protocol !== 'http:' && server.protocol !== 'https:') {
     throw new InvocationError('--server must use http or https');
   }
+  // Credentials in the URL would reach fetch error messages, so they are refused outright.
+  if (server.username !== '' || server.password !== '') {
+    throw new InvocationError('--server must not carry credentials; use --auth-env or --auth-file');
+  }
   return {
     baseUrl: server.toString().replace(/\/+$/, ''),
     authorization: `Basic ${Buffer.from(authMaterial(opts, io), 'utf8').toString('base64')}`,
@@ -324,17 +328,16 @@ function printJson(io: CliIo, value: unknown): void {
 }
 
 /** Report an accepted job: never call an accepted job published. */
-function reportAccepted(io: CliIo, reply: unknown, opts: ReleaseOptions): string {
+function acceptedJobId(reply: unknown): string {
   const jobId = (reply as { jobId?: unknown } | null)?.jobId;
   if (typeof jobId !== 'string' || jobId === '') {
     throw new ServerError(RELEASE_EXIT.internal, 'the server did not return a job id');
   }
-  if (opts.json === true) {
-    printJson(io, reply);
-  } else {
-    io.stdout(`accepted job ${jobId}\nTrack it with: releases status ${jobId}\n`);
-  }
   return jobId;
+}
+
+function reportAccepted(io: CliIo, jobId: string): void {
+  io.stdout(`accepted job ${jobId}\nTrack it with: releases status ${jobId}\n`);
 }
 
 async function waitForJob(
@@ -346,6 +349,8 @@ async function waitForJob(
 ): Promise<number> {
   const interval = deps.releasePollMs ?? 1000;
   let last = '';
+  // shortcut: --wait follows the job until it is terminal with no deadline of its own; add one
+  // if a stuck server job becomes possible.
   for (;;) {
     const job = await getJob(connection, jobId);
     if (isTerminal(job.state)) {
@@ -369,9 +374,15 @@ async function afterSubmit(
   io: CliIo,
   deps: CliDeps,
 ): Promise<number> {
-  const jobId = reportAccepted(io, reply, opts);
-  if (opts.wait !== true) return 0;
-  return await waitForJob(connection, jobId, opts, io, deps);
+  const jobId = acceptedJobId(reply);
+  // One JSON document per command: a waiting command reports only the final job.
+  if (opts.wait === true) {
+    if (opts.json !== true) reportAccepted(io, jobId);
+    return await waitForJob(connection, jobId, opts, io, deps);
+  }
+  if (opts.json === true) printJson(io, reply);
+  else reportAccepted(io, jobId);
+  return 0;
 }
 
 async function publish(
@@ -382,8 +393,8 @@ async function publish(
   deps: CliDeps,
 ): Promise<number> {
   const plan = await getPlan(connection, planId);
-  if (opts.json === true) printJson(io, plan);
-  else io.stdout(renderPlan(plan) + '\n');
+  // The plan is the human review affordance; --json prints only the server response.
+  if (opts.json !== true) io.stdout(renderPlan(plan) + '\n');
 
   if (opts.approve !== undefined) {
     if (opts.approve !== plan.digest) {
@@ -440,6 +451,7 @@ async function runRelease(
       case 'publish':
         return await publish(connection, id, opts, io, deps);
       case 'status': {
+        if (opts.wait === true) return await waitForJob(connection, id, opts, io, deps);
         const job = await getJob(connection, id);
         if (opts.json === true) printJson(io, job);
         else io.stdout(renderJob(job) + '\n');
@@ -518,13 +530,20 @@ export function addReleaseCommands(
       .description('publish one reviewed release plan')
       .argument('<planId>', 'plan id')
       .addOption(
-        new Option('--approve <digest>', 'reviewed plan digest, required when not interactive'),
+        new Option(
+          '--approve <digest>',
+          'reviewed plan digest; approves without asking (required when not interactive)',
+        ),
       )
       .option('--wait', 'wait for the job and report its result'),
   ).action(action('publish'));
 
   connectionOptions(
-    releases.command('status').description('print one release job').argument('<jobId>', 'job id'),
+    releases
+      .command('status')
+      .description('print one release job')
+      .argument('<jobId>', 'job id')
+      .option('--wait', 'wait for the job and report its final result'),
   ).action(action('status'));
 
   connectionOptions(

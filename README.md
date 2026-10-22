@@ -284,14 +284,14 @@ FORGE_DESK_AUTH=operator:secret node dist/cli/index.js releases prepare acme-app
 | `prepare <repositoryId> [--wait]`                | Start or reuse preparation of one configured release repository            |
 | `plan <planId> [--json]`                         | Print one immutable release plan, complete notes included                  |
 | `publish <planId> [--approve <digest>] [--wait]` | Show the plan, ask for approval, then publish it                           |
-| `status <jobId> [--json]`                        | Print one release job                                                      |
+| `status <jobId> [--wait] [--json]`               | Print one release job, or follow it to its final result                    |
 | `reconcile <jobId> [--wait]`                     | Start or reuse a read-only reconciliation job for an uncertain publication |
 
-`publish` prints the whole plan and asks `[y/N]`; only an explicit `y` or `yes` submits, so end of input, Ctrl-C or any other answer cancels before submission. Without a terminal it refuses to run unless `--approve <digest>` carries the reviewed plan digest, and a digest that is not the plan's own is refused.
+`publish` prints the whole plan and asks `[y/N]`; only an explicit `y` or `yes` submits, so end of input, Ctrl-C or any other answer cancels before submission. Without a terminal it refuses to run unless `--approve <digest>` carries the reviewed plan digest, which it compares with the server's plan before submitting; `--approve` also approves without asking when a terminal is attached.
 
-Credentials come from `--auth-env <name>` or a private file (`--auth-file <path>`, mode `0600`), never from a command-line password or the forge token, and travel only as an `Authorization` header with no session cookie. `--wait` follows the job to its final result; `--json` prints the server's JSON.
+Credentials come from `--auth-env <name>` or a private file (`--auth-file <path>`, mode `0600`), never from a command-line password or the forge token, and travel only as an `Authorization` header with no session cookie. `--wait` follows the job to its final result; `--json` prints exactly one JSON document per command, the final job when waiting.
 
-Release exit codes: `0` complete, accepted or no-op, `2` invalid invocation or cancellation before submission, `3` blocked without remote mutation, `4` mutation attempted but exact completion unproved, `5` internal or durable-artifact failure. Planning commands keep their own codes.
+Release exit codes: `0` complete, accepted or no-op, `2` invalid invocation or cancellation before submission, `3` blocked without remote mutation, `4` mutation attempted but exact completion unproved, `5` internal or durable-artifact failure. `status` reports its job's outcome once that job is terminal and exits `0` for a queued or running job. Planning commands keep their own codes.
 
 ## Development
 
