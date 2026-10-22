@@ -8,6 +8,7 @@
  */
 
 import { readFileSync, statSync } from 'node:fs';
+import { isIP } from 'node:net';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Command, CommanderError, Option } from 'commander';
@@ -63,7 +64,10 @@ function errorMessage(err: unknown): string {
 /** Loopback is the one place plain HTTP is allowed: an isolated local test deployment. */
 function isLoopback(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, '');
-  return host === 'localhost' || host === '::1' || /^127\./.test(host);
+  if (host === 'localhost' || host === '::1') return true;
+  // A name such as `127.attacker.example` is an ordinary DNS host, so only a numeric address counts.
+  if (isIP(host) !== 4) return false;
+  return Number(host.split('.')[0]) === 127;
 }
 
 function connectionFor(opts: ReleaseOptions, io: CliIo): Connection {

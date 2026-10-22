@@ -369,24 +369,27 @@ describe('release authentication', () => {
   });
 
   it('sends no credential to a non-loopback plain-HTTP server', async () => {
-    const result = await run(
-      [
-        'releases',
-        'publish',
-        PLAN.planId,
-        '--server',
-        'http://release.example.test',
-        '--auth-env',
-        AUTH_ENV,
-        '--approve',
-        PLAN.digest,
-      ],
-      { env: { [AUTH_ENV]: MATERIAL } },
-    );
-    expect(result.code).toBe(RELEASE_EXIT.cancelled);
-    expect(result.stderr).toContain('--server must use https');
-    expect(result.stderr).not.toContain(MATERIAL);
-    expect(result.stdout).toBe('');
+    // Both would fail DNS, so an exit 2 rather than a transport error proves the gate fired first.
+    for (const server of ['http://release.example.test', 'http://127.attacker.example']) {
+      const result = await run(
+        [
+          'releases',
+          'publish',
+          PLAN.planId,
+          '--server',
+          server,
+          '--auth-env',
+          AUTH_ENV,
+          '--approve',
+          PLAN.digest,
+        ],
+        { env: { [AUTH_ENV]: MATERIAL } },
+      );
+      expect(result.code).toBe(RELEASE_EXIT.cancelled);
+      expect(result.stderr).toContain('--server must use https');
+      expect(result.stderr).not.toContain(MATERIAL);
+      expect(result.stdout).toBe('');
+    }
   });
 
   it('admits https and loopback http', async () => {
