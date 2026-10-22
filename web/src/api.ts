@@ -1,4 +1,5 @@
 import type { ProviderKind, Snapshot } from '../../src/core/types.js';
+import type { ReleaseJob, ReleasePlan, ReleasePlanWarning } from '../../src/core/release.js';
 
 /** Shape of one entry of `GET /api/views` (ARCHITECTURE section 13/14). */
 export interface ViewSummary {
@@ -26,7 +27,7 @@ const API = 'api';
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, { ...init, headers: { accept: 'application/json' } });
+    res = await fetch(path, { ...init, headers: { accept: 'application/json', ...init?.headers } });
   } catch {
     throw new ApiError('Network error: could not reach the Forge Desk server.', 0);
   }
@@ -83,8 +84,44 @@ export function refreshSnapshot(viewId: string): Promise<Snapshot> {
 }
 
 /** The signed-in user; fails with 404 when the server has no login. */
-export function fetchSession(): Promise<{ username: string }> {
-  return request<{ username: string }>(`${API}/session`);
+export function fetchSession(): Promise<{ username: string; csrfToken: string | null }> {
+  return request(`${API}/session`);
+}
+
+export interface ReleaseRepository {
+  id: string;
+  repo: string;
+  source: string;
+  forge: string;
+  capability: 'available' | 'blocked';
+  blockers: ReleasePlanWarning[];
+}
+
+export function fetchReleaseRepositories(): Promise<ReleaseRepository[]> {
+  return request(`${API}/releases/repositories`);
+}
+
+export async function prepareRelease(repositoryId: string): Promise<{ jobId: string }> {
+  const { csrfToken } = await fetchSession();
+  if (csrfToken === null) throw new ApiError('Sign in again before preparing a release.', 403);
+  return request(`${API}/releases/repositories/${encodeURIComponent(repositoryId)}/prepare`, {
+    method: 'POST',
+    headers: { 'x-csrf-token': csrfToken },
+  });
+}
+
+export function fetchReleaseJobs(
+  repositoryId: string,
+): Promise<{ items: ReleaseJob[]; total: number }> {
+  return request(`${API}/releases/repositories/${encodeURIComponent(repositoryId)}/jobs?limit=25`);
+}
+
+export function fetchReleaseJob(jobId: string): Promise<ReleaseJob> {
+  return request(`${API}/releases/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function fetchReleasePlan(planId: string): Promise<ReleasePlan> {
+  return request(`${API}/releases/plans/${encodeURIComponent(planId)}`);
 }
 
 export function exportUrl(viewId: string, format: ExportFormat): string {

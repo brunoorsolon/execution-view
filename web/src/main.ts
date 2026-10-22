@@ -4,6 +4,8 @@ import './styles.css';
 import { errorMessage, fetchSettings, fetchSnapshot, fetchViews, refreshSnapshot } from './api.js';
 import { h } from './dom.js';
 import { parseHash, serializeHash, type Route, type Tab } from './route.js';
+import { parseReleaseHash } from './release-route.js';
+import { createReleasesView } from './views/releases.js';
 import {
   effectiveViewId,
   getIndex,
@@ -114,7 +116,31 @@ const panel = createSidePanel(ctx);
 const main = h('main', { class: 'main' }, graph.el, order.el, problems.el, panel.el);
 const app = document.getElementById('app');
 if (!app) throw new Error('missing #app');
-app.append(header.el, summary.el, states.el, main);
+const planning = h('div', { class: 'planning' }, header.el, summary.el, states.el, main);
+const releases = createReleasesView();
+const planningLink = h('a', { class: 'tab', href: serializeHash(currentRoute()) }, 'Planning');
+const releasesLink = h('a', { class: 'tab', href: '#/releases' }, 'Releases');
+const areas = h(
+  'nav',
+  { class: 'area-nav', 'aria-label': 'Forge Desk areas' },
+  planningLink,
+  releasesLink,
+);
+app.append(areas, planning, releases.el);
+
+function syncArea(): void {
+  const route = parseReleaseHash(location.hash);
+  planning.hidden = route !== null;
+  planningLink.setAttribute('aria-current', route === null ? 'page' : 'false');
+  releasesLink.setAttribute('aria-current', route === null ? 'false' : 'page');
+  if (route !== null) {
+    document.title = 'Releases · Forge Desk';
+    void releases.open(route);
+  } else {
+    releases.close();
+    document.title = titleFor(store.get());
+  }
+}
 
 const views: View[] = [header, summary, states, graph, order, problems, panel];
 
@@ -142,7 +168,8 @@ store.subscribe((state) => {
   layoutMain(state);
   for (const v of views) v.update(state, prevState);
   prevState = state;
-  document.title = titleFor(state);
+  if (parseReleaseHash(location.hash) === null) document.title = titleFor(state);
+  planningLink.href = serializeHash(currentRoute());
   // A snapshot for another view is needed when the effective view changed.
   const viewId = effectiveViewId(state);
   if (viewId !== null && viewId !== state.loadedViewId) {
@@ -150,7 +177,7 @@ store.subscribe((state) => {
   }
   // Keep the URL in step with the route: the canonical view id, and the filter
   // a reveal changed in the store.
-  if (viewId !== null) {
+  if (viewId !== null && parseReleaseHash(location.hash) === null) {
     const route = { ...state.route, viewId };
     if (location.hash !== serializeHash(route)) navigate(route, true);
   }
@@ -162,6 +189,8 @@ function titleFor(state: ReturnType<Store['get']>): string {
 }
 
 window.addEventListener('hashchange', () => {
+  syncArea();
+  if (parseReleaseHash(location.hash) !== null) return;
   const route = parseHash(location.hash);
   const current = store.get().route;
   // Skip the echo of our own navigate(); this only handles back/forward and manual edits.
@@ -176,6 +205,7 @@ window.addEventListener('hashchange', () => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (parseReleaseHash(location.hash) !== null) return;
   const target = e.target as HTMLElement | null;
   const typing = target instanceof HTMLInputElement || target instanceof HTMLSelectElement;
   if (e.key === 'Escape') {
@@ -197,6 +227,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 render();
+syncArea();
 
 fetchViews().then(
   (list) => store.dispatch({ type: 'views-loaded', views: list }),
