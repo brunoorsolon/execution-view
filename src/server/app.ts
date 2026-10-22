@@ -13,7 +13,7 @@ import { UnknownViewError, type PlanService } from '../service/planService.js';
 import { packageVersion } from '../version.js';
 import { SESSION_COOKIE, checkBasicAuth, credentialsMatch, sessionToken } from './auth.js';
 import { checkReleaseAccess } from './releaseAccess.js';
-import { registerReleaseRoutes, type ReleaseMount } from './releaseRoutes.js';
+import { registerReleaseRoutes, releaseRouteError, type ReleaseMount } from './releaseRoutes.js';
 import { registerWebhooks, WEBHOOK_PATHS } from './webhooks.js';
 
 export interface BuildAppOptions {
@@ -315,7 +315,11 @@ export function buildApp(
           // Relative, so it also works below a sub-path: climb to the app root first.
           return reply.redirect(`${'../'.repeat(pathname.split('/').length - 2)}login`);
         }
-        return reply.code(401).send({ error: 'Unauthorized' });
+        return pathname.startsWith('/api/releases')
+          ? reply
+              .code(401)
+              .send({ error: 'release access requires authentication', code: 'not-authenticated' })
+          : reply.code(401).send({ error: 'Unauthorized' });
       }
       // Release routes carry a stricter gate than the planning API. It runs for every release
       // path, so a route added later inherits it and an unknown one is rejected before 404.
@@ -381,6 +385,11 @@ export function buildApp(
 
   // --- errors ---
   app.setErrorHandler((err: Error & { statusCode?: number }, request, reply) => {
+    if (request.url.startsWith('/api/releases')) {
+      const releaseError = releaseRouteError(err);
+      if (releaseError !== null) return reply.code(releaseError.status).send(releaseError.body);
+      return reply.code(500).send({ code: 'internal-error', error: 'release request failed' });
+    }
     if (err instanceof UnknownViewError) {
       return reply.code(404).send({ error: err.message });
     }

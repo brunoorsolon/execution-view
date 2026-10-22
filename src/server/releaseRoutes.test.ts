@@ -7,7 +7,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../config/load.js';
 import type { ReleaseRuntime } from '../config/releaseRuntime.js';
 import type { AppConfig, ResolvedReleaseRepository } from '../config/schema.js';
+import { contentHash } from '../core/hash.js';
+import {
+  RELEASE_CONTRACT_VERSION,
+  RELEASE_STATE_SCHEMA_VERSION,
+  type ReleaseJob,
+  type ReleasePlanPayload,
+} from '../core/release.js';
+import { createReleaseNotes, releasePlanDigest } from '../core/releaseDigest.js';
 import type { ReleaseIdentityCheck } from '../release/identity.js';
+import { ReleasePreparationError, type ReleasePreparation } from '../release/preparation.js';
+import { repositoryOperationKey } from '../service/releaseOwnership.js';
+import { ReleaseStateStore } from '../service/releaseState.js';
 import { PlanService } from '../service/planService.js';
 import { buildApp } from './app.js';
 
@@ -101,6 +112,7 @@ interface SetupOptions {
   verify?: (opts: { repositoryId: string }) => Promise<ReleaseIdentityCheck>;
   mount?: boolean;
   webhookSecret?: string;
+  api?: boolean;
 }
 
 function setup(opts: SetupOptions = {}) {
@@ -111,6 +123,19 @@ function setup(opts: SetupOptions = {}) {
     opts.verify ??
       (({ repositoryId }: { repositoryId: string }) => Promise.resolve(identity(repositoryId))),
   );
+  const stateDir = mkdtempSync(path.join(tmpdir(), 'ev-release-state-'));
+  cleanups.push(() => rmSync(stateDir, { recursive: true, force: true }));
+  const store = new ReleaseStateStore({ stateDir });
+  const prepare = vi.fn(async () => ({
+    jobId: 'prepare-test',
+    kind: 'prepare' as const,
+    planId: null,
+    planDigest: null,
+    state: 'queued' as const,
+    step: null,
+    remote: { tag: 'unknown' as const, release: 'unknown' as const },
+    errorCode: null,
+  }));
   const webDir = mkdtempSync(path.join(tmpdir(), 'ev-release-web-'));
   cleanups.push(() => rmSync(webDir, { recursive: true, force: true }));
   const app: FastifyInstance = buildApp(cfg, new PlanService(cfg), {
@@ -121,12 +146,68 @@ function setup(opts: SetupOptions = {}) {
           releases: {
             runtime: loaded,
             gate: { accepting: opts.accepting ?? true },
+            ...(opts.api
+              ? { store, preparation: { prepare } as unknown as ReleasePreparation }
+              : {}),
             verifyIdentity: verify,
           },
         }),
   });
   cleanups.push(() => app.close());
-  return { app, cfg, verify };
+  return { app, cfg, verify, store, prepare };
+}
+
+function planPayload(repositoryId = 'app'): ReleasePlanPayload {
+  return {
+    contractVersion: RELEASE_CONTRACT_VERSION,
+    stateSchemaVersion: RELEASE_STATE_SCHEMA_VERSION,
+    repository: {
+      repositoryId,
+      forge: 'gitea',
+      baseUrl: 'https://gitea.example.com',
+      owner: 'example',
+      repo: 'app',
+      forgeRepositoryId: 42,
+      defaultBranch: 'main',
+    },
+    account: {
+      forge: 'gitea',
+      baseUrl: 'https://gitea.example.com',
+      login: 'release-bot',
+      forgeUserId: 7,
+    },
+    tagger: { name: 'Release Bot', email: 'releases@example.com' },
+    candidate: { commit: 'a'.repeat(40), branch: 'main' },
+    baseline: { tag: null, commit: null, stableTags: [] },
+    ci: {
+      workflowPath: '.gitea/workflows/validate.yaml',
+      runId: 123,
+      headCommit: 'a'.repeat(40),
+      branch: 'main',
+      event: 'push',
+      status: 'completed',
+      conclusion: 'success',
+    },
+    notes: createReleaseNotes('Release v0.1.0\n', 'file'),
+    title: 'v0.1.0',
+    tagName: 'v0.1.0',
+    actions: [
+      { kind: 'create-tag', tag: 'v0.1.0' },
+      { kind: 'create-release', tag: 'v0.1.0' },
+    ],
+    warnings: [],
+    tag: { state: 'absent', name: 'v0.1.0', commit: null, objectId: null, tagger: null },
+    release: {
+      state: 'absent',
+      tag: null,
+      title: null,
+      notesDigest: null,
+      draft: null,
+      prerelease: null,
+      author: null,
+      assets: null,
+    },
+  };
 }
 
 function basic(): string {
@@ -162,8 +243,16 @@ describe('release routes exist only for an enabled, owned runtime', () => {
       { authorization: basic() },
       { authorization: basic(), host: PUBLIC_HOST },
     ]) {
-      const res = await app.inject({ url: '/api/releases/repositories', headers });
-      expect(res.statusCode, JSON.stringify(headers)).toBe(404);
+      for (const request of [
+        { url: '/api/releases/repositories' },
+        { method: 'POST' as const, url: '/api/releases/repositories/app/prepare' },
+        { url: '/api/releases/repositories/app/jobs' },
+        { url: '/api/releases/plans/plan-1' },
+        { url: '/api/releases/jobs/job-1' },
+      ]) {
+        const res = await app.inject({ ...request, headers });
+        expect(res.statusCode, JSON.stringify({ headers, request })).toBe(404);
+      }
     }
     expect(verify).not.toHaveBeenCalled();
   });
@@ -461,6 +550,208 @@ describe('release repository capability', () => {
     expect(res.json()[0].capability).toBe('blocked');
     expect(res.json()[0].blockers[0].code).toBe('release-unavailable');
     expect(verify).not.toHaveBeenCalled();
+  });
+
+  it('starts preparation only for an allowlisted id and exposes bounded read routes', async () => {
+    const { app, prepare, store } = setup({ api: true });
+    const headers = { authorization: basic(), host: PUBLIC_HOST };
+    const accepted = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+    });
+    expect(accepted.statusCode).toBe(202);
+    expect(accepted.json()).toEqual({
+      jobId: 'prepare-test',
+      statusUrl: '/api/releases/jobs/prepare-test',
+    });
+    expect(accepted.headers['cache-control']).toBe('no-store');
+    expect(prepare).toHaveBeenCalledWith('app');
+
+    const unknown = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/other/prepare',
+      headers,
+    });
+    expect(unknown.statusCode).toBe(404);
+    expect(prepare).toHaveBeenCalledTimes(1);
+
+    const history = await app.inject({
+      url: '/api/releases/repositories/app/jobs?limit=2',
+      headers,
+    });
+    expect(history.statusCode).toBe(200);
+    expect(history.json()).toEqual({ items: [], limit: 2, offset: 0, total: 0 });
+
+    const invalidPage = await app.inject({
+      url: '/api/releases/repositories/app/jobs?limit=1000',
+      headers,
+    });
+    expect(invalidPage.statusCode).toBe(400);
+    expect(invalidPage.json().code).toBe('invalid-request');
+
+    const invalidBody = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+      payload: {},
+    });
+    expect(invalidBody.statusCode).toBe(400);
+    expect(invalidBody.json().code).toBe('invalid-request');
+
+    const unsupportedType = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers: { ...headers, 'content-type': 'text/plain' },
+      payload: 'unexpected',
+    });
+    expect(unsupportedType.statusCode).toBe(400);
+    expect(unsupportedType.json().code).toBe('invalid-request');
+    expect(prepare).toHaveBeenCalledTimes(1);
+
+    const planBody = planPayload();
+    const plan = {
+      planId: 'plan-test',
+      digest: releasePlanDigest(planBody),
+      approvalDeadline: '2026-10-22T12:00:00.000Z',
+      payload: planBody,
+    };
+    store.writePlan(plan);
+    const key = {
+      forge: 'gitea' as const,
+      baseUrl: 'https://gitea.example.com',
+      owner: 'example',
+      repo: 'app',
+    };
+    const prefix = `prepare-${contentHash(repositoryOperationKey(key)).slice(0, 32)}-`;
+    const makeJob = (suffix: string): ReleaseJob => ({
+      jobId: `${prefix}${suffix}`,
+      kind: 'prepare',
+      planId: plan.planId,
+      planDigest: plan.digest,
+      state: 'complete',
+      step: 'finished',
+      remote: { tag: 'absent', release: 'absent' },
+      errorCode: null,
+    });
+    const newest = makeJob('z-job');
+    const older = makeJob('a-job');
+    store.writeJob(newest);
+    store.writeJob(older);
+
+    const storedPlan = await app.inject({ url: '/api/releases/plans/plan-test', headers });
+    expect(storedPlan.statusCode).toBe(200);
+    expect(storedPlan.json()).toEqual(plan);
+    expect(storedPlan.json().payload.notes.text).toBe('Release v0.1.0\n');
+
+    const storedJob = await app.inject({ url: `/api/releases/jobs/${newest.jobId}`, headers });
+    expect(storedJob.statusCode).toBe(200);
+    expect(storedJob.json()).toEqual(newest);
+
+    const otherBody = planPayload('other');
+    const otherPlan = {
+      planId: 'plan-other',
+      digest: releasePlanDigest(otherBody),
+      approvalDeadline: '2026-10-22T12:00:00.000Z',
+      payload: otherBody,
+    };
+    store.writePlan(otherPlan);
+    store.writeJob({
+      jobId: 'foreign-job',
+      kind: 'publish',
+      planId: otherPlan.planId,
+      planDigest: otherPlan.digest,
+      state: 'queued',
+      step: null,
+      remote: { tag: 'unknown', release: 'unknown' },
+      errorCode: null,
+    });
+    rmSync(path.join(store.stateDir, 'plans', 'plan-other.json'));
+
+    const page = await app.inject({
+      url: '/api/releases/repositories/app/jobs?limit=1&offset=1',
+      headers,
+    });
+    expect(page.statusCode).toBe(200);
+    expect(page.json()).toEqual({ items: [older], limit: 1, offset: 1, total: 2 });
+
+    const hiddenPlan = await app.inject({ url: '/api/releases/plans/plan-other', headers });
+    expect(hiddenPlan.statusCode).toBe(404);
+    expect(hiddenPlan.json().code).toBe('not-found');
+
+    for (const url of [
+      '/api/releases/plans/plan-test',
+      `/api/releases/jobs/${newest.jobId}`,
+      '/api/releases/repositories/app/jobs',
+    ]) {
+      const unauthenticated = await app.inject({ url });
+      expect(unauthenticated.statusCode).toBe(401);
+      expect(unauthenticated.json().code).toBe('not-authenticated');
+      expect(unauthenticated.headers['cache-control']).toBe('no-store');
+    }
+
+    const missingPlan = await app.inject({ url: '/api/releases/plans/missing', headers });
+    expect(missingPlan.statusCode).toBe(404);
+    expect(missingPlan.json().code).toBe('not-found');
+    expect(missingPlan.headers['cache-control']).toBe('no-store');
+  });
+
+  it('redacts private state paths from persisted job and history diagnostics', async () => {
+    const { app, store } = setup({ api: true });
+    const key = {
+      forge: 'gitea' as const,
+      baseUrl: 'https://gitea.example.com',
+      owner: 'example',
+      repo: 'app',
+    };
+    const jobId = `prepare-${contentHash(repositoryOperationKey(key)).slice(0, 32)}-unsafe`;
+    store.writeJob({
+      jobId,
+      kind: 'prepare',
+      planId: null,
+      planDigest: null,
+      state: 'blocked',
+      step: 'finished',
+      remote: { tag: 'unknown', release: 'unknown' },
+      errorCode: 'repository-ineligible',
+      blocker: {
+        code: 'git-unsafe-cache',
+        message: 'release path "/var/lib/forge-desk/checkout/app.git" is not private',
+      },
+    });
+    const headers = { authorization: basic(), host: PUBLIC_HOST };
+    const job = await app.inject({ url: `/api/releases/jobs/${jobId}`, headers });
+    const history = await app.inject({ url: '/api/releases/repositories/app/jobs', headers });
+    for (const response of [job, history]) {
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toContain('/var/lib/forge-desk');
+      expect(response.body).toContain('***');
+    }
+  });
+
+  it('returns stable conflicts and unavailable errors for rejected preparation', async () => {
+    const { app, prepare } = setup({ api: true });
+    const headers = { authorization: basic(), host: PUBLIC_HOST };
+    prepare.mockRejectedValueOnce(
+      new ReleasePreparationError('repository-ineligible', 'repository is busy or ineligible'),
+    );
+    const ineligible = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+    });
+    expect(ineligible.statusCode).toBe(409);
+    expect(ineligible.json().code).toBe('repository-ineligible');
+
+    const unavailable = setup({ api: true, accepting: false });
+    const rejected = await unavailable.app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+    });
+    expect(rejected.statusCode).toBe(503);
+    expect(rejected.json().code).toBe('execution-unavailable');
+    expect(unavailable.prepare).not.toHaveBeenCalled();
   });
 
   it('scrubs a blocker that echoes a token or a private path', async () => {

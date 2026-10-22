@@ -10,9 +10,18 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { ReleaseRuntime } from '../config/releaseRuntime.js';
+import { contentHash } from '../core/hash.js';
+import {
+  RELEASE_ERROR_HTTP_STATUS,
+  type ReleaseErrorCode,
+  type ReleaseJob,
+} from '../core/release.js';
 import type { AppConfig } from '../config/schema.js';
 import type { ReleaseBlocker } from '../release/forgeClient.js';
 import { verifyReleaseIdentity, type ReleaseIdentityCheck } from '../release/identity.js';
+import { ReleasePreparation, ReleasePreparationError } from '../release/preparation.js';
+import { ReleaseStateError, ReleaseStateStore } from '../service/releaseState.js';
+import { repositoryOperationKey, type ReleaseRepositoryKey } from '../service/releaseOwnership.js';
 import { sanitizeUrl } from '../providers/http.js';
 
 /** The admission state release execution needs; `ReleaseOwnership` satisfies it. */
@@ -23,6 +32,8 @@ export interface ReleaseExecutionGate {
 export interface ReleaseMount {
   runtime: ReleaseRuntime;
   gate: ReleaseExecutionGate;
+  preparation?: ReleasePreparation;
+  store?: ReleaseStateStore;
   /** Identity check for repository capability; overridable in tests. */
   verifyIdentity?: (options: {
     config: AppConfig;
@@ -63,6 +74,12 @@ function scrubber(runtime: ReleaseRuntime): (text: string) => string {
     for (const value of privateValues) out = out.split(value).join('***');
     return out;
   };
+}
+
+function sanitizeJob(job: ReleaseJob, scrub: (text: string) => string): ReleaseJob {
+  return job.blocker === undefined
+    ? job
+    : { ...job, blocker: { ...job.blocker, message: scrub(job.blocker.message) } };
 }
 
 /**
@@ -110,4 +127,175 @@ export function registerReleaseRoutes(
       }),
     );
   });
+
+  const store = mount.store;
+  const preparation = mount.preparation;
+  if (store === undefined || preparation === undefined) return;
+
+  const repository = (id: string) => {
+    const entry = runtime.repositories.find((item) => item.config.id === id);
+    if (entry === undefined) throw new RouteError('not-found', 'unknown release repository');
+    const source = config.sources.find((item) => item.id === entry.config.source);
+    if (source?.kind !== 'gitea' || source.baseUrl === undefined) {
+      throw new RouteError('internal-error', 'release repository configuration is unavailable');
+    }
+    const key: ReleaseRepositoryKey = {
+      forge: 'gitea',
+      baseUrl: source.baseUrl,
+      owner: entry.config.repo.owner,
+      repo: entry.config.repo.repo,
+    };
+    return { entry, key };
+  };
+  const repoJobs = (id: string): ReleaseJob[] => {
+    const { key } = repository(id);
+    const jobPrefix = `prepare-${contentHash(repositoryOperationKey(key)).slice(0, 32)}-`;
+    const jobs: ReleaseJob[] = [];
+    for (const jobId of store.listJobIds()) {
+      const belongsById = jobId.startsWith(jobPrefix);
+      try {
+        const job = store.readJob(jobId);
+        if (
+          belongsById ||
+          (job.planId !== null && store.readPlan(job.planId).payload.repository.repositoryId === id)
+        ) {
+          jobs.push(job);
+        }
+      } catch (error) {
+        if (!belongsById && error instanceof ReleaseStateError && error.code === 'not-found') {
+          continue;
+        }
+        throw error;
+      }
+    }
+    return jobs;
+  };
+
+  app.post<{ Params: { id: string } }>(
+    '/api/releases/repositories/:id/prepare',
+    async (request, reply) => {
+      if (request.body !== undefined && request.body !== null && request.body !== '') {
+        throw new RouteError('invalid-request', 'preparation does not accept a request body');
+      }
+      if (!gate.accepting) {
+        throw new RouteError('execution-unavailable', 'release execution is unavailable');
+      }
+      repository(request.params.id);
+      const job = await preparation.prepare(request.params.id);
+      return reply.code(202).send({
+        jobId: job.jobId,
+        statusUrl: `/api/releases/jobs/${encodeURIComponent(job.jobId)}`,
+      });
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { limit?: string; offset?: string } }>(
+    '/api/releases/repositories/:id/jobs',
+    async (request) => {
+      const { entry } = repository(request.params.id);
+      const { limit, offset } = pagination(request.query.limit, request.query.offset);
+      const jobs = repoJobs(entry.config.id).sort((a, b) => b.jobId.localeCompare(a.jobId));
+      return {
+        items: jobs.slice(offset, offset + limit).map((job) => sanitizeJob(job, scrub)),
+        limit,
+        offset,
+        total: jobs.length,
+      };
+    },
+  );
+
+  app.get<{ Params: { planId: string } }>('/api/releases/plans/:planId', async (request) => {
+    const plan = store.readPlan(request.params.planId);
+    repository(plan.payload.repository.repositoryId);
+    return plan;
+  });
+
+  app.get<{ Params: { jobId: string } }>('/api/releases/jobs/:jobId', async (request) => {
+    const job = store.readJob(request.params.jobId);
+    if (job.planId !== null) {
+      const plan = store.readPlan(job.planId);
+      repository(plan.payload.repository.repositoryId);
+    } else if (
+      !runtime.repositories.some(({ config: item }) => {
+        const source = config.sources.find((candidate) => candidate.id === item.source);
+        if (source?.kind !== 'gitea' || source.baseUrl === undefined) return false;
+        const key = {
+          forge: 'gitea' as const,
+          baseUrl: source.baseUrl,
+          owner: item.repo.owner,
+          repo: item.repo.repo,
+        };
+        return job.jobId.startsWith(
+          `prepare-${contentHash(repositoryOperationKey(key)).slice(0, 32)}-`,
+        );
+      })
+    ) {
+      throw new RouteError('not-found', 'unknown release job');
+    }
+    return sanitizeJob(job, scrub);
+  });
+}
+
+class RouteError extends Error {
+  constructor(
+    readonly code: ReleaseErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function pagination(limitText?: string, offsetText?: string): { limit: number; offset: number } {
+  const limit = limitText === undefined ? 25 : Number(limitText);
+  const offset = offsetText === undefined ? 0 : Number(offsetText);
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > 100 ||
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    offset > 100_000
+  ) {
+    throw new RouteError('invalid-request', 'limit must be 1–100 and offset must be 0–100000');
+  }
+  return { limit, offset };
+}
+
+export function releaseRouteError(
+  error: unknown,
+): { status: number; body: { code: ReleaseErrorCode; error: string } } | null {
+  const statusCode = (error as { statusCode?: unknown } | null)?.statusCode;
+  if (statusCode === 400 || statusCode === 413 || statusCode === 415) {
+    const code: ReleaseErrorCode = statusCode === 413 ? 'evidence-too-large' : 'invalid-request';
+    return {
+      status: 400,
+      body: {
+        code,
+        error:
+          code === 'invalid-request'
+            ? 'malformed release request'
+            : 'release request exceeds the size limit',
+      },
+    };
+  }
+  if (statusCode === 404)
+    return { status: 404, body: { code: 'not-found', error: 'unknown release resource' } };
+  if (error instanceof RouteError || error instanceof ReleasePreparationError) {
+    return {
+      status: RELEASE_ERROR_HTTP_STATUS[error.code],
+      body: { code: error.code, error: error.message },
+    };
+  }
+  if (error instanceof ReleaseStateError) {
+    const code: ReleaseErrorCode =
+      error.code === 'not-found' || error.code === 'invalid-id' ? 'not-found' : 'internal-error';
+    return {
+      status: RELEASE_ERROR_HTTP_STATUS[code],
+      body: {
+        code,
+        error: code === 'not-found' ? 'unknown release resource' : 'release state is unavailable',
+      },
+    };
+  }
+  return null;
 }
