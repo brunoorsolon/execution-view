@@ -41,7 +41,7 @@ describe('release caller boundary', () => {
   });
 
   it('reads repositories, bounded history, job and plan without issuing a write', async () => {
-    const fetch = vi.fn().mockResolvedValue(Response.json({}));
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(Response.json({})));
     vi.stubGlobal('fetch', fetch);
     await fetchReleaseRepositories();
     await fetchReleaseJobs('repo/1');
