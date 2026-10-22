@@ -14,10 +14,13 @@ export type ExportFormat = 'json' | 'md' | 'mmd' | 'dot';
 
 export class ApiError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  /** Stable release error code from the response body, when the server sent one. */
+  readonly code: string | undefined;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -37,16 +40,23 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
   }
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`.trim();
+    let code: string | undefined;
     try {
       const body: unknown = await res.json();
-      if (body !== null && typeof body === 'object' && 'error' in body) {
-        const err = (body as { error: unknown }).error;
-        if (typeof err === 'string' && err !== '') message = err;
+      if (body !== null && typeof body === 'object') {
+        if ('error' in body) {
+          const err = (body as { error: unknown }).error;
+          if (typeof err === 'string' && err !== '') message = err;
+        }
+        if ('code' in body) {
+          const value = (body as { code: unknown }).code;
+          if (typeof value === 'string') code = value;
+        }
       }
     } catch {
       // not JSON: keep the status line
     }
-    throw new ApiError(message, res.status);
+    throw new ApiError(message, res.status, code);
   }
   return res;
 }

@@ -92,6 +92,24 @@ describe('approval and recovery boundary', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the stable error code of a refused approval', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ username: 'operator', csrfToken: 'session-proof' }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { code: 'attempt-unresolved', error: 'a prior publication needs inspection' },
+          { status: 409 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetch);
+    const error: unknown = await publishRelease('plan-1', 'a'.repeat(64)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(409);
+    expect((error as ApiError).code).toBe('attempt-unresolved');
+    expect((error as ApiError).message).toBe('a prior publication needs inspection');
+  });
+
   it('requests one read-only reconciliation and reads receipts as text', async () => {
     const fetch = vi
       .fn()

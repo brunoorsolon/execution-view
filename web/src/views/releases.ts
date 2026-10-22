@@ -279,10 +279,12 @@ export function createReleasesView() {
   let generation = 0;
   let publishing = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let expiryTimer: ReturnType<typeof setTimeout> | undefined;
 
   function close() {
     generation++;
     clearTimeout(timer);
+    clearTimeout(expiryTimer);
     currentPlan = null;
     attemptBlocker = null;
     clear(outcome);
@@ -311,6 +313,44 @@ export function createReleasesView() {
         'Publication of this plan is closed before any remote change. A fresh plan needs its own review and approval; the server never substitutes a newer candidate or regenerated notes.',
       ),
       h('div', { class: 'release-actions' }, prepareAgain('Prepare a fresh plan')),
+    );
+  }
+
+  /** A truthful refusal that is not a stale plan; fresh preparation would not clear it. */
+  function admissionNotice(message: string, code: string): HTMLElement {
+    const title =
+      code === 'attempt-unresolved'
+        ? 'An earlier publication needs attention'
+        : code === 'repository-busy'
+          ? 'Another release operation is running'
+          : 'Publication was not accepted';
+    const next =
+      code === 'attempt-unresolved'
+        ? 'Fresh preparation does not resolve an earlier uncertain attempt. Inspect and reconcile that job from the recent jobs list before approving again.'
+        : code === 'repository-busy'
+          ? 'Wait for the running operation, then reload release status before approving.'
+          : 'Resolve the repository blockers, then prepare and review a fresh plan.';
+    return h(
+      'section',
+      { class: 'release-outcome', 'aria-label': title },
+      h('h2', { tabindex: '-1' }, title),
+      h('p', null, `The server refused this approval: ${message}.`),
+      h('p', null, next),
+      h(
+        'div',
+        { class: 'release-actions' },
+        h(
+          'a',
+          {
+            class: 'btn',
+            href:
+              route.repositoryId === null
+                ? '#/releases'
+                : releaseHash({ repositoryId: route.repositoryId, jobId: null, planId: null }),
+          },
+          'Review recent jobs',
+        ),
+      ),
     );
   }
 
@@ -362,15 +402,37 @@ export function createReleasesView() {
       );
     }
     currentPlan = result;
+    renderReview(true);
+  }
+
+  /** Re-renders the reviewed plan, including its expiry state, from the stored plan. */
+  function renderReview(focus: boolean): void {
+    const reviewed = currentPlan;
+    if (reviewed === null) return;
     clear(plan);
     plan.append(
-      review(result, {
-        publish: (reviewed, publishButton) => void publish(reviewed, publishButton),
+      review(reviewed, {
+        publish: (plan, publishButton) => void publish(plan, publishButton),
         prepare: () => void start(),
         attemptBlocker: () => attemptBlocker,
       }),
     );
-    plan.querySelector<HTMLElement>('h2')?.focus();
+    if (focus) plan.querySelector<HTMLElement>('h2')?.focus();
+    // The approval deadline passes while the plan is on screen: disable Publish then, not
+    // only when the operator happens to click it.
+    clearTimeout(expiryTimer);
+    const remaining = Date.parse(reviewed.approvalDeadline) - Date.now();
+    if (!Number.isFinite(remaining)) return;
+    expiryTimer = setTimeout(
+      () => {
+        if (currentPlan !== reviewed) return;
+        renderReview(false);
+        status.textContent = `This plan expired at ${reviewed.approvalDeadline}. Prepare a fresh plan and review it.`;
+      },
+      // Plans expire within 30 minutes; the cap only keeps an unexpected far-future deadline
+      // from overflowing the timer and re-rendering in a loop.
+      Math.min(Math.max(0, remaining + 1), 2_147_483_647),
+    );
   }
 
   async function loadReceipt(
@@ -417,13 +479,17 @@ export function createReleasesView() {
     }
   }
 
-  /** Renders a terminal publication or reconciliation job without ever offering a write. */
-  function showOutcome(job: ReleaseJob, token: number): void {
+  /**
+   * Renders a terminal publication or reconciliation job without ever offering a write.
+   * `original` is the publication named by a reconciliation job: attempted effects stay on it.
+   */
+  function showOutcome(job: ReleaseJob, token: number, original?: ReleaseJob): void {
     if (token !== generation) return;
     clear(outcome);
     if (job.kind === 'prepare') return;
     const stale = job.errorCode === 'plan-stale';
     const publicationJobId = job.kind === 'publish' ? job.jobId : (job.publicationJobId ?? null);
+    const attempts = original?.attemptedEffects ?? job.attemptedEffects;
     const p = currentPlan?.payload;
     const receipt = h('pre', {
       class: 'release-receipt',
@@ -490,14 +556,12 @@ export function createReleasesView() {
           ),
           field(
             'Attempted steps',
-            (job.attemptedEffects?.length ?? 0) === 0
+            (attempts?.length ?? 0) === 0
               ? 'None recorded'
               : h(
                   'ul',
                   null,
-                  ...job.attemptedEffects!.map((effect) =>
-                    h('li', null, `${effect.kind}: ${effect.tag}`),
-                  ),
+                  ...attempts!.map((effect) => h('li', null, `${effect.kind}: ${effect.tag}`)),
                 ),
           ),
           field('Observed tag', job.remote.tag),
@@ -560,7 +624,18 @@ export function createReleasesView() {
         repositories.find((r) => r.id === route.repositoryId)?.capability !== 'available';
       if (job.planId !== null) await showPlan(job.planId, token);
       if (token !== generation) return;
-      showOutcome(job, token);
+      // A reconciliation job reports observed state; its attempted effects belong to the
+      // original publication it names, so show that history instead of "None recorded".
+      let original: ReleaseJob | undefined;
+      if (job.kind === 'reconcile' && job.publicationJobId !== undefined) {
+        try {
+          original = await fetchReleaseJob(job.publicationJobId);
+        } catch {
+          original = undefined;
+        }
+        if (token !== generation) return;
+      }
+      showOutcome(job, token, original);
       if (route.repositoryId !== null) {
         await history(route.repositoryId, token);
       }
@@ -596,11 +671,18 @@ export function createReleasesView() {
     } catch (e) {
       if (token !== generation) return;
       fail(e);
-      if (e instanceof ApiError && (e.status === 409 || e.status === 410)) {
-        clear(outcome);
+      const code = e instanceof ApiError ? e.code : undefined;
+      clear(outcome);
+      if (code === 'plan-stale' || code === 'plan-expired') {
         outcome.append(staleNotice(errorMessage(e)));
-        outcome.querySelector<HTMLElement>('h2')?.focus();
+      } else if (
+        code === 'attempt-unresolved' ||
+        code === 'repository-busy' ||
+        code === 'repository-ineligible'
+      ) {
+        outcome.append(admissionNotice(errorMessage(e), code));
       }
+      outcome.querySelector<HTMLElement>('h2')?.focus();
       button.disabled = false;
     } finally {
       publishing = false;

@@ -372,16 +372,43 @@ describe('publish action', () => {
     const calls = stubFetch(reads(plan));
     const view = createReleasesView();
     await view.open({ repositoryId: 'app', jobId: null, planId: 'plan-1' });
-    const publishButton = button(view.el, 'Publish example/app v0.1.0');
-    expect(publishButton.disabled).toBe(false);
+    expect(button(view.el, 'Publish example/app v0.1.0').disabled).toBe(false);
 
     await vi.advanceTimersByTimeAsync(2000);
-    publishButton.click();
+    // The on-screen action is disabled as the deadline passes, before any click.
+    const expiredButton = button(view.el, 'Publish example/app v0.1.0');
+    expect(expiredButton.disabled).toBe(true);
+    expect(view.el.textContent).toContain('the plan expired at');
+
+    expiredButton.click();
+    await settle();
+    expect(calls.filter((call) => call.init?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('keeps an unresolved-attempt refusal truthful instead of calling it a stale plan', async () => {
+    const plan = planFixture();
+    stubFetch((path, init) =>
+      path === 'api/releases/plans/plan-1/publish'
+        ? Response.json(
+            { code: 'attempt-unresolved', error: 'a prior publication needs inspection' },
+            { status: 409 },
+          )
+        : reads(plan)(path, init),
+    );
+    const view = createReleasesView();
+    await view.open({ repositoryId: 'app', jobId: null, planId: 'plan-1' });
+    button(view.el, 'Publish example/app v0.1.0').click();
     await settle();
 
-    expect(calls.filter((call) => call.init?.method === 'POST')).toHaveLength(0);
-    expect(publishButton.disabled).toBe(true);
-    expect(view.el.textContent).toContain('the plan expired at');
+    expect(view.el.textContent).toContain('An earlier publication needs attention');
+    expect(view.el.textContent).toContain('a prior publication needs inspection');
+    expect(view.el.textContent).not.toContain('This plan is stale');
+    expect(view.el.textContent).not.toContain('An approval-relevant fact changed');
+    const link = descendants(
+      view.el,
+      (node) => node.tagName === 'a' && node.textContent === 'Review recent jobs',
+    )[0];
+    expect(link?.getAttribute('href')).toBe('#/releases/app');
   });
 
   it('reports which fact changed and offers a fresh preparation for a stale plan', async () => {
@@ -552,6 +579,46 @@ describe('progress polling', () => {
     expect(receipt?.hidden).toBe(false);
     expect(receipt?.getAttribute('tabindex')).toBe('0');
     expect(focused).toContain(receipt);
+  });
+
+  it('shows the original attempted effects when a reconciliation job is reopened from history', async () => {
+    const plan = planFixture();
+    stubFetch((path, init) => {
+      if (path === 'api/releases/jobs/reconcile-9')
+        return Response.json({
+          ...jobFixture(),
+          jobId: 'reconcile-9',
+          kind: 'reconcile',
+          publicationJobId: 'publish-9',
+          state: 'blocked',
+          step: 'finished',
+          errorCode: 'attempt-unresolved',
+          remote: { tag: 'exact', release: 'absent' },
+          blocker: {
+            code: 'attempt-unresolved',
+            message: 'Prepare a fresh recovery plan for the original version.',
+          },
+        });
+      if (path === 'api/releases/jobs/publish-9')
+        return Response.json(
+          jobFixture({
+            jobId: 'publish-9',
+            state: 'blocked',
+            step: 'finished',
+            errorCode: 'attempt-unresolved',
+            remote: { tag: 'exact', release: 'absent' },
+            attemptedEffects: [{ kind: 'create-tag', tag: 'v0.1.0' }],
+          }),
+        );
+      return reads(plan)(path, init);
+    });
+    const view = createReleasesView();
+    await view.open({ repositoryId: 'app', jobId: 'reconcile-9', planId: 'plan-1' });
+
+    expect(view.el.textContent).toContain('Reconciliation outcome');
+    expect(view.el.textContent).toContain('create-tag: v0.1.0');
+    expect(view.el.textContent).not.toContain('Attempted stepsNone recorded');
+    expect(view.el.textContent).toContain('Observed tagexact');
   });
 
   it('explains the changed fact of a stale executing publication and never offers reconciliation', async () => {
