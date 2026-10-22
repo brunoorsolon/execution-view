@@ -439,6 +439,26 @@ describe('release publication through HTTP', () => {
     expect(f.creates).toHaveLength(1);
   });
 
+  it('does not execute when durable approval persistence fails', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    const store = new ReleaseStateStore({ stateDir: f.stateDir });
+    vi.spyOn(store, 'writeIntent').mockImplementation(() => {
+      throw new Error('private intent storage failed');
+    });
+    const { app, headers, execute } = http(f, store);
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/releases/plans/${plan.planId}/publish`,
+      headers,
+      payload: { digest: plan.digest },
+    });
+    expect(response.statusCode).toBe(500);
+    expect(response.json().code).toBe('internal-error');
+    expect(execute).not.toHaveBeenCalled();
+    noRemoteWrites(f);
+  });
+
   it('rejects stale digests, expiry, ineligible plans and unresolved attempts without remote effects', async () => {
     const f = await fixture();
     const plan = await prepared(f);
