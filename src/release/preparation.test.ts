@@ -807,42 +807,39 @@ describe('durable approval admission', () => {
     'legacy-config',
     'future',
     'config',
-  ] as const)(
-    'rejects %s plans before intent',
-    async (failure) => {
-      const f = await fixture();
-      const original = await prepared(f);
-      const plan = variant(f, original, (p) => {
-        if (failure === 'expired') {
-          p.preparedAt = new Date(Date.now() - 31 * 60_000).toISOString();
-          p.approvalDeadline = new Date(Date.parse(p.preparedAt) + 30 * 60_000).toISOString();
-        }
-        if (failure === 'future') {
-          p.preparedAt = new Date(Date.now() + 60_000).toISOString();
-          p.approvalDeadline = new Date(Date.parse(p.preparedAt) + 30 * 60_000).toISOString();
-        }
-        if (failure === 'blocker') {
-          p.payload.blockers = [{ code: 'blocked', message: 'Unresolved evidence' }];
-        }
-        if (failure === 'unknown') p.payload.tag.state = 'unknown';
-        if (failure === 'actions') p.payload.actions = [];
-        if (failure === 'legacy') delete p.preparedAt;
-        if (failure === 'legacy-config') delete p.payload.configurationDigest;
-        if (failure === 'config') p.payload.ci.workflowPath = '.gitea/workflows/other.yml';
-      });
-      await expect(approval(f).approve(request(plan), 'admin')).rejects.toMatchObject({
-        code:
-          failure === 'expired'
-            ? 'plan-expired'
-            : failure === 'config' || failure === 'legacy-config'
-              ? 'plan-stale'
-              : 'repository-ineligible',
-      });
-      expect(f.store.listJobs().filter((job) => job.kind === 'publish')).toEqual([]);
-      expect(() => f.store.readIntent(plan.planId)).toThrow();
-      noRemoteWrites(f);
-    },
-  );
+  ] as const)('rejects %s plans before intent', async (failure) => {
+    const f = await fixture();
+    const original = await prepared(f);
+    const plan = variant(f, original, (p) => {
+      if (failure === 'expired') {
+        p.preparedAt = new Date(Date.now() - 31 * 60_000).toISOString();
+        p.approvalDeadline = new Date(Date.parse(p.preparedAt) + 30 * 60_000).toISOString();
+      }
+      if (failure === 'future') {
+        p.preparedAt = new Date(Date.now() + 60_000).toISOString();
+        p.approvalDeadline = new Date(Date.parse(p.preparedAt) + 30 * 60_000).toISOString();
+      }
+      if (failure === 'blocker') {
+        p.payload.blockers = [{ code: 'blocked', message: 'Unresolved evidence' }];
+      }
+      if (failure === 'unknown') p.payload.tag.state = 'unknown';
+      if (failure === 'actions') p.payload.actions = [];
+      if (failure === 'legacy') delete p.preparedAt;
+      if (failure === 'legacy-config') delete p.payload.configurationDigest;
+      if (failure === 'config') p.payload.ci.workflowPath = '.gitea/workflows/other.yml';
+    });
+    await expect(approval(f).approve(request(plan), 'admin')).rejects.toMatchObject({
+      code:
+        failure === 'expired'
+          ? 'plan-expired'
+          : failure === 'config' || failure === 'legacy-config'
+            ? 'plan-stale'
+            : 'repository-ineligible',
+    });
+    expect(f.store.listJobs().filter((job) => job.kind === 'publish')).toEqual([]);
+    expect(() => f.store.readIntent(plan.planId)).toThrow();
+    noRemoteWrites(f);
+  });
 
   it('blocks a competing plan and preparation until the accepted attempt is reconciled', async () => {
     const f = await fixture();

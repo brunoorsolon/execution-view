@@ -115,6 +115,9 @@ export interface ReleaseCheckout {
    * Nothing is written to the remote, and no object outside this tag is fetched.
    */
   readRemoteTag(name: string): Promise<ReleaseGitResult<ReleaseRemoteTag | null>>;
+}
+
+export interface ReleaseTagCheckout extends ReleaseCheckout {
   /** One non-force push of an object prepared by this instance. No retry or other ref is possible. */
   pushPreparedTag(name: string, objectId: string): Promise<ReleaseGitResult<void>>;
 }
@@ -315,7 +318,13 @@ function firstLine(stdout: Buffer): string {
   return stdout.toString('utf8').trim();
 }
 
+/** Preparation and inspection retain a genuinely read-only remote interface. */
 export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseCheckout {
+  const { pushPreparedTag: _push, ...reads } = createReleaseTagCheckout(options);
+  return reads;
+}
+
+export function createReleaseTagCheckout(options: ReleaseCheckoutOptions): ReleaseTagCheckout {
   const { checkout, cache } = cachePaths(options.stateDir, options.repository.id);
   /**
    * The candidate this checkout instance last fetched successfully. Object reads are rooted

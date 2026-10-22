@@ -3,7 +3,7 @@ import { contentHash } from '../core/hash.js';
 import { repositoryOperationKey } from '../service/releaseOwnership.js';
 import { assertReleasePlanEligible, ReleaseApprovalError } from './approval.js';
 import { activePublications, publicationIntent } from './attempts.js';
-import { createReleaseCheckout } from './checkout.js';
+import { createReleaseTagCheckout } from './checkout.js';
 import { verifyReleaseCi } from './ci.js';
 import { createReleaseForgeClient } from './forgeClient.js';
 import { verifyReleaseIdentity } from './identity.js';
@@ -107,7 +107,7 @@ export class ReleasePublication {
           return result.identity;
         };
         const verified = await verifyIdentity();
-        const checkout = createReleaseCheckout({
+        const checkout = createReleaseTagCheckout({
           stateDir: runtime.stateDir,
           repository: loaded.config,
           identity: verified,
