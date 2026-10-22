@@ -581,11 +581,11 @@ export class ReleaseStateStore {
     return job;
   }
 
-  /** Complete bounded history for safety decisions; never silently skips malformed evidence. */
-  listJobs(): ReleaseJob[] {
+  /** Enumerate bounded job record names without reading plans or job bodies. */
+  listJobIds(): string[] {
     const dir = this.checkRecordDir('job');
     if (dir === null) return [];
-    const jobs: ReleaseJob[] = [];
+    const ids: string[] = [];
     const handle = opendirSync(dir);
     let entries = 0;
     try {
@@ -600,12 +600,17 @@ export class ReleaseStateStore {
         if (!entry.name.endsWith('.json')) {
           throw malformed('release job history has an unexpected entry');
         }
-        jobs.push(this.readJob(entry.name.slice(0, -5)));
+        ids.push(assertId('job', entry.name.slice(0, -5)));
       }
     } finally {
       handle.closeSync();
     }
-    return jobs;
+    return ids.sort();
+  }
+
+  /** Complete bounded history for safety decisions; never silently skips malformed evidence. */
+  listJobs(): ReleaseJob[] {
+    return this.listJobIds().map((jobId) => this.readJob(jobId));
   }
 
   /** A job names a plan only together with that plan's digest, and it must match the stored plan. */

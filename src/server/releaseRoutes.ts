@@ -144,11 +144,25 @@ export function registerReleaseRoutes(
   const repoJobs = (id: string): ReleaseJob[] => {
     const { key } = repository(id);
     const jobPrefix = `prepare-${contentHash(repositoryOperationKey(key)).slice(0, 32)}-`;
-    return store.listJobs().filter((job) => {
-      if (job.jobId.startsWith(jobPrefix)) return true;
-      if (job.planId === null) return false;
-      return store.readPlan(job.planId).payload.repository.repositoryId === id;
-    });
+    const jobs: ReleaseJob[] = [];
+    for (const jobId of store.listJobIds()) {
+      const belongsById = jobId.startsWith(jobPrefix);
+      try {
+        const job = store.readJob(jobId);
+        if (
+          belongsById ||
+          (job.planId !== null && store.readPlan(job.planId).payload.repository.repositoryId === id)
+        ) {
+          jobs.push(job);
+        }
+      } catch (error) {
+        if (!belongsById && error instanceof ReleaseStateError && error.code === 'not-found') {
+          continue;
+        }
+        throw error;
+      }
+    }
+    return jobs;
   };
 
   app.post<{ Params: { id: string } }>(

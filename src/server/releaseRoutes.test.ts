@@ -640,6 +640,26 @@ describe('release repository capability', () => {
     expect(storedJob.statusCode).toBe(200);
     expect(storedJob.json()).toEqual(newest);
 
+    const otherBody = planPayload('other');
+    const otherPlan = {
+      planId: 'plan-other',
+      digest: releasePlanDigest(otherBody),
+      approvalDeadline: '2026-10-22T12:00:00.000Z',
+      payload: otherBody,
+    };
+    store.writePlan(otherPlan);
+    store.writeJob({
+      jobId: 'foreign-job',
+      kind: 'publish',
+      planId: otherPlan.planId,
+      planDigest: otherPlan.digest,
+      state: 'queued',
+      step: null,
+      remote: { tag: 'unknown', release: 'unknown' },
+      errorCode: null,
+    });
+    rmSync(path.join(store.stateDir, 'plans', 'plan-other.json'));
+
     const page = await app.inject({
       url: '/api/releases/repositories/app/jobs?limit=1&offset=1',
       headers,
@@ -647,16 +667,9 @@ describe('release repository capability', () => {
     expect(page.statusCode).toBe(200);
     expect(page.json()).toEqual({ items: [older], limit: 1, offset: 1, total: 2 });
 
-    const otherBody = planPayload('other');
-    store.writePlan({
-      planId: 'plan-other',
-      digest: releasePlanDigest(otherBody),
-      approvalDeadline: '2026-10-22T12:00:00.000Z',
-      payload: otherBody,
-    });
-    const otherPlan = await app.inject({ url: '/api/releases/plans/plan-other', headers });
-    expect(otherPlan.statusCode).toBe(404);
-    expect(otherPlan.json().code).toBe('not-found');
+    const hiddenPlan = await app.inject({ url: '/api/releases/plans/plan-other', headers });
+    expect(hiddenPlan.statusCode).toBe(404);
+    expect(hiddenPlan.json().code).toBe('not-found');
 
     const unauthenticated = await app.inject({ url: '/api/releases/plans/plan-test' });
     expect(unauthenticated.statusCode).toBe(401);
