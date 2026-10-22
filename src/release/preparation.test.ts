@@ -810,6 +810,63 @@ describe('durable approval admission', () => {
     },
   );
 
+  it.each([false, true])(
+    'restores inspection after queue sync failure or fences admission (restore failure=%s)',
+    async (restoreFailure) => {
+      const f = await fixture();
+      const plan = await prepared(f);
+      let queuedWrite = false;
+      let queueFailed = false;
+      const store = new ReleaseStateStore({
+        stateDir: f.stateDir,
+        fsync(fd) {
+          if (queuedWrite && fstatSync(fd).isDirectory()) {
+            queueFailed = true;
+            throw new Error('queue directory sync failed');
+          }
+          fsyncSync(fd);
+        },
+      });
+      const write = store.writeJob.bind(store);
+      vi.spyOn(store, 'writeJob').mockImplementation((job) => {
+        queuedWrite = job.state === 'queued';
+        if (restoreFailure && queueFailed) throw new Error('disk stopped accepting writes');
+        return write(job);
+      });
+      const failed = approval(f, store).approve(request(plan), 'admin');
+      const duplicate = approval(f).approve(request(plan), 'admin');
+      const results = await Promise.allSettled([failed, duplicate]);
+      expect(results[0]).toMatchObject({
+        status: 'rejected',
+        reason: { code: 'internal-error' },
+      });
+      const intent = f.store.readIntent(plan.planId);
+      if (restoreFailure) {
+        expect(results[1]).toMatchObject({
+          status: 'rejected',
+          reason: { code: 'execution-unavailable' },
+        });
+        expect(f.owner.accepting).toBe(false);
+        await expect(approval(f).approve(request(plan), 'admin')).rejects.toMatchObject({
+          code: 'execution-unavailable',
+        });
+      } else {
+        const job = f.store.readJob(intent.jobId);
+        expect(job).toMatchObject({ state: 'needs-inspection', errorCode: 'attempt-unresolved' });
+        expect(results[1]).toEqual({ status: 'fulfilled', value: job });
+        await f.owner.shutdown();
+        const restarted = await acquireReleaseOwnership({ stateDir: f.stateDir });
+        cleanups.push(async () => {
+          await restarted.shutdown();
+        });
+        const reopened = new ReleaseStateStore({ stateDir: f.stateDir });
+        expect(await approval(f, reopened, restarted).approve(request(plan), 'admin')).toEqual(job);
+        expect(reopened.readIntent(plan.planId)).toEqual(intent);
+      }
+      noRemoteWrites(f);
+    },
+  );
+
   it('does not accept a visible intent after failed directory synchronization until retry synchronizes it', async () => {
     const f = await fixture();
     const plan = await prepared(f);

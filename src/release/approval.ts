@@ -94,6 +94,12 @@ export class ReleaseApproval {
       const plan = optional(() => store.readPlan(planId));
       if (plan === undefined) throw new ReleaseApprovalError('not-found', 'unknown release plan');
       return await ownership.runExclusive(plan.payload.repository, async () => {
+        if (!ownership.accepting) {
+          throw new ReleaseApprovalError(
+            'execution-unavailable',
+            'release execution is unavailable',
+          );
+        }
         // Read again under the same gate used by preparation and future execution.
         const stored = store.readPlan(planId);
         if (stored.digest !== digest) {
@@ -173,8 +179,18 @@ export class ReleaseApproval {
           contractVersion: RELEASE_CONTRACT_VERSION,
           stateSchemaVersion: RELEASE_STATE_SCHEMA_VERSION,
         });
-        // Only a fully synchronized intent permits queued state. Failed admission never runs work.
-        return store.writeJob({ ...job, state: 'queued', step: null, errorCode: null });
+        // Replacement can be visible even when its directory sync fails.
+        try {
+          return store.writeJob({ ...job, state: 'queued', step: null, errorCode: null });
+        } catch (error) {
+          try {
+            store.writeJob(job);
+          } catch {
+            // Uncertain storage cannot admit more work; restart requires read-only reconciliation.
+            void ownership.shutdown().catch(() => undefined);
+          }
+          throw error;
+        }
       });
     } catch (error) {
       if (error instanceof ReleaseApprovalError) throw error;
