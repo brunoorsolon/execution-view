@@ -234,7 +234,10 @@ export class ReleaseApproval {
       configured.ci.workflowPath !== payload.ci.workflowPath ||
       contentHash(configured.tagger) !== contentHash(payload.tagger)
     ) {
-      throw new ReleaseApprovalError('plan-stale', 'release configuration changed since preparation');
+      throw new ReleaseApprovalError(
+        'plan-stale',
+        'release configuration changed since preparation',
+      );
     }
     if (
       plan.preparedAt === undefined ||
@@ -255,7 +258,9 @@ export class ReleaseApproval {
     }
     const actions = [
       ...(payload.tag.state === 'absent' ? [{ kind: 'create-tag', tag: payload.tagName }] : []),
-      ...(payload.release.state === 'absent' ? [{ kind: 'create-release', tag: payload.tagName }] : []),
+      ...(payload.release.state === 'absent'
+        ? [{ kind: 'create-release', tag: payload.tagName }]
+        : []),
     ];
     if (contentHash(actions) !== contentHash(payload.actions)) {
       throw new ReleaseApprovalError(
