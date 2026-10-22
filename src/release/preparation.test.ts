@@ -31,6 +31,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   process.env['PATH'] = PATH;
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 function git(cwd: string, ...args: string[]): string {
@@ -598,9 +599,10 @@ describe('durable approval admission', () => {
       await restarted.shutdown();
     });
     const store = new ReleaseStateStore({ stateDir: f.stateDir });
-    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(plan.approvalDeadline) + 1);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.parse(plan.approvalDeadline) + 1);
     expect(await approval(f, store, restarted).approve(request(plan), 'admin')).toEqual(first);
-    now.mockRestore();
+    vi.useRealTimers();
     expect(store.readIntent(plan.planId)).toEqual(intent);
     expect(store.listJobs().filter((job) => job.kind === 'publish')).toEqual([first]);
     expect(f.methods).toHaveLength(reads);
