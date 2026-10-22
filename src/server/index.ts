@@ -5,6 +5,8 @@ import { ConfigError, loadConfig } from '../config/load.js';
 import { loadReleaseRuntime } from '../config/releaseRuntime.js';
 import { PlanService } from '../service/planService.js';
 import { acquireReleaseOwnership } from '../service/releaseOwnership.js';
+import { ReleaseStateStore } from '../service/releaseState.js';
+import { ReleasePreparation } from '../release/preparation.js';
 import { buildApp } from './app.js';
 
 export interface StartServerOptions {
@@ -39,12 +41,26 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Fastif
             else app.log.error(message);
           },
         });
+  const releaseStore =
+    releaseRuntime === null ? null : new ReleaseStateStore({ stateDir: releaseRuntime.stateDir });
   try {
     app = buildApp(config, service, {
       logger: true,
       ...(opts.webDir !== undefined ? { webDir: opts.webDir } : {}),
       ...(releaseRuntime !== null && ownership !== null
-        ? { releases: { runtime: releaseRuntime, gate: ownership } }
+        ? {
+            releases: {
+              runtime: releaseRuntime,
+              gate: ownership,
+              store: releaseStore!,
+              preparation: new ReleasePreparation({
+                config,
+                runtime: releaseRuntime,
+                ownership,
+                store: releaseStore!,
+              }),
+            },
+          }
         : {}),
     });
   } catch (error) {

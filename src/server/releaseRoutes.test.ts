@@ -8,6 +8,8 @@ import { loadConfig } from '../config/load.js';
 import type { ReleaseRuntime } from '../config/releaseRuntime.js';
 import type { AppConfig, ResolvedReleaseRepository } from '../config/schema.js';
 import type { ReleaseIdentityCheck } from '../release/identity.js';
+import type { ReleasePreparation } from '../release/preparation.js';
+import { ReleaseStateStore } from '../service/releaseState.js';
 import { PlanService } from '../service/planService.js';
 import { buildApp } from './app.js';
 
@@ -101,6 +103,7 @@ interface SetupOptions {
   verify?: (opts: { repositoryId: string }) => Promise<ReleaseIdentityCheck>;
   mount?: boolean;
   webhookSecret?: string;
+  api?: boolean;
 }
 
 function setup(opts: SetupOptions = {}) {
@@ -111,6 +114,19 @@ function setup(opts: SetupOptions = {}) {
     opts.verify ??
       (({ repositoryId }: { repositoryId: string }) => Promise.resolve(identity(repositoryId))),
   );
+  const stateDir = mkdtempSync(path.join(tmpdir(), 'ev-release-state-'));
+  cleanups.push(() => rmSync(stateDir, { recursive: true, force: true }));
+  const store = new ReleaseStateStore({ stateDir });
+  const prepare = vi.fn(async () => ({
+    jobId: 'prepare-test',
+    kind: 'prepare' as const,
+    planId: null,
+    planDigest: null,
+    state: 'queued' as const,
+    step: null,
+    remote: { tag: 'unknown' as const, release: 'unknown' as const },
+    errorCode: null,
+  }));
   const webDir = mkdtempSync(path.join(tmpdir(), 'ev-release-web-'));
   cleanups.push(() => rmSync(webDir, { recursive: true, force: true }));
   const app: FastifyInstance = buildApp(cfg, new PlanService(cfg), {
@@ -121,12 +137,15 @@ function setup(opts: SetupOptions = {}) {
           releases: {
             runtime: loaded,
             gate: { accepting: opts.accepting ?? true },
+            ...(opts.api
+              ? { store, preparation: { prepare } as unknown as ReleasePreparation }
+              : {}),
             verifyIdentity: verify,
           },
         }),
   });
   cleanups.push(() => app.close());
-  return { app, cfg, verify };
+  return { app, cfg, verify, store, prepare };
 }
 
 function basic(): string {
@@ -461,6 +480,60 @@ describe('release repository capability', () => {
     expect(res.json()[0].capability).toBe('blocked');
     expect(res.json()[0].blockers[0].code).toBe('release-unavailable');
     expect(verify).not.toHaveBeenCalled();
+  });
+
+  it('starts preparation only for an allowlisted id and exposes bounded read routes', async () => {
+    const { app, prepare } = setup({ api: true });
+    const headers = { authorization: basic(), host: PUBLIC_HOST };
+    const accepted = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+    });
+    expect(accepted.statusCode).toBe(202);
+    expect(accepted.json()).toEqual({
+      jobId: 'prepare-test',
+      statusUrl: '/api/releases/jobs/prepare-test',
+    });
+    expect(accepted.headers['cache-control']).toBe('no-store');
+    expect(prepare).toHaveBeenCalledWith('app');
+
+    const unknown = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/other/prepare',
+      headers,
+    });
+    expect(unknown.statusCode).toBe(404);
+    expect(prepare).toHaveBeenCalledTimes(1);
+
+    const history = await app.inject({
+      url: '/api/releases/repositories/app/jobs?limit=2',
+      headers,
+    });
+    expect(history.statusCode).toBe(200);
+    expect(history.json()).toEqual({ items: [], limit: 2, offset: 0, total: 0 });
+
+    const invalidPage = await app.inject({
+      url: '/api/releases/repositories/app/jobs?limit=1000',
+      headers,
+    });
+    expect(invalidPage.statusCode).toBe(400);
+    expect(invalidPage.json().code).toBe('invalid-request');
+
+    const invalidBody = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+      payload: {},
+    });
+    expect(invalidBody.statusCode).toBe(400);
+    expect(invalidBody.json().code).toBe('invalid-request');
+    expect(prepare).toHaveBeenCalledTimes(1);
+
+    const missingPlan = await app.inject({ url: '/api/releases/plans/missing', headers });
+    expect(missingPlan.statusCode).toBe(404);
+    expect(missingPlan.json().code).toBe('not-found');
+    expect(missingPlan.headers['cache-control']).toBe('no-store');
   });
 
   it('scrubs a blocker that echoes a token or a private path', async () => {
