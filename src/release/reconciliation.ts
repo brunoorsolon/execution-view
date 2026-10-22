@@ -144,6 +144,9 @@ export class ReleaseReconciliation {
             : missing
               ? 'Prepare a fresh recovery plan for the original version, candidate, tag and notes, then review and approve its new digest before any missing effect. The original candidate must remain reachable from the default branch. Late remote effects can still race with recovery.'
               : `${observation.reasons.map((reason) => reason.message).join(' ')} ${INSPECT}`;
+        if (publication.step === 'creating-tag') {
+          instruction = `${publication.blocker?.message ?? 'Tag push was attempted; its response was not durably recorded.'} ${instruction}`;
+        }
         job = {
           ...job,
           state:

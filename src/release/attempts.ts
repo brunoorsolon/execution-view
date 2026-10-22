@@ -68,6 +68,9 @@ export function publicationIntent(
   if (intent === undefined) return undefined;
   const accepted = Date.parse(intent.approvedAt);
   if (
+    job.kind !== 'publish' ||
+    job.planId !== plan.planId ||
+    job.planDigest !== plan.digest ||
     intent.jobId !== job.jobId ||
     intent.planDigest !== plan.digest ||
     contentHash(intent.approvedActions) !== contentHash(plan.payload.actions) ||

@@ -8,6 +8,7 @@ import {
   ReleaseGitError,
   releaseSshCommand,
   runReleaseGit,
+  runReleaseTagPush,
 } from './gitProcess.js';
 
 const KEY_FILE = '/run/secrets/forge-desk-release-key';
@@ -136,6 +137,41 @@ describe('RELEASE_GIT_CONFIG', () => {
         'filter.lfs.required=false',
       ]),
     );
+  });
+});
+
+describe('runReleaseTagPush', () => {
+  it('uses exactly one hardened non-force object-to-tag push and cannot accept other effects', async () => {
+    const argvLog = join(tempRoot(), 'argv.log');
+    const { dir } = fakeExecutable('git', `printf '%s\\n' "$@" >> '${argvLog}'`);
+    prependPath(dir);
+    const origin = 'ssh://git@gitea.example.test/acme/api.git';
+    const objectId = 'a'.repeat(40);
+    const opts = { operation: 'push the approved tag', cwd: tempRoot(), ssh: SSH };
+    await runReleaseTagPush(origin, objectId, 'v0.1.0', opts);
+    expect(readFileSync(argvLog, 'utf8').trim().split('\n')).toEqual([
+      ...RELEASE_GIT_CONFIG.flatMap((value) => ['-c', value]),
+      'push',
+      '--porcelain',
+      '--no-force',
+      '--no-follow-tags',
+      '--no-verify',
+      '--recurse-submodules=no',
+      origin,
+      `${objectId}:refs/tags/v0.1.0`,
+    ]);
+    const before = readFileSync(argvLog, 'utf8');
+    for (const [remote, object, tag] of [
+      ['--force', objectId, 'v0.1.0'],
+      [origin, '', 'v0.1.0'],
+      [origin, `+${objectId}`, 'v0.1.0'],
+      [origin, objectId, ':refs/tags/v0.1.0'],
+      [origin, objectId, '--force'],
+      [origin, objectId, 'refs/heads/main'],
+    ]) {
+      expect(() => runReleaseTagPush(remote!, object!, tag!, opts)).toThrow(ReleaseGitError);
+    }
+    expect(readFileSync(argvLog, 'utf8')).toBe(before);
   });
 });
 

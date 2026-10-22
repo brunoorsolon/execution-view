@@ -163,6 +163,8 @@ export interface ReleasePlanPayload {
   stateSchemaVersion: number;
   repository: ReleaseRepositoryIdentity;
   account: ReleaseAccountIdentity;
+  /** Frozen non-secret configuration; legacy plans remain readable but cannot execute writes. */
+  configurationDigest?: string;
   tagger: ReleaseTagger;
   candidate: ReleaseCandidate;
   baseline: ReleaseBaseline;

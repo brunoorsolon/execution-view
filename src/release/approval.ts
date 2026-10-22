@@ -17,6 +17,7 @@ import {
 } from '../service/releaseOwnership.js';
 import { ReleaseStateError, ReleaseStateStore } from '../service/releaseState.js';
 import { activePublications, attemptReceipt, recoverable, samePublication } from './attempts.js';
+import { releaseConfigurationDigest } from './configuration.js';
 
 export interface ReleaseApprovalOptions {
   config: AppConfig;
@@ -108,7 +109,7 @@ export class ReleaseApproval {
         }
         const intent = optional(() => store.readIntent(planId));
         if (intent !== undefined) return this.existing(stored, intent);
-        this.eligible(stored);
+        assertReleasePlanEligible(stored, this.options);
         const jobs = activePublications(store);
         let recoveryFound = false;
         for (const job of jobs) {
@@ -250,61 +251,68 @@ export class ReleaseApproval {
     store.writeIntent(intent);
     return store.writeJob(job);
   }
+}
 
-  private eligible(plan: ReleasePlan): void {
-    const { config, runtime } = this.options;
-    const { payload } = plan;
-    const configured = runtime.repositories.find(
-      (entry) => entry.config.id === payload.repository.repositoryId,
-    )?.config;
-    const source = config.sources.find((entry) => entry.id === configured?.source);
-    if (!config.releases.enabled || configured === undefined || source?.kind !== 'gitea') {
-      throw new ReleaseApprovalError(
-        'repository-ineligible',
-        'the release repository is unavailable',
-      );
-    }
-    if (
-      source.baseUrl !== payload.repository.baseUrl ||
-      configured.repo.owner !== payload.repository.owner ||
-      configured.repo.repo !== payload.repository.repo ||
-      configured.expectedApiUser !== payload.account.login ||
-      configured.ci.workflowPath !== payload.ci.workflowPath ||
-      contentHash(configured.tagger) !== contentHash(payload.tagger)
-    ) {
-      throw new ReleaseApprovalError(
-        'plan-stale',
-        'release configuration changed since preparation',
-      );
-    }
-    if (
-      plan.preparedAt === undefined ||
-      !Number.isFinite(Date.parse(plan.preparedAt)) ||
-      Date.parse(plan.preparedAt) > Date.now() ||
-      Date.parse(plan.approvalDeadline) !== Date.parse(plan.preparedAt) + 30 * 60_000 ||
-      payload.blockers === undefined ||
-      payload.blockers.length > 0 ||
-      !['absent', 'exact'].includes(payload.tag.state) ||
-      !['absent', 'exact'].includes(payload.release.state) ||
-      (payload.tag.state === 'absent' && payload.release.state === 'exact') ||
-      payload.tag.objectId === null
-    ) {
-      throw new ReleaseApprovalError(
-        'repository-ineligible',
-        'the stored plan is not eligible for approval',
-      );
-    }
-    const actions = [
-      ...(payload.tag.state === 'absent' ? [{ kind: 'create-tag', tag: payload.tagName }] : []),
-      ...(payload.release.state === 'absent'
-        ? [{ kind: 'create-release', tag: payload.tagName }]
-        : []),
-    ];
-    if (contentHash(actions) !== contentHash(payload.actions)) {
-      throw new ReleaseApprovalError(
-        'repository-ineligible',
-        'the stored plan actions are inconsistent',
-      );
-    }
+/** Shared admission/execution policy check; expiry applies to acceptance, not an accepted job. */
+export function assertReleasePlanEligible(
+  plan: ReleasePlan,
+  { config, runtime }: Pick<ReleaseApprovalOptions, 'config' | 'runtime'>,
+): void {
+  const { payload } = plan;
+  const configured = runtime.repositories.find(
+    (entry) => entry.config.id === payload.repository.repositoryId,
+  )?.config;
+  const source = config.sources.find((entry) => entry.id === configured?.source);
+  if (!config.releases.enabled || configured === undefined || source?.kind !== 'gitea') {
+    throw new ReleaseApprovalError(
+      'repository-ineligible',
+      'the release repository is unavailable',
+    );
+  }
+  if (
+    !config.releases.repositories.some(
+      (entry) => entry.id === configured.id && contentHash(entry) === contentHash(configured),
+    ) ||
+    source.baseUrl !== payload.repository.baseUrl ||
+    configured.repo.owner !== payload.repository.owner ||
+    configured.repo.repo !== payload.repository.repo ||
+    configured.expectedApiUser !== payload.account.login ||
+    configured.ci.workflowPath !== payload.ci.workflowPath ||
+    contentHash(configured.tagger) !== contentHash(payload.tagger) ||
+    payload.configurationDigest !== releaseConfigurationDigest(configured, source.baseUrl)
+  ) {
+    throw new ReleaseApprovalError(
+      'plan-stale',
+      'release repository configuration changed since preparation (push origin, SSH credentials/trust, API credential selector, CI policy or tagger); prepare a new plan',
+    );
+  }
+  if (
+    plan.preparedAt === undefined ||
+    !Number.isFinite(Date.parse(plan.preparedAt)) ||
+    Date.parse(plan.preparedAt) > Date.now() ||
+    Date.parse(plan.approvalDeadline) !== Date.parse(plan.preparedAt) + 30 * 60_000 ||
+    payload.blockers === undefined ||
+    payload.blockers.length > 0 ||
+    !['absent', 'exact'].includes(payload.tag.state) ||
+    !['absent', 'exact'].includes(payload.release.state) ||
+    (payload.tag.state === 'absent' && payload.release.state === 'exact') ||
+    payload.tag.objectId === null
+  ) {
+    throw new ReleaseApprovalError(
+      'repository-ineligible',
+      'the stored plan is not eligible for approval',
+    );
+  }
+  const actions = [
+    ...(payload.tag.state === 'absent' ? [{ kind: 'create-tag', tag: payload.tagName }] : []),
+    ...(payload.release.state === 'absent'
+      ? [{ kind: 'create-release', tag: payload.tagName }]
+      : []),
+  ];
+  if (contentHash(actions) !== contentHash(payload.actions)) {
+    throw new ReleaseApprovalError(
+      'repository-ineligible',
+      'the stored plan actions are inconsistent',
+    );
   }
 }

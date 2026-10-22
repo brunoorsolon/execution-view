@@ -7,7 +7,7 @@
  * No caller supplies a commit, a URL, a refspec or a filesystem path outside the cache.
  *
  * Object reads are limited to committed objects. Preparation may create an unreferenced local
- * annotated tag object. Nothing here pushes a ref, checks out a working tree or follows a symlink.
+ * annotated tag object. Only pushPreparedTag can publish that object; no working tree is used.
  */
 
 import { lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,6 +21,7 @@ import {
   ReleaseGitError,
   releaseGitBlocker,
   runReleaseGit,
+  runReleaseTagPush,
   type ReleaseGitResult,
 } from './gitProcess.js';
 
@@ -114,6 +115,8 @@ export interface ReleaseCheckout {
    * Nothing is written to the remote, and no object outside this tag is fetched.
    */
   readRemoteTag(name: string): Promise<ReleaseGitResult<ReleaseRemoteTag | null>>;
+  /** One non-force push of an object prepared by this instance. No retry or other ref is possible. */
+  pushPreparedTag(name: string, objectId: string): Promise<ReleaseGitResult<void>>;
 }
 
 /** The only ref this module writes: a private, container-owned view of the remote branch. */
@@ -321,6 +324,7 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
   let sealedCandidate: string | null = null;
   /** Default branch of the sealed candidate, as proven by release identity. */
   let sealedBranch: string | null = null;
+  const preparedTags = new Map<string, string>();
   const ssh = options.repository.ssh;
   const git = (argv: readonly string[], operation: string, cwd: string, input?: Buffer) =>
     runReleaseGit(argv, {
@@ -495,7 +499,36 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
             'local tag preparation returned no object id',
           );
         }
+        preparedTags.set(tagName, objectId);
         return { ok: true, value: objectId };
+      } catch (err) {
+        return { ok: false, blocker: releaseGitBlocker(err) };
+      }
+    },
+
+    async pushPreparedTag(name, objectId): Promise<ReleaseGitResult<void>> {
+      try {
+        const origin = assertVerifiedOrigin(options.repository, options.identity);
+        if (preparedTags.get(name) !== objectId) {
+          throw new ReleaseGitError(
+            'git-invalid-request',
+            'only this checkout’s prepared tag may be pushed',
+          );
+        }
+        // Consume before launch: even a timeout or lost response never permits a second write.
+        preparedTags.delete(name);
+        await prepareCache();
+        await runReleaseTagPush(origin, objectId, name, {
+          operation: 'push the approved annotated tag',
+          cwd: cache,
+          ssh,
+          ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+          ...(options.signal !== undefined ? { signal: options.signal } : {}),
+          ...(options.maxOutputBytes !== undefined
+            ? { maxOutputBytes: options.maxOutputBytes }
+            : {}),
+        });
+        return { ok: true, value: undefined };
       } catch (err) {
         return { ok: false, blocker: releaseGitBlocker(err) };
       }
