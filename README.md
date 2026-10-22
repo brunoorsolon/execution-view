@@ -250,6 +250,7 @@ The CLI reads the same config as the server (`--config <path>`, then `EV_CONFIG`
 | `views [--json]`                                             | List the configured views                                                                          |
 | `plan <viewId> [-f md\|json\|mermaid\|mmd\|dot] [-o <file>]` | Fetch the view and print the plan (default format `md`, default output stdout)                     |
 | `check [viewId...] [--json]`                                 | Validate the config, fetch the views, report cycles and dangling references (all views by default) |
+| `releases <command>`                                         | Drive the running server's release workflow over HTTP (see [Release commands](#release-commands))  |
 
 `check` exit codes: `0` everything fine, `1` configuration error, unknown view or fetch failure, `2` cycles or dangling references found. Example against the demo:
 
@@ -269,6 +270,28 @@ node dist/cli/index.js -c config.demo.yaml check
 ```
 
 The demo has problems on purpose, so this run exits with code `2`.
+
+### Release commands
+
+The release commands are an HTTP client of a running server with releases enabled. They never open the release state directory, so a CLI run cannot become a second writer over the server's volume, and they do not read the planning config.
+
+```sh
+FORGE_DESK_AUTH=operator:secret node dist/cli/index.js releases prepare acme-app --server https://forge-desk.example.com --auth-env FORGE_DESK_AUTH
+```
+
+| Command                                          | What it does                                                               |
+| ------------------------------------------------ | -------------------------------------------------------------------------- |
+| `prepare <repositoryId> [--wait]`                | Start or reuse preparation of one configured release repository            |
+| `plan <planId> [--json]`                         | Print one immutable release plan, complete notes included                  |
+| `publish <planId> [--approve <digest>] [--wait]` | Show the plan, ask for approval, then publish it                           |
+| `status <jobId> [--json]`                        | Print one release job                                                      |
+| `reconcile <jobId> [--wait]`                     | Start or reuse a read-only reconciliation job for an uncertain publication |
+
+`publish` prints the whole plan and asks `[y/N]`; only an explicit `y` or `yes` submits, so end of input, Ctrl-C or any other answer cancels before submission. Without a terminal it refuses to run unless `--approve <digest>` carries the reviewed plan digest, and a digest that is not the plan's own is refused.
+
+Credentials come from `--auth-env <name>` or a private file (`--auth-file <path>`, mode `0600`), never from a command-line password or the forge token, and travel only as an `Authorization` header with no session cookie. `--wait` follows the job to its final result; `--json` prints the server's JSON.
+
+Release exit codes: `0` complete, accepted or no-op, `2` invalid invocation or cancellation before submission, `3` blocked without remote mutation, `4` mutation attempted but exact completion unproved, `5` internal or durable-artifact failure. Planning commands keep their own codes.
 
 ## Development
 
