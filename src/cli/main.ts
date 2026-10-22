@@ -8,6 +8,7 @@ import { exporters, type ExportFormat } from '../export/index.js';
 import { PlanService, UnknownViewError, type ViewSummary } from '../service/planService.js';
 import { startServer } from '../server/index.js';
 import { packageVersion } from '../version.js';
+import { addReleaseCommands } from './releases.js';
 
 export interface CliIo {
   stdout: (s: string) => void;
@@ -24,6 +25,13 @@ export interface CliDeps {
   startServer?: typeof startServer;
   /** Name shown in help and usage. Default: the `execution-view` compatibility name. */
   programName?: string;
+  /**
+   * Interactive yes/no confirmation for a release publication. Absent when stdin cannot answer,
+   * which is what makes a non-interactive publication require its explicit approval option.
+   */
+  confirm?: (question: string) => Promise<boolean>;
+  /** Poll interval for `releases --wait`. Default: 1000 ms. */
+  releasePollMs?: number;
 }
 
 /** The name this CLI was installed as: `forge-desk`, or its `execution-view` compatibility name. */
@@ -329,6 +337,10 @@ export async function main(argv: string[], io: CliIo, deps: CliDeps = {}): Promi
     .action(async (viewIds: string[], opts: { json?: boolean }, cmd: Command) => {
       exitCode = await runCheck(context(cmd), viewIds, opts);
     });
+
+  addReleaseCommands(program, io, deps, (code) => {
+    exitCode = code;
+  });
 
   try {
     await program.parseAsync(argv, { from: 'user' });
