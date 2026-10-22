@@ -176,6 +176,8 @@ export interface ReleasePlanPayload {
   blockers?: ReleasePlanWarning[];
   tag: ReleaseTagObservation;
   release: ReleaseObservation;
+  /** Original attempt and current branch head sealed into a newly reviewed recovery plan. */
+  recovery?: { jobId: string; defaultBranchHead: string; tagCreatedAt: string };
 }
 
 /** One immutable plan: its identifiers, server-owned approval deadline and structured payload. */
@@ -231,6 +233,9 @@ export interface ReleaseJob {
   errorCode: ReleaseErrorCode | null;
   /** Sanitized preparation failure detail, absent in older schema-1 jobs. */
   blocker?: ReleasePlanWarning;
+  /** Reconciliation jobs name their original publication; publications name their latest receipt. */
+  publicationJobId?: string;
+  reconciliationJobId?: string;
 }
 
 /**
@@ -278,6 +283,17 @@ export interface ReleaseReceipt {
   state: ReleaseJobState;
   remote: ReleaseRemoteClassification;
   errorCode: ReleaseErrorCode | null;
+  /** Additive schema-1 evidence; legacy receipts remain readable. */
+  evidence?: {
+    publicationJobId: string;
+    operator: string | null;
+    approvedAt: string | null;
+    observedAt: string;
+    interruptedStep: ReleaseJobStep | null;
+    tag: ReleaseTagObservation;
+    release: ReleaseObservation;
+    instruction: string;
+  };
 }
 
 /** Stable machine error codes shared by release routes, jobs, receipts and the CLI. */

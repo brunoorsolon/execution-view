@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseConfig } from '../config/load.js';
 import { PlanService } from '../service/planService.js';
 import { buildApp } from '../server/app.js';
+import { startServer } from '../server/index.js';
 import type { ReleaseRuntime } from '../config/releaseRuntime.js';
 import type { ReleaseJob, ReleasePlan } from '../core/release.js';
 import { releasePlanDigest } from '../core/releaseDigest.js';
@@ -23,6 +24,7 @@ import { acquireReleaseOwnership, type ReleaseOwnership } from '../service/relea
 import { ReleaseStateStore } from '../service/releaseState.js';
 import { ReleasePreparation } from './preparation.js';
 import { ReleaseApproval } from './approval.js';
+import { ReleaseReconciliation } from './reconciliation.js';
 
 const PATH = process.env['PATH'];
 const NOTES = '# Changes\n\n- Exact committed bytes: é\n';
@@ -93,8 +95,7 @@ async function fixture(
     { mode: 0o755 },
   );
   process.env['PATH'] = `${bin}:${PATH}`;
-  const config = parseConfig(
-    `
+  const configYaml = `
 server:
   basicAuth: {username: admin, passwordEnv: PASSWORD}
 sources:
@@ -115,9 +116,12 @@ releases:
       ci: {workflowPath: .gitea/workflows/validate.yaml}
       ssh: {privateKeyFile: ${root}/key, knownHostsFile: ${root}/hosts}
       tagger: {name: Configured Bot, email: bot@example.test}
-`,
-    { PASSWORD: 'password', PLANNING: 'read-token', RELEASE: TOKEN },
-  );
+`;
+  const config = parseConfig(configYaml, {
+    PASSWORD: 'password',
+    PLANNING: 'read-token',
+    RELEASE: TOKEN,
+  });
   if (!config.releases.enabled) throw new Error('fixture release config missing');
   const runtime: ReleaseRuntime = {
     publicOrigin: config.releases.publicOrigin,
@@ -179,6 +183,8 @@ releases:
   return {
     root,
     config,
+    configYaml,
+    fetch,
     remote,
     work,
     stateDir,
@@ -189,6 +195,8 @@ releases:
     sshLog,
     commit,
     runtime,
+    reconciliation: (state = store, ownership: ReleaseOwnership = owner) =>
+      new ReleaseReconciliation({ config, runtime, ownership, store: state, fetch }),
     setRelease(tag = 'v0.1.0') {
       release = {
         id: 1,
@@ -1005,6 +1013,280 @@ describe('durable approval admission', () => {
     const recovered = await approval(f).approve(request(plan), 'admin');
     expect(recovered).toMatchObject({ jobId: intent.jobId, state: 'needs-inspection' });
     expect(f.store.readIntent(plan.planId)).toEqual(intent);
+    noRemoteWrites(f);
+  });
+});
+
+describe('read-only publication reconciliation and original-version recovery', () => {
+  async function accepted(f: Awaited<ReturnType<typeof fixture>>) {
+    const plan = await prepared(f);
+    const approval = new ReleaseApproval({
+      config: f.config,
+      runtime: f.runtime,
+      store: f.store,
+      ownership: f.owner,
+    });
+    const job = await approval.approve({ planId: plan.planId, digest: plan.digest }, 'admin');
+    return { plan, job, approval };
+  }
+
+  function installTag(f: Awaited<ReturnType<typeof fixture>>, plan: ReleasePlan) {
+    const bytes = execFileSync('git', ['cat-file', 'tag', plan.payload.tag.objectId!], {
+      cwd: join(f.stateDir, 'checkout/app.git'),
+    });
+    const objectId = execFileSync('git', ['hash-object', '-w', '-t', 'tag', '--stdin'], {
+      cwd: f.remote,
+      input: bytes,
+      encoding: 'utf8',
+    }).trim();
+    git(f.remote, 'update-ref', `refs/tags/${plan.payload.tagName}`, objectId);
+  }
+
+  it.each(['queued', 'running', 'needs-inspection', 'internal-error'] as const)(
+    'restarts %s jobs as read-only exact/no-op and re-inspects completed candidates',
+    async (state) => {
+      const f = await fixture();
+      const { plan, job } = await accepted(f);
+      installTag(f, plan);
+      f.setRelease();
+      f.store.writeJob({ ...job, state, step: 'creating-release' });
+      const intent = f.store.readIntent(plan.planId);
+      await f.owner.shutdown();
+      const owner = await acquireReleaseOwnership({ stateDir: f.stateDir });
+      cleanups.push(async () => {
+        await owner.shutdown();
+      });
+      const store = new ReleaseStateStore({ stateDir: f.stateDir });
+      const recovery = f.reconciliation(store, owner);
+      const refs = git(f.remote, 'show-ref');
+      await recovery.reconcileInterrupted();
+      const completed = store.readJob(job.jobId);
+      expect(completed).toMatchObject({
+        state: 'complete',
+        remote: { tag: 'exact', release: 'exact' },
+      });
+      const receipt = store.readReceipt(completed.reconciliationJobId!);
+      expect(receipt).toMatchObject({
+        state: 'complete',
+        evidence: {
+          publicationJobId: job.jobId,
+          operator: 'admin',
+          tag: { objectId: plan.payload.tag.objectId },
+          release: { author: 'Actual Author' },
+        },
+      });
+      expect(store.readIntent(plan.planId)).toEqual(intent);
+      const noOp = await prepared(f, f.service(store, owner));
+      expect(noOp.payload).toMatchObject({
+        tagName: plan.payload.tagName,
+        candidate: plan.payload.candidate,
+        notes: plan.payload.notes,
+        actions: [],
+      });
+      expect(recovery.receipt(job.jobId)).toContain(NOTES);
+      expect(recovery.receipt(job.jobId)).not.toContain(TOKEN);
+      expect(git(f.remote, 'show-ref')).toBe(refs);
+      noRemoteWrites(f);
+    },
+  );
+
+  it.each([false, true])('recovers original content (tag exists=%s)', async (tagExists) => {
+    const f = await fixture();
+    const { plan, job, approval } = await accepted(f);
+    if (tagExists) installTag(f, plan);
+    const reconciliation = f.reconciliation();
+    const result = await reconciliation.reconcile(job.jobId);
+    expect(result).toMatchObject({
+      state: 'blocked',
+      remote: { tag: tagExists ? 'exact' : 'absent', release: 'absent' },
+    });
+    expect(reconciliation.receipt(job.jobId)).toContain('fresh recovery plan');
+    const originalIntent = f.store.readIntent(plan.planId);
+    writeFileSync(
+      join(f.work, 'RELEASE_NOTES.md'),
+      'New notes that must not replace the original.\n',
+    );
+    git(f.work, 'add', '.');
+    git(f.work, 'commit', '--quiet', '-m', 'After original publication');
+    const head = git(f.work, 'rev-parse', 'HEAD');
+    git(f.remote, 'fetch', '--quiet', f.work, '+refs/heads/main:refs/heads/main');
+    const recovery = await prepared(f);
+    expect(recovery.planId).not.toBe(plan.planId);
+    expect(recovery.digest).not.toBe(plan.digest);
+    expect(recovery.payload).toMatchObject({
+      recovery: { jobId: job.jobId, defaultBranchHead: head },
+      candidate: plan.payload.candidate,
+      notes: plan.payload.notes,
+      tagName: plan.payload.tagName,
+      tag: { objectId: plan.payload.tag.objectId },
+    });
+    expect(recovery.payload.actions.map((action) => action.kind)).toEqual(
+      tagExists ? ['create-release'] : ['create-tag', 'create-release'],
+    );
+    expect(f.store.listJobs().filter((entry) => entry.kind === 'publish')).toHaveLength(1);
+    const next = await approval.approve(
+      { planId: recovery.planId, digest: recovery.digest },
+      'admin',
+    );
+    expect(next.jobId).not.toBe(job.jobId);
+    expect(f.store.readIntent(recovery.planId).approvedActions).toEqual(recovery.payload.actions);
+    expect(f.store.readIntent(plan.planId)).toEqual(originalIntent);
+    // A second interrupted recovery still retains the same content and needs another approval.
+    await reconciliation.reconcile(next.jobId);
+    const again = await prepared(f);
+    expect(again.payload.recovery?.jobId).toBe(next.jobId);
+    expect(again.payload.notes).toEqual(plan.payload.notes);
+    noRemoteWrites(f);
+  });
+
+  it('starts read-only recovery without waiting for a forge', async () => {
+    const f = await fixture();
+    const { job } = await accepted(f);
+    await f.owner.shutdown();
+    writeFileSync(join(f.root, 'key'), 'test key', { mode: 0o600 });
+    writeFileSync(join(f.root, 'hosts'), 'test hosts', { mode: 0o600 });
+    const configPath = join(f.root, 'config.yaml');
+    writeFileSync(configPath, f.configYaml);
+    const originalFetch = globalThis.fetch;
+    let resumeForge!: () => void;
+    const forgeWait = new Promise<void>((resolve) => {
+      resumeForge = resolve;
+    });
+    globalThis.fetch = (async (input: string, init: RequestInit) => {
+      await forgeWait;
+      return f.fetch(input, init);
+    }) as typeof globalThis.fetch;
+    cleanups.push(async () => {
+      globalThis.fetch = originalFetch;
+    });
+    const server = await startServer({
+      configPath,
+      env: {
+        PASSWORD: 'password',
+        PLANNING: 'read-token',
+        RELEASE: TOKEN,
+        EV_HOST: '127.0.0.1',
+        EV_PORT: '43197',
+      },
+    });
+    cleanups.push(async () => {
+      resumeForge();
+      await server.close();
+    });
+    expect((await server.inject({ url: '/healthz' })).statusCode).toBe(200);
+    expect(f.store.readJob(job.jobId).state).toBe('queued');
+    resumeForge();
+    for (let tries = 0; tries < 500; tries++) {
+      if (f.store.readJob(job.jobId).reconciliationJobId !== undefined) break;
+      await delay(10);
+    }
+    expect(f.store.readJob(job.jobId)).toMatchObject({
+      state: 'blocked',
+      remote: { tag: 'absent', release: 'absent' },
+    });
+    noRemoteWrites(f);
+  });
+
+  it('blocks recovery when the original candidate is no longer reachable', async () => {
+    const f = await fixture();
+    const { job } = await accepted(f);
+    await f.reconciliation().reconcile(job.jobId);
+    git(f.remote, 'update-ref', 'refs/heads/main', git(f.work, 'rev-parse', 'HEAD~1'));
+    const result = await terminal(f.store, await f.service().prepare('app'));
+    expect(result).toMatchObject({ state: 'blocked', errorCode: 'attempt-unresolved' });
+    expect(result.blocker?.message).toContain('not reachable');
+    noRemoteWrites(f);
+  });
+
+  it.each(['conflict', 'unknown', 'malformed', 'contradictory', 'identity', 'missing-intent'])(
+    'blocks %s evidence without admitting ordinary publication',
+    async (failure) => {
+      const f = await fixture();
+      const { plan, job, approval } = await accepted(f);
+      if (failure === 'conflict') {
+        git(f.remote, 'update-ref', `refs/tags/${plan.payload.tagName}`, f.commit);
+      }
+      if (failure === 'unknown') f.unknownRelease();
+      if (failure === 'malformed') f.setRelease('wrong-tag');
+      if (failure === 'contradictory') f.setRelease();
+      if (failure === 'identity') f.fail('/api/v1/user');
+      if (failure === 'missing-intent') rmSync(join(f.stateDir, 'intents', `${plan.planId}.json`));
+      const result = await f.reconciliation().reconcile(job.jobId);
+      expect(['needs-inspection', 'internal-error']).toContain(result.state);
+      expect(result.blocker?.message).toMatch(/Inspect|inspect/);
+      const preparedJob = await terminal(f.store, await f.service().prepare('app'));
+      expect(['blocked', 'internal-error']).toContain(preparedJob.state);
+      const ordinary = structuredClone(plan);
+      ordinary.planId = 'ordinary-plan';
+      f.store.writePlan(ordinary);
+      await expect(
+        approval.approve({ planId: ordinary.planId, digest: ordinary.digest }, 'admin'),
+      ).rejects.toMatchObject({ code: 'attempt-unresolved' });
+      noRemoteWrites(f);
+    },
+  );
+
+  it.each(['receipt', 'receipt-sync', 'original-job'])(
+    'keeps exact remote effects honest after %s finalization failure, then recovers by reads',
+    async (checkpoint) => {
+      const f = await fixture();
+      const { plan, job } = await accepted(f);
+      installTag(f, plan);
+      f.setRelease();
+      let syncingReceipt = false;
+      const store = new ReleaseStateStore({
+        stateDir: f.stateDir,
+        fsync(fd) {
+          if (syncingReceipt && fstatSync(fd).isDirectory()) throw new Error('disk');
+          fsyncSync(fd);
+        },
+      });
+      if (checkpoint === 'receipt') {
+        vi.spyOn(store, 'writeReceipt').mockImplementation(() => {
+          throw new Error('disk');
+        });
+      }
+      if (checkpoint === 'receipt-sync') {
+        const write = store.writeReceipt.bind(store);
+        vi.spyOn(store, 'writeReceipt').mockImplementation((receipt) => {
+          syncingReceipt = true;
+          return write(receipt);
+        });
+      }
+      if (checkpoint === 'original-job') {
+        const write = store.writeJob.bind(store);
+        vi.spyOn(store, 'writeJob').mockImplementation((record) => {
+          if (record.jobId === job.jobId && record.state === 'complete') throw new Error('disk');
+          return write(record);
+        });
+      }
+      const result = await f.reconciliation(store).reconcile(job.jobId);
+      expect(result).toMatchObject({
+        state: 'internal-error',
+        remote: { tag: 'exact', release: 'exact' },
+      });
+      expect(f.store.readJob(job.jobId).state).not.toBe('complete');
+      expect(f.store.readIntent(plan.planId).jobId).toBe(job.jobId);
+      const retry = await f.reconciliation().reconcile(job.jobId);
+      expect(retry.state).toBe('complete');
+      noRemoteWrites(f);
+    },
+  );
+
+  it('deduplicates concurrent reads and refuses malformed history', async () => {
+    const f = await fixture();
+    const { job } = await accepted(f);
+    const engine = f.reconciliation();
+    const [first, second] = await Promise.all([
+      engine.reconcile(job.jobId),
+      engine.reconcile(job.jobId),
+    ]);
+    expect(first.jobId).toBe(second.jobId);
+    const file = join(f.stateDir, 'jobs', `${job.jobId}.json`);
+    writeFileSync(file, '{broken json');
+    chmodSync(file, 0o600);
+    await expect(engine.reconcileInterrupted()).rejects.toMatchObject({ code: 'malformed-record' });
+    await expect(f.service().prepare('app')).rejects.toMatchObject({ code: 'internal-error' });
     noRemoteWrites(f);
   });
 });

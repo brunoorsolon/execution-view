@@ -29,6 +29,7 @@ import { createReleaseForgeClient, type ReleaseForgeFetch } from './forgeClient.
 import { verifyReleaseIdentity } from './identity.js';
 import { deriveReleaseMetadata, type ReleaseMetadata, type ObservedTag } from './metadata.js';
 import { observeReleaseRemoteState } from './remoteState.js';
+import { activePublications, attemptReceipt, recoverable } from './attempts.js';
 
 export interface ReleasePreparationOptions {
   config: AppConfig;
@@ -226,7 +227,12 @@ export class ReleasePreparation {
         if (!(error instanceof ReleaseStateError) || error.code !== 'not-found') throw error;
       }
       const completed: ReleasePlan[] = [];
-      for (const previous of store.listJobs()) {
+      let recovery: { job: ReleaseJob; plan: ReleasePlan } | undefined;
+      const publications = activePublications(store);
+      for (const previous of [
+        ...store.listJobs().filter((entry) => entry.kind === 'prepare'),
+        ...publications,
+      ]) {
         if (previous.planId === null) {
           // A publication without a plan cannot prove which repository it affects.
           if (previous.kind === 'publish') {
@@ -245,6 +251,20 @@ export class ReleasePreparation {
           continue;
         }
         if (previous.kind === 'publish') {
+          const latestReceipt = attemptReceipt(store, previous);
+          if (previous.state === 'blocked' && recoverable(latestReceipt)) {
+            if (recovery !== undefined) {
+              throw new Blocked(
+                {
+                  code: 'attempt-unresolved',
+                  message: 'Multiple unresolved publications require inspection before recovery.',
+                },
+                'attempt-unresolved',
+              );
+            }
+            recovery = { job: previous, plan };
+            continue;
+          }
           if (previous.state !== 'complete') {
             throw new Blocked(
               {
@@ -255,20 +275,9 @@ export class ReleasePreparation {
               'attempt-unresolved',
             );
           }
-          let receipt;
-          try {
-            receipt = store.readReceipt(previous.jobId);
-          } catch {
-            throw new Blocked(
-              {
-                code: 'attempt-unresolved',
-                message: 'publication completion has no verified durable receipt',
-              },
-              'attempt-unresolved',
-            );
-          }
+          const receipt = latestReceipt;
           if (
-            receipt.state !== 'complete' ||
+            receipt?.state !== 'complete' ||
             receipt.planId !== plan.planId ||
             receipt.remote.tag !== 'exact' ||
             receipt.remote.release !== 'exact'
@@ -287,7 +296,27 @@ export class ReleasePreparation {
         }
       }
       save({ step: 'reading-candidate' });
-      const candidate = value(await checkout.fetchCandidate());
+      const tagCreatedAt =
+        recovery?.plan.payload.recovery?.tagCreatedAt ?? recovery?.plan.preparedAt;
+      const branchHead = value(await checkout.fetchCandidate());
+      const candidate = recovery?.plan.payload.candidate ?? branchHead;
+      if (
+        recovery !== undefined &&
+        (contentHash(recovery.plan.payload.repository) !== contentHash(identity.repository) ||
+          contentHash(recovery.plan.payload.account) !== contentHash(identity.account) ||
+          contentHash(recovery.plan.payload.tagger) !== contentHash(configured.tagger) ||
+          candidate.branch !== branchHead.branch ||
+          !value(await checkout.isAncestor(candidate.commit, branchHead.commit)))
+      ) {
+        throw new Blocked(
+          {
+            code: 'attempt-unresolved',
+            message:
+              'Original recovery identity changed or candidate is not reachable from the current default branch; inspect the original attempt.',
+          },
+          'attempt-unresolved',
+        );
+      }
       const tags = value(await checkout.listRemoteTags());
       const stable = stableTags(tags);
       save({ step: 'reading-ci' });
@@ -308,7 +337,9 @@ export class ReleasePreparation {
           'plan-stale',
         );
       }
-      const recorded = completed.find((plan) => plan.payload.candidate.commit === candidate.commit);
+      const recorded =
+        recovery?.plan ??
+        completed.find((plan) => plan.payload.candidate.commit === candidate.commit);
       let metadata: ReleaseMetadata;
       if (recorded !== undefined) {
         const payload = recorded.payload;
@@ -389,6 +420,7 @@ export class ReleasePreparation {
       const blockers: ReleasePlanWarning[] = [...observation.reasons];
       if (
         alreadyTargeted &&
+        recovery === undefined &&
         (observation.tag.state !== 'exact' || observation.release.state !== 'exact')
       ) {
         blockers.push({
@@ -420,6 +452,15 @@ export class ReleasePreparation {
         blockers,
         tag: observation.tag,
         release: observation.release,
+        ...(recovery !== undefined
+          ? {
+              recovery: {
+                jobId: recovery.job.jobId,
+                defaultBranchHead: branchHead.commit,
+                tagCreatedAt: tagCreatedAt!,
+              },
+            }
+          : {}),
       };
       // Reuse a compatible, unexpired result, preserving its object, creation time and deadline.
       const reusable = priorPlans.find((plan) => {
@@ -437,9 +478,27 @@ export class ReleasePreparation {
           payload.tag = {
             ...payload.tag,
             objectId: value(
-              await checkout.prepareTag(metadata.version, configured.tagger, preparedAt),
+              await checkout.prepareTag(
+                metadata.version,
+                configured.tagger,
+                tagCreatedAt ?? preparedAt,
+                recovery?.plan.payload.candidate.commit,
+              ),
             ),
           };
+          if (
+            recovery !== undefined &&
+            payload.tag.objectId !== recovery.plan.payload.tag.objectId
+          ) {
+            throw new Blocked(
+              {
+                code: 'attempt-unresolved',
+                message:
+                  'Original frozen tag object could not be restored; inspect the original plan.',
+              },
+              'attempt-unresolved',
+            );
+          }
         }
         plan = {
           planId: ownPlanId,
@@ -451,7 +510,12 @@ export class ReleasePreparation {
       }
       if (reusable?.payload.tag.state === 'absent') {
         const restored = value(
-          await checkout.prepareTag(metadata.version, configured.tagger, reusable.preparedAt!),
+          await checkout.prepareTag(
+            metadata.version,
+            configured.tagger,
+            tagCreatedAt ?? reusable.preparedAt!,
+            recovery?.plan.payload.candidate.commit,
+          ),
         );
         if (restored !== reusable.payload.tag.objectId) {
           throw new Blocked(

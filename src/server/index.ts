@@ -7,6 +7,7 @@ import { PlanService } from '../service/planService.js';
 import { acquireReleaseOwnership } from '../service/releaseOwnership.js';
 import { ReleaseStateStore } from '../service/releaseState.js';
 import { ReleasePreparation } from '../release/preparation.js';
+import { ReleaseReconciliation } from '../release/reconciliation.js';
 import { buildApp } from './app.js';
 
 export interface StartServerOptions {
@@ -44,6 +45,21 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Fastif
   const releaseStore =
     releaseRuntime === null ? null : new ReleaseStateStore({ stateDir: releaseRuntime.stateDir });
   try {
+    if (releaseRuntime !== null && ownership !== null) {
+      // Queue read-only recovery before serving new release work; forge outages leave Planning up.
+      void new ReleaseReconciliation({
+        config,
+        runtime: releaseRuntime,
+        ownership,
+        store: releaseStore!,
+      })
+        .reconcileInterrupted()
+        .catch(() =>
+          console.error(
+            'Release recovery could not inspect durable publication evidence. Inspect the original jobs, plans and intents; restore readable private state and reconcile again before publication.',
+          ),
+        );
+    }
     app = buildApp(config, service, {
       logger: true,
       ...(opts.webDir !== undefined ? { webDir: opts.webDir } : {}),

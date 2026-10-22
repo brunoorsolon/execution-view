@@ -422,6 +422,21 @@ function checkPlanBody(body: Record<string, unknown>): void {
       stringAt(entry, 'message', `${at}.payload.blockers[${index}]`);
     });
   }
+  if (payload.recovery !== undefined) {
+    const recovery = objectAt(payload.recovery, 'plan.payload.recovery');
+    assertId('job', stringAt(recovery, 'jobId', 'plan.payload.recovery'));
+    const createdAt = stringAt(recovery, 'tagCreatedAt', 'plan.payload.recovery');
+    if (!Number.isFinite(Date.parse(createdAt))) {
+      throw malformed('recovery tag creation time is invalid');
+    }
+    const head = stringAt(recovery, 'defaultBranchHead', 'plan.payload.recovery');
+    if (!/^[0-9a-f]{40}$/.test(head)) throw malformed('recovery branch head is invalid');
+  }
+  checkObjectObservations(payload);
+}
+
+function checkObjectObservations(payload: Record<string, unknown>): void {
+  const at = 'evidence';
   const tag = objectAt(payload.tag, `${at}.payload.tag`);
   enumAt(REMOTE_STATES, tag, 'state', `${at}.payload.tag`);
   stringAt(tag, 'name', `${at}.payload.tag`);
@@ -462,6 +477,9 @@ function checkJobBody(job: ReleaseJob): void {
   if (step !== null) enumAt(JOB_STEPS, body, 'step', at);
   checkRemote(body.remote, `${at}.remote`);
   if (body.errorCode !== null) enumAt(ERROR_CODES, body, 'errorCode', at);
+  for (const field of ['publicationJobId', 'reconciliationJobId']) {
+    if (body[field] !== undefined) assertId('job', stringAt(body, field, at));
+  }
   if (body.blocker !== undefined) {
     const blocker = objectAt(body.blocker, `${at}.blocker`);
     stringAt(blocker, 'code', `${at}.blocker`);
@@ -503,6 +521,22 @@ function checkReceiptBody(receipt: ReleaseReceipt): void {
   enumAt(JOB_STATES, body, 'state', at);
   checkRemote(body.remote, `${at}.remote`);
   if (body.errorCode !== null) enumAt(ERROR_CODES, body, 'errorCode', at);
+  if (body.evidence !== undefined) {
+    const evidence = objectAt(body.evidence, `${at}.evidence`);
+    assertId('job', stringAt(evidence, 'publicationJobId', at));
+    nullableStringAt(evidence, 'operator', at);
+    nullableStringAt(evidence, 'approvedAt', at);
+    stringAt(evidence, 'observedAt', at);
+    if (evidence.interruptedStep !== null) enumAt(JOB_STEPS, evidence, 'interruptedStep', at);
+    stringAt(evidence, 'instruction', at);
+    checkObjectObservations(evidence);
+    const tag = objectAt(evidence.tag, 'receipt.tag');
+    const release = objectAt(evidence.release, 'receipt.release');
+    const remote = checkRemote(body.remote, at);
+    if (tag.state !== remote.tag || release.state !== remote.release) {
+      throw malformed('receipt observations contradict classification');
+    }
+  }
 }
 
 export class ReleaseStateStore {
