@@ -240,7 +240,7 @@ export function releaseRouteError(
   error: unknown,
 ): { status: number; body: { code: ReleaseErrorCode; error: string } } | null {
   const statusCode = (error as { statusCode?: unknown } | null)?.statusCode;
-  if (statusCode === 400 || statusCode === 413) {
+  if (statusCode === 400 || statusCode === 413 || statusCode === 415) {
     const code: ReleaseErrorCode = statusCode === 413 ? 'evidence-too-large' : 'invalid-request';
     return {
       status: 400,

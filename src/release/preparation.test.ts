@@ -13,6 +13,8 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseConfig } from '../config/load.js';
+import { PlanService } from '../service/planService.js';
+import { buildApp } from '../server/app.js';
 import type { ReleaseRuntime } from '../config/releaseRuntime.js';
 import type { ReleaseJob, ReleasePlan } from '../core/release.js';
 import { releasePlanDigest } from '../core/releaseDigest.js';
@@ -172,6 +174,7 @@ releases:
     new ReleasePreparation({ config, runtime, ownership, store: state, fetch });
   return {
     root,
+    config,
     remote,
     work,
     stateDir,
@@ -269,6 +272,63 @@ describe('tracked release preparation', () => {
     expect(f.store.readPlan(plan.planId)).toEqual(plan);
     expect(git(f.remote, 'show-ref')).toBe(refsBefore);
     expect(JSON.stringify(plan)).not.toContain(TOKEN);
+    noRemoteWrites(f);
+  });
+
+  it('routes repeated API preparation through the durable job and exposes its plan', async () => {
+    const f = await fixture();
+    let release!: () => void;
+    f.holdCi(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    const app = buildApp(f.config, new PlanService(f.config), {
+      logger: false,
+      webDir: f.root,
+      releases: {
+        runtime: f.runtime,
+        gate: f.owner,
+        store: f.store,
+        preparation: f.service(),
+      },
+    });
+    cleanups.push(() => app.close());
+    const headers = {
+      authorization: `Basic ${Buffer.from('admin:password').toString('base64')}`,
+    };
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+    });
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+    });
+    expect(first.statusCode).toBe(202);
+    expect(duplicate.statusCode).toBe(202);
+    expect(duplicate.json().jobId).toBe(first.json().jobId);
+    expect(first.json().statusUrl).toBe(`/api/releases/jobs/${first.json().jobId}`);
+    release();
+
+    let status = await app.inject({ url: first.json().statusUrl, headers });
+    for (
+      let tries = 0;
+      tries < 500 && ['queued', 'running'].includes(status.json().state);
+      tries++
+    ) {
+      await delay(10);
+      status = await app.inject({ url: first.json().statusUrl, headers });
+    }
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toMatchObject({ state: 'complete', kind: 'prepare' });
+    expect(status.json().planId).toBeTruthy();
+    const plan = await app.inject({ url: `/api/releases/plans/${status.json().planId}`, headers });
+    expect(plan.statusCode).toBe(200);
+    expect(plan.json().digest).toBe(f.store.readPlan(status.json().planId).digest);
+    expect(plan.json().payload.candidate.commit).toBe(f.commit);
     noRemoteWrites(f);
   });
 

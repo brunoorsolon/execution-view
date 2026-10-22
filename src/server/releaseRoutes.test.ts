@@ -7,8 +7,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../config/load.js';
 import type { ReleaseRuntime } from '../config/releaseRuntime.js';
 import type { AppConfig, ResolvedReleaseRepository } from '../config/schema.js';
+import { contentHash } from '../core/hash.js';
+import {
+  RELEASE_CONTRACT_VERSION,
+  RELEASE_STATE_SCHEMA_VERSION,
+  type ReleaseJob,
+  type ReleasePlanPayload,
+} from '../core/release.js';
+import { createReleaseNotes, releasePlanDigest } from '../core/releaseDigest.js';
 import type { ReleaseIdentityCheck } from '../release/identity.js';
-import type { ReleasePreparation } from '../release/preparation.js';
+import { ReleasePreparationError, type ReleasePreparation } from '../release/preparation.js';
+import { repositoryOperationKey } from '../service/releaseOwnership.js';
 import { ReleaseStateStore } from '../service/releaseState.js';
 import { PlanService } from '../service/planService.js';
 import { buildApp } from './app.js';
@@ -146,6 +155,59 @@ function setup(opts: SetupOptions = {}) {
   });
   cleanups.push(() => app.close());
   return { app, cfg, verify, store, prepare };
+}
+
+function planPayload(repositoryId = 'app'): ReleasePlanPayload {
+  return {
+    contractVersion: RELEASE_CONTRACT_VERSION,
+    stateSchemaVersion: RELEASE_STATE_SCHEMA_VERSION,
+    repository: {
+      repositoryId,
+      forge: 'gitea',
+      baseUrl: 'https://gitea.example.com',
+      owner: 'example',
+      repo: 'app',
+      forgeRepositoryId: 42,
+      defaultBranch: 'main',
+    },
+    account: {
+      forge: 'gitea',
+      baseUrl: 'https://gitea.example.com',
+      login: 'release-bot',
+      forgeUserId: 7,
+    },
+    tagger: { name: 'Release Bot', email: 'releases@example.com' },
+    candidate: { commit: 'a'.repeat(40), branch: 'main' },
+    baseline: { tag: null, commit: null, stableTags: [] },
+    ci: {
+      workflowPath: '.gitea/workflows/validate.yaml',
+      runId: 123,
+      headCommit: 'a'.repeat(40),
+      branch: 'main',
+      event: 'push',
+      status: 'completed',
+      conclusion: 'success',
+    },
+    notes: createReleaseNotes('Release v0.1.0\n', 'file'),
+    title: 'v0.1.0',
+    tagName: 'v0.1.0',
+    actions: [
+      { kind: 'create-tag', tag: 'v0.1.0' },
+      { kind: 'create-release', tag: 'v0.1.0' },
+    ],
+    warnings: [],
+    tag: { state: 'absent', name: 'v0.1.0', commit: null, objectId: null, tagger: null },
+    release: {
+      state: 'absent',
+      tag: null,
+      title: null,
+      notesDigest: null,
+      draft: null,
+      prerelease: null,
+      author: null,
+      assets: null,
+    },
+  };
 }
 
 function basic(): string {
@@ -483,7 +545,7 @@ describe('release repository capability', () => {
   });
 
   it('starts preparation only for an allowlisted id and exposes bounded read routes', async () => {
-    const { app, prepare } = setup({ api: true });
+    const { app, prepare, store } = setup({ api: true });
     const headers = { authorization: basic(), host: PUBLIC_HOST };
     const accepted = await app.inject({
       method: 'POST',
@@ -528,12 +590,107 @@ describe('release repository capability', () => {
     });
     expect(invalidBody.statusCode).toBe(400);
     expect(invalidBody.json().code).toBe('invalid-request');
+
+    const unsupportedType = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers: { ...headers, 'content-type': 'text/plain' },
+      payload: 'unexpected',
+    });
+    expect(unsupportedType.statusCode).toBe(400);
+    expect(unsupportedType.json().code).toBe('invalid-request');
     expect(prepare).toHaveBeenCalledTimes(1);
+
+    const planBody = planPayload();
+    const plan = {
+      planId: 'plan-test',
+      digest: releasePlanDigest(planBody),
+      approvalDeadline: '2026-10-22T12:00:00.000Z',
+      payload: planBody,
+    };
+    store.writePlan(plan);
+    const key = {
+      forge: 'gitea' as const,
+      baseUrl: 'https://gitea.example.com',
+      owner: 'example',
+      repo: 'app',
+    };
+    const prefix = `prepare-${contentHash(repositoryOperationKey(key)).slice(0, 32)}-`;
+    const makeJob = (suffix: string): ReleaseJob => ({
+      jobId: `${prefix}${suffix}`,
+      kind: 'prepare',
+      planId: plan.planId,
+      planDigest: plan.digest,
+      state: 'complete',
+      step: 'finished',
+      remote: { tag: 'absent', release: 'absent' },
+      errorCode: null,
+    });
+    const newest = makeJob('z-job');
+    const older = makeJob('a-job');
+    store.writeJob(newest);
+    store.writeJob(older);
+
+    const storedPlan = await app.inject({ url: '/api/releases/plans/plan-test', headers });
+    expect(storedPlan.statusCode).toBe(200);
+    expect(storedPlan.json()).toEqual(plan);
+    expect(storedPlan.json().payload.notes.text).toBe('Release v0.1.0\n');
+
+    const storedJob = await app.inject({ url: `/api/releases/jobs/${newest.jobId}`, headers });
+    expect(storedJob.statusCode).toBe(200);
+    expect(storedJob.json()).toEqual(newest);
+
+    const page = await app.inject({
+      url: '/api/releases/repositories/app/jobs?limit=1&offset=1',
+      headers,
+    });
+    expect(page.statusCode).toBe(200);
+    expect(page.json()).toEqual({ items: [older], limit: 1, offset: 1, total: 2 });
+
+    const otherBody = planPayload('other');
+    store.writePlan({
+      planId: 'plan-other',
+      digest: releasePlanDigest(otherBody),
+      approvalDeadline: '2026-10-22T12:00:00.000Z',
+      payload: otherBody,
+    });
+    const otherPlan = await app.inject({ url: '/api/releases/plans/plan-other', headers });
+    expect(otherPlan.statusCode).toBe(404);
+    expect(otherPlan.json().code).toBe('not-found');
+
+    const unauthenticated = await app.inject({ url: '/api/releases/plans/plan-test' });
+    expect(unauthenticated.statusCode).toBe(401);
+    expect(unauthenticated.json().code).toBe('not-authenticated');
 
     const missingPlan = await app.inject({ url: '/api/releases/plans/missing', headers });
     expect(missingPlan.statusCode).toBe(404);
     expect(missingPlan.json().code).toBe('not-found');
     expect(missingPlan.headers['cache-control']).toBe('no-store');
+  });
+
+  it('returns stable conflicts and unavailable errors for rejected preparation', async () => {
+    const { app, prepare } = setup({ api: true });
+    const headers = { authorization: basic(), host: PUBLIC_HOST };
+    prepare.mockRejectedValueOnce(
+      new ReleasePreparationError('repository-ineligible', 'repository is busy or ineligible'),
+    );
+    const ineligible = await app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+    });
+    expect(ineligible.statusCode).toBe(409);
+    expect(ineligible.json().code).toBe('repository-ineligible');
+
+    const unavailable = setup({ api: true, accepting: false });
+    const rejected = await unavailable.app.inject({
+      method: 'POST',
+      url: '/api/releases/repositories/app/prepare',
+      headers,
+    });
+    expect(rejected.statusCode).toBe(503);
+    expect(rejected.json().code).toBe('execution-unavailable');
+    expect(unavailable.prepare).not.toHaveBeenCalled();
   });
 
   it('scrubs a blocker that echoes a token or a private path', async () => {
