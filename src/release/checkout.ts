@@ -6,13 +6,15 @@
  * release state directory, and resolves the remote default-branch head from what was fetched.
  * No caller supplies a commit, a URL, a refspec or a filesystem path outside the cache.
  *
- * Object reads are read-only and limited to committed objects. Nothing here pushes, tags, checks
- * out a working tree or follows a symlink.
+ * Object reads are limited to committed objects. Preparation may create an unreferenced local
+ * annotated tag object. Nothing here pushes a ref, checks out a working tree or follows a symlink.
  */
 
 import { lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ResolvedReleaseRepository } from '../config/schema.js';
+import type { ReleaseTagger } from '../core/release.js';
+import type { ObservedTag } from './metadata.js';
 import type { VerifiedReleaseIdentity } from './identity.js';
 import { parseSshEndpoint, sameSshEndpoint } from './sshEndpoint.js';
 import {
@@ -64,6 +66,14 @@ export interface ReleaseCheckoutOptions {
 export interface ReleaseCheckout {
   /** Fetches and resolves the verified remote default-branch head. */
   fetchCandidate(): Promise<ReleaseGitResult<ReleaseCandidate>>;
+  /** Complete bounded SSH tag listing, including peeled annotated targets. */
+  listRemoteTags(): Promise<ReleaseGitResult<ObservedTag[]>>;
+  /** Prepare an unreferenced local tag object for the sealed candidate. Never pushes a ref. */
+  prepareTag(
+    name: string,
+    tagger: ReleaseTagger,
+    createdAt: string,
+  ): Promise<ReleaseGitResult<string>>;
   /**
    * Reads one committed entry at `<commit>:<path>`, or null when the path is absent. Only
    * history reachable from this instance's last successfully fetched candidate is readable.
@@ -310,11 +320,12 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
   /** Default branch of the sealed candidate, as proven by release identity. */
   let sealedBranch: string | null = null;
   const ssh = options.repository.ssh;
-  const git = (argv: readonly string[], operation: string, cwd: string) =>
+  const git = (argv: readonly string[], operation: string, cwd: string, input?: Buffer) =>
     runReleaseGit(argv, {
       operation,
       cwd,
       ssh,
+      ...(input !== undefined ? { input } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
@@ -393,6 +404,94 @@ export function createReleaseCheckout(options: ReleaseCheckoutOptions): ReleaseC
         sealedCandidate = commit;
         sealedBranch = branch;
         return { ok: true, value: { commit, branch } };
+      } catch (err) {
+        return { ok: false, blocker: releaseGitBlocker(err) };
+      }
+    },
+
+    async listRemoteTags(): Promise<ReleaseGitResult<ObservedTag[]>> {
+      try {
+        const origin = assertVerifiedOrigin(options.repository, options.identity);
+        await prepareCache();
+        const listed = await git(
+          ['ls-remote', '--tags', origin],
+          'list remote release tags',
+          cache,
+        );
+        const refs = new Map<string, string>();
+        for (const line of listed.stdout.toString('utf8').split('\n').filter(Boolean)) {
+          const match = /^([0-9a-f]{40})\trefs\/tags\/(.+)$/.exec(line);
+          if (match === null || refs.has(match[2]!)) {
+            throw new ReleaseGitError(
+              'git-malformed-response',
+              'remote tag listing was malformed or contradictory',
+            );
+          }
+          refs.set(match[2]!, match[1]!);
+        }
+        const tags: ObservedTag[] = [];
+        for (const [name, objectId] of refs) {
+          if (name.endsWith('^{}')) {
+            if (!refs.has(name.slice(0, -3))) {
+              throw new ReleaseGitError(
+                'git-malformed-response',
+                'remote peeled tag had no tag ref',
+              );
+            }
+            continue;
+          }
+          tags.push({ name, peeledCommit: refs.get(`${name}^{}`) ?? objectId });
+        }
+        return { ok: true, value: tags };
+      } catch (err) {
+        return { ok: false, blocker: releaseGitBlocker(err) };
+      }
+    },
+
+    async prepareTag(name, tagger, createdAt): Promise<ReleaseGitResult<string>> {
+      try {
+        const tagName = assertSafeTag(name);
+        const seconds = Math.floor(Date.parse(createdAt) / 1000);
+        if (
+          !Number.isSafeInteger(seconds) ||
+          seconds < 0 ||
+          [tagger.name, tagger.email].some(
+            (value) =>
+              value === '' ||
+              value.length > 200 ||
+              value.trim() !== value ||
+              /[<>\x00-\x1f\x7f]/.test(value),
+          )
+        ) {
+          throw new ReleaseGitError(
+            'git-invalid-request',
+            'prepared tag needs a safe tagger and creation time',
+          );
+        }
+        if (sealedCandidate === null) {
+          throw new ReleaseGitError(
+            'git-invalid-request',
+            'fetch the candidate before preparing its tag',
+          );
+        }
+        await requireSealedCandidate(sealedCandidate, 'verify the prepared tag candidate');
+        const bytes = Buffer.from(
+          `object ${sealedCandidate}\ntype commit\ntag ${tagName}\ntagger ${tagger.name} <${tagger.email}> ${seconds} +0000\n\n${tagName}\n`,
+        );
+        const prepared = await git(
+          ['mktag'],
+          'prepare the local annotated tag object',
+          cache,
+          bytes,
+        );
+        const objectId = firstLine(prepared.stdout);
+        if (!COMMIT_ID.test(objectId)) {
+          throw new ReleaseGitError(
+            'git-malformed-response',
+            'local tag preparation returned no object id',
+          );
+        }
+        return { ok: true, value: objectId };
       } catch (err) {
         return { ok: false, blocker: releaseGitBlocker(err) };
       }

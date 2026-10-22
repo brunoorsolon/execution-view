@@ -100,8 +100,8 @@ export const RELEASE_GIT_CONFIG: readonly string[] = [
 ];
 
 /**
- * The only Git verbs a release read may use. Nothing here can push, tag, update a ref or create
- * a release, so a future call site cannot reach a remote mutation through this wrapper.
+ * The only Git verbs release preparation may use. Local cache fetches and unreferenced tag
+ * objects are permitted; no verb can push or create a remote tag or release.
  */
 export const RELEASE_GIT_READ_ONLY_VERBS: readonly string[] = [
   'init',
@@ -114,6 +114,8 @@ export const RELEASE_GIT_READ_ONLY_VERBS: readonly string[] = [
   'log',
   'merge-base',
   'ls-remote',
+  // Writes only a local, unreferenced annotated tag object; never a remote ref.
+  'mktag',
 ];
 
 /**
@@ -146,6 +148,8 @@ export interface ReleaseGitRunOptions {
   maxOutputBytes?: number;
   /** Interruption for shutdown or a cancelled job; kills the child process group. */
   signal?: AbortSignal;
+  /** Bounded bytes for local annotated-tag creation, never a shell command. */
+  input?: Buffer;
 }
 
 export interface ReleaseGitOutput {
@@ -235,6 +239,7 @@ interface ChildLimits {
   timeoutMs: number;
   maxOutputBytes: number;
   signal?: AbortSignal;
+  input?: Buffer;
 }
 
 /** Runs one child in its own process group, with bounded output and lifetime. */
@@ -250,8 +255,12 @@ function spawnBounded(
       env,
       shell: false,
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [limits.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
+    child.stdin?.on('error', () => {
+      // Exit status reports a rejected tag object.
+    });
+    child.stdin?.end(limits.input);
 
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
@@ -444,6 +453,12 @@ export async function runReleaseGit(
   }
   const timeoutMs = opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
   const maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_GIT_MAX_OUTPUT_BYTES;
+  if (opts.input !== undefined && (verb !== 'mktag' || opts.input.byteLength > 4096)) {
+    throw new ReleaseGitError(
+      'git-invalid-request',
+      'only a bounded local tag object may use stdin',
+    );
+  }
   const secrets = [opts.ssh.privateKeyFile, opts.ssh.knownHostsFile];
   const env = childEnvironment(opts.cwd, opts.ssh);
   const command = [...RELEASE_GIT_CONFIG.flatMap((value) => ['-c', value]), ...argv];
@@ -455,6 +470,7 @@ export async function runReleaseGit(
       timeoutMs,
       maxOutputBytes,
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+      ...(opts.input !== undefined ? { input: opts.input } : {}),
     });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {

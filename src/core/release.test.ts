@@ -58,6 +58,7 @@ function payload(overrides: Partial<ReleasePlanPayload> = {}): ReleasePlanPayloa
     warnings: [
       { code: 'recovered-attempt', message: 'Recovering the earlier interrupted attempt.' },
     ],
+    blockers: [],
     tag: { state: 'absent', name: 'v0.2.0', commit: null, objectId: null, tagger: null },
     release: {
       state: 'absent',
@@ -215,6 +216,7 @@ describe('releasePlanDigest', () => {
       tagName: true,
       actions: true,
       warnings: true,
+      blockers: true,
       tag: true,
       release: true,
     };
