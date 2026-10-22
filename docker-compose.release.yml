@@ -1,0 +1,42 @@
+# Forge Desk with release publication enabled. Planning-only deployments use docker-compose.yml.
+# Operation, permissions, backup and cutover: docs/RELEASES.md. Step-by-step host setup below.
+#
+# 1. Create the private state directory owned by the image's runtime user (uid/gid 1000):
+#      install -d -m 0700 -o 1000 -g 1000 release-state
+# 2. Create ./config.yaml with a `releases:` block, `stateDir: /var/lib/forge-desk`, and the
+#    secret paths mounted below (docs/CONFIGURATION.md#releases).
+# 3. Put the read-only planning token and the login in .env next to this file, then create the
+#    read-only secret files and lock them down:
+#      install -d -m 0700 secrets
+#      install -m 0600 /dev/null secrets/release-api-token
+#      install -m 0600 /dev/null secrets/release-ssh-key
+#      install -m 0644 /dev/null secrets/known_hosts
+# 4. docker compose -f docker-compose.release.yml run --rm execution-view check
+#    docker compose -f docker-compose.release.yml up -d
+#
+# Only these four paths are mounted. Never mount the operator's home directory, a desktop
+# checkout, an SSH agent socket or the Docker socket: the container needs none of them, and each
+# would expose credentials or state that the one-writer rule cannot protect.
+services:
+  execution-view:
+    image: ghcr.io/brunoorsolon/execution-view:1.1.0
+    container_name: execution-view
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8080:8080'
+    environment:
+      # Read-only planning token. The release token is a separate file and must not be this one.
+      - GITEA_TOKEN=${GITEA_TOKEN}
+      # Releases require the application login (user:password in .env).
+      - EV_BASIC_AUTH=${EV_BASIC_AUTH}
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      # Private local volume for authoritative release state; owned by uid/gid 1000, mode 0700.
+      - ./release-state:/var/lib/forge-desk
+      # Release credentials and SSH trust, read-only, one file each.
+      - ./secrets/release-api-token:/run/secrets/forge_desk_release_token:ro
+      - ./secrets/release-ssh-key:/run/secrets/forge_desk_release_key:ro
+      - ./secrets/known_hosts:/run/secrets/forge_desk_known_hosts:ro
+    labels:
+      - 'wud.tag.include=^v?\d+\.\d+\.\d+$$'
+      - 'wud.tag.exclude=.*(alpha|beta|rc|dev|nightly).*'

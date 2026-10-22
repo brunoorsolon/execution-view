@@ -132,7 +132,8 @@ const COMMIT_ID = /^[0-9a-f]{40}$/;
 interface ParsedRun {
   id: number;
   headCommit: string;
-  branch: string;
+  /** Null for a tag-push run: Gitea reports no head branch for `refs/tags/*` runs. */
+  branch: string | null;
   event: string;
   status: string;
   conclusion: string;
@@ -226,7 +227,13 @@ function parseRun(raw: unknown, field: string): ParsedRun {
   return {
     id: wholeNumber(raw['id'], `${field}.id`, 1),
     headCommit: textField(raw['head_sha'], `${field}.head_sha`, 64),
-    branch: textField(raw['head_branch'], `${field}.head_branch`, 200),
+    // A workflow that also runs on tag pushes omits `head_branch` for the tag run (Gitea 1.26.1
+    // sends no key at all; some versions send null). Such a run cannot prove the default-branch
+    // identity, so it is classified as a branch mismatch instead of making the list unreadable.
+    branch:
+      raw['head_branch'] === null || raw['head_branch'] === undefined
+        ? null
+        : textField(raw['head_branch'], `${field}.head_branch`, 200),
     event: textField(raw['event'], `${field}.event`, 64),
     status: textField(raw['status'], `${field}.status`, 64),
     // An unfinished run reports an empty conclusion, so only the terminal check interprets it.

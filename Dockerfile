@@ -22,6 +22,11 @@ LABEL org.opencontainers.image.title="execution-view" \
 ENV NODE_ENV=production
 WORKDIR /app
 
+# Release execution needs real Git, SSH and Linux flock(2) in the final image, not only in the
+# build stage: git fetches the candidate, ssh pushes the approved tag, and flock backs the
+# single state-directory owner. BusyBox git/ssh are not sufficient.
+RUN apk add --no-cache git openssh-client util-linux
+
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
@@ -37,6 +42,11 @@ COPY test/fixtures/demo.json ./test/fixtures/demo.json
 # config there, or set EV_PROVIDER/EV_REPOS and mount nothing.
 ENV EV_HOST=0.0.0.0 \
     EV_PORT=8080
+
+# Pre-create the release state directory with the runtime user's ownership and mode, so a named
+# volume mounted here inherits them on first use. A bind mount must be prepared on the host
+# (docs/RELEASES.md), and planning-only deployments ignore this directory.
+RUN install -d -m 0700 -o node -g node /var/lib/forge-desk
 
 USER node
 EXPOSE 8080

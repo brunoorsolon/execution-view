@@ -106,7 +106,7 @@ Scope filters combine with AND, are case-insensitive, and only choose the roots 
 
 ### `releases`
 
-Optional and disabled by default. Planning-only YAML and env-only mode need no release configuration, credentials or writable state; they keep their existing behavior. Enabling releases adds release publication to the same server and requires the application login (`server.basicAuth` or `EV_BASIC_AUTH`).
+Optional and disabled by default. Planning-only YAML and env-only mode need no release configuration, credentials or writable state; they keep their existing behavior. Enabling releases adds release publication to the same server and requires the application login (`server.basicAuth` or `EV_BASIC_AUTH`). Volume setup, forge permissions, SSH trust, recovery, backup and the legacy cutover are in [RELEASES.md](RELEASES.md).
 
 ```yaml
 releases:
@@ -146,7 +146,7 @@ releases:
 | `releases.repositories[].tagger.name`        | string                    | required | Name on the annotated tag object.                                                                                                                                                                                 |
 | `releases.repositories[].tagger.email`       | email                     | required | Email on the annotated tag object.                                                                                                                                                                                |
 
-Only Gitea sources can be release repositories; the initial publication target is Gitea 1.26.1, and the release client verifies the server identity before trusting remote observations. Forgejo and other server versions are unsupported until their publication behavior is verified.
+Only Gitea sources can be release repositories; the initial publication target is Gitea 1.26.1, and the release client verifies the server identity before trusting remote observations. Forgejo and other server versions are unsupported until their publication behavior is verified. The final image carries real `git`, `ssh` and `flock`, and the state directory must be a private local volume; see [RELEASES.md](RELEASES.md#image-and-runtime).
 
 Enabled startup validates these local prerequisites before the server listens: the state directory's ownership and privacy, each secret file's readability, and the SSH key permission rules. A violation stops startup with a diagnostic naming the path and permissions, and the mounted permissions are never changed. The checks make no forge request, so a temporary forge outage cannot keep Planning from starting.
 

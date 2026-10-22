@@ -34,6 +34,7 @@ jobs:
       matrix:
         image:
           - gitea/gitea:1.25
+          - gitea/gitea:1.26.1
           - codeberg.org/forgejo/forgejo:11
     steps:
       - uses: actions/checkout@v4

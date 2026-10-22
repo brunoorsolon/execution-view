@@ -451,6 +451,40 @@ describe('discoverReleaseCi', () => {
     expect(runs[0]?.searchParams.get('head_sha')).toBe(COMMIT);
   });
 
+  it('ignores a tag-push run of the same workflow that reports no head branch', async () => {
+    // A release tag push triggers the designated workflow again. Gitea 1.26.1 omits
+    // `head_branch` for `refs/tags/*`; it cannot prove the default-branch identity, and it must
+    // not make the run list unreadable for the next preparation.
+    const tagRun = run({
+      id: 41,
+      head_branch: undefined,
+      path: 'validate.yaml@refs/tags/v0.1.0',
+    });
+    const fixture = forge(pagedRuns(2, [tagRun, run({ id: 40 })]));
+
+    const result = await discoverReleaseCi({
+      client: client(fixture.fetch),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: WORKFLOW,
+      listPaths: GITEA_TREE,
+    });
+
+    expect(result).toEqual({ ok: true, evidence: BOUND });
+
+    const onlyTag = forge(pagedRuns(1, [tagRun]));
+    const blocked = await discoverReleaseCi({
+      client: client(onlyTag.fetch),
+      identity: IDENTITY,
+      candidate: CANDIDATE,
+      workflowPath: WORKFLOW,
+      listPaths: GITEA_TREE,
+    });
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) throw new Error('expected a blocker');
+    expect(blocked.blocker.code).toBe('ci-branch-mismatch');
+  });
+
   it('blocks every nonqualifying run state with a stable, distinct error', async () => {
     const cases: Array<[string, () => Response, string]> = [
       ['no run for the commit', () => runList(0, []), 'ci-run-missing'],
