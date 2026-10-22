@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseConfig } from '../config/load.js';
 import type { ReleaseRuntime } from '../config/releaseRuntime.js';
 import type { ReleaseJob, ReleasePlan } from '../core/release.js';
@@ -19,6 +19,7 @@ import { releasePlanDigest } from '../core/releaseDigest.js';
 import { acquireReleaseOwnership, type ReleaseOwnership } from '../service/releaseOwnership.js';
 import { ReleaseStateStore } from '../service/releaseState.js';
 import { ReleasePreparation } from './preparation.js';
+import { ReleaseApproval } from './approval.js';
 
 const PATH = process.env['PATH'];
 const NOTES = '# Changes\n\n- Exact committed bytes: é\n';
@@ -29,6 +30,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   process.env['PATH'] = PATH;
+  vi.restoreAllMocks();
 });
 
 function git(cwd: string, ...args: string[]): string {
@@ -182,6 +184,7 @@ releases:
     sshLog,
     commit,
     runtime,
+    config,
     setRelease(tag = 'v0.1.0') {
       release = {
         id: 1,
@@ -537,5 +540,301 @@ describe('tracked release preparation', () => {
       code: 'execution-unavailable',
     });
     expect(f.methods).toEqual([]);
+  });
+});
+
+// Exercise approval through the same real preparation, state store and ownership gate.
+describe('durable approval admission', () => {
+  function approval(f: Awaited<ReturnType<typeof fixture>>, store = f.store, ownership = f.owner) {
+    return new ReleaseApproval({ config: f.config, runtime: f.runtime, store, ownership });
+  }
+
+  function request(plan: ReleasePlan) {
+    return { planId: plan.planId, digest: plan.digest };
+  }
+
+  function variant(
+    f: Awaited<ReturnType<typeof fixture>>,
+    original: ReleasePlan,
+    change: (plan: ReleasePlan) => void,
+  ) {
+    const plan = structuredClone(original);
+    plan.planId = 'variant';
+    change(plan);
+    plan.digest = releasePlanDigest(plan.payload);
+    f.store.writePlan(plan);
+    return plan;
+  }
+
+  it('binds one durable intent and job, serializes duplicate callers, and survives a lost response/restart', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    const reads = f.methods.length;
+    const refs = git(f.remote, 'show-ref');
+    const [first, duplicate] = await Promise.all([
+      approval(f).approve(request(plan), 'admin'),
+      approval(f).approve(request(plan), 'admin'),
+    ]);
+    expect(duplicate).toEqual(first);
+    expect(first).toMatchObject({
+      kind: 'publish',
+      state: 'queued',
+      planId: plan.planId,
+      planDigest: plan.digest,
+    });
+    const intent = f.store.readIntent(plan.planId);
+    expect(intent).toMatchObject({
+      jobId: first.jobId,
+      planId: plan.planId,
+      planDigest: plan.digest,
+      operator: 'admin',
+      approvedActions: plan.payload.actions,
+    });
+    expect(Date.parse(intent.approvedAt)).toBeLessThan(Date.parse(plan.approvalDeadline));
+    expect(Date.parse(intent.approvedAt)).toBeGreaterThanOrEqual(Date.parse(plan.preparedAt!));
+    await f.owner.shutdown();
+    const restarted = await acquireReleaseOwnership({ stateDir: f.stateDir });
+    cleanups.push(async () => {
+      await restarted.shutdown();
+    });
+    const store = new ReleaseStateStore({ stateDir: f.stateDir });
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(plan.approvalDeadline) + 1);
+    expect(await approval(f, store, restarted).approve(request(plan), 'admin')).toEqual(first);
+    now.mockRestore();
+    expect(store.readIntent(plan.planId)).toEqual(intent);
+    expect(store.listJobs().filter((job) => job.kind === 'publish')).toEqual([first]);
+    expect(f.methods).toHaveLength(reads);
+    expect(git(f.remote, 'show-ref')).toBe(refs);
+    noRemoteWrites(f);
+  });
+
+  it.each([null, '', 'somebody-else', 'admin\n'])(
+    'rejects unauthenticated actor %j without admission',
+    async (actor) => {
+      const f = await fixture();
+      const plan = await prepared(f);
+      await expect(approval(f).approve(request(plan), actor)).rejects.toMatchObject({
+        code: 'not-authenticated',
+      });
+      expect(f.store.listJobs().filter((job) => job.kind === 'publish')).toEqual([]);
+    },
+  );
+
+  it.each([
+    null,
+    [],
+    {},
+    { planId: '../escape', digest: 'a'.repeat(64) },
+    { planId: 'p', digest: 'bad' },
+    { planId: 'p', digest: 'a'.repeat(64), operator: 'admin' },
+  ])('rejects malformed request %j', async (input) => {
+    const f = await fixture();
+    await expect(approval(f).approve(input, 'admin')).rejects.toMatchObject({
+      code: 'invalid-request',
+    });
+    expect(f.store.listJobs()).toEqual([]);
+  });
+
+  it('rejects unknown plans and a forged digest, even on a duplicate', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    await expect(
+      approval(f).approve({ planId: 'missing', digest: plan.digest }, 'admin'),
+    ).rejects.toMatchObject({ code: 'not-found' });
+    await expect(
+      approval(f).approve({ ...request(plan), digest: 'f'.repeat(64) }, 'admin'),
+    ).rejects.toMatchObject({ code: 'plan-stale' });
+    const job = await approval(f).approve(request(plan), 'admin');
+    await expect(
+      approval(f).approve({ ...request(plan), digest: 'f'.repeat(64) }, 'admin'),
+    ).rejects.toMatchObject({ code: 'plan-stale' });
+    expect(f.store.readIntent(plan.planId).jobId).toBe(job.jobId);
+  });
+
+  it.each(['expired', 'blocker', 'unknown', 'actions', 'legacy', 'future', 'config'] as const)(
+    'rejects %s plans before intent',
+    async (failure) => {
+      const f = await fixture();
+      const original = await prepared(f);
+      const plan = variant(f, original, (p) => {
+        if (failure === 'expired') {
+          p.preparedAt = new Date(Date.now() - 31 * 60_000).toISOString();
+          p.approvalDeadline = new Date(Date.parse(p.preparedAt) + 30 * 60_000).toISOString();
+        }
+        if (failure === 'future') {
+          p.preparedAt = new Date(Date.now() + 60_000).toISOString();
+          p.approvalDeadline = new Date(Date.parse(p.preparedAt) + 30 * 60_000).toISOString();
+        }
+        if (failure === 'blocker') {
+          p.payload.blockers = [{ code: 'blocked', message: 'Unresolved evidence' }];
+        }
+        if (failure === 'unknown') p.payload.tag.state = 'unknown';
+        if (failure === 'actions') p.payload.actions = [];
+        if (failure === 'legacy') delete p.preparedAt;
+        if (failure === 'config') p.payload.ci.workflowPath = '.gitea/workflows/other.yml';
+      });
+      await expect(approval(f).approve(request(plan), 'admin')).rejects.toMatchObject({
+        code:
+          failure === 'expired'
+            ? 'plan-expired'
+            : failure === 'config'
+              ? 'plan-stale'
+              : 'repository-ineligible',
+      });
+      expect(f.store.listJobs().filter((job) => job.kind === 'publish')).toEqual([]);
+      expect(() => f.store.readIntent(plan.planId)).toThrow();
+      noRemoteWrites(f);
+    },
+  );
+
+  it('blocks a competing plan and preparation until the accepted attempt is reconciled', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    const other = variant(f, plan, () => {});
+    await approval(f).approve(request(plan), 'admin');
+    await expect(approval(f).approve(request(other), 'admin')).rejects.toMatchObject({
+      code: 'attempt-unresolved',
+    });
+    const result = await terminal(f.store, await f.service().prepare('app'));
+    expect(result).toMatchObject({ state: 'blocked', errorCode: 'attempt-unresolved' });
+    noRemoteWrites(f);
+  });
+
+  it('accepts an independently prepared no-op without inventing actions', async () => {
+    const f = await fixture({ baseline: true, sameCandidate: true });
+    f.setRelease();
+    const plan = await prepared(f);
+    expect(plan.payload.actions).toEqual([]);
+    const job = await approval(f).approve(request(plan), 'admin');
+    expect(f.store.readIntent(plan.planId)).toMatchObject({
+      jobId: job.jobId,
+      approvedActions: [],
+    });
+    noRemoteWrites(f);
+  });
+
+  it('requires a receipt for earlier completion and rejects stale actions for that version', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    const other = variant(f, plan, () => {});
+    const accepted = await approval(f).approve(request(plan), 'admin');
+    const complete: ReleaseJob = {
+      ...accepted,
+      state: 'complete',
+      step: 'finished',
+      remote: { tag: 'exact', release: 'exact' },
+    };
+    f.store.writeJob(complete);
+    await expect(approval(f).approve(request(other), 'admin')).rejects.toMatchObject({
+      code: 'attempt-unresolved',
+    });
+    f.store.writeReceipt({
+      receiptId: 'completed',
+      jobId: complete.jobId,
+      planId: plan.planId,
+      planDigest: plan.digest,
+      contractVersion: 1,
+      stateSchemaVersion: 1,
+      state: 'complete',
+      remote: complete.remote,
+      errorCode: null,
+    });
+    await expect(approval(f).approve(request(other), 'admin')).rejects.toMatchObject({
+      code: 'plan-stale',
+    });
+    expect(await approval(f).approve(request(plan), 'admin')).toEqual(complete);
+    noRemoteWrites(f);
+  });
+
+  it('fails closed on corrupt stored content and a closed ownership gate', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    const file = join(f.stateDir, 'plans', `${plan.planId}.json`);
+    const original = readFileSync(file, 'utf8');
+    const record = JSON.parse(original);
+    record.body.payload.notes.text = 'unapproved notes';
+    writeFileSync(file, JSON.stringify(record));
+    await expect(approval(f).approve(request(plan), 'admin')).rejects.toMatchObject({
+      code: 'internal-error',
+    });
+    writeFileSync(file, original);
+    await f.owner.shutdown();
+    await expect(approval(f).approve(request(plan), 'admin')).rejects.toMatchObject({
+      code: 'execution-unavailable',
+    });
+    expect(f.store.listJobs().filter((job) => job.kind === 'publish')).toEqual([]);
+  });
+
+  it.each(['job', 'intent', 'queue'] as const)(
+    'keeps %s persistence failure ineligible and never replays it on retry',
+    async (failure) => {
+      const f = await fixture();
+      const plan = await prepared(f);
+      const writeJob = f.store.writeJob.bind(f.store);
+      if (failure === 'intent') {
+        vi.spyOn(f.store, 'writeIntent').mockImplementation(() => {
+          throw new Error('secret storage diagnostic');
+        });
+      } else {
+        vi.spyOn(f.store, 'writeJob').mockImplementation((job) => {
+          if (failure === 'job' || job.state === 'queued') {
+            throw new Error('secret storage diagnostic');
+          }
+          return writeJob(job);
+        });
+      }
+      await expect(approval(f).approve(request(plan), 'admin')).rejects.toMatchObject({
+        code: 'internal-error',
+        message: 'approval evidence could not be safely persisted or read',
+      });
+      vi.restoreAllMocks();
+      const store = new ReleaseStateStore({ stateDir: f.stateDir });
+      const jobs = store.listJobs().filter((job) => job.kind === 'publish');
+      expect(jobs.every((job) => job.state === 'needs-inspection')).toBe(true);
+      if (failure === 'intent') {
+        await expect(approval(f, store).approve(request(plan), 'admin')).rejects.toMatchObject({
+          code: 'attempt-unresolved',
+        });
+        expect(() => store.readIntent(plan.planId)).toThrow();
+      } else if (failure === 'queue') {
+        const intent = store.readIntent(plan.planId);
+        expect(await approval(f, store).approve(request(plan), 'admin')).toEqual(jobs[0]);
+        expect(store.readIntent(plan.planId)).toEqual(intent);
+      } else {
+        expect(jobs).toEqual([]);
+        expect(() => store.readIntent(plan.planId)).toThrow();
+      }
+      noRemoteWrites(f);
+    },
+  );
+
+  it('does not accept a visible intent after failed directory synchronization until retry synchronizes it', async () => {
+    const f = await fixture();
+    const plan = await prepared(f);
+    let syncingIntent = false;
+    const store = new ReleaseStateStore({
+      stateDir: f.stateDir,
+      fsync(fd) {
+        if (syncingIntent && fstatSync(fd).isDirectory()) throw new Error('disk unavailable');
+        fsyncSync(fd);
+      },
+    });
+    const write = store.writeIntent.bind(store);
+    vi.spyOn(store, 'writeIntent').mockImplementation((intent) => {
+      syncingIntent = true;
+      return write(intent);
+    });
+    await expect(approval(f, store).approve(request(plan), 'admin')).rejects.toMatchObject({
+      code: 'internal-error',
+    });
+    const intent = f.store.readIntent(plan.planId);
+    expect(f.store.readJob(intent.jobId).state).toBe('needs-inspection');
+    await expect(approval(f, store).approve(request(plan), 'admin')).rejects.toMatchObject({
+      code: 'internal-error',
+    });
+    const recovered = await approval(f).approve(request(plan), 'admin');
+    expect(recovered).toMatchObject({ jobId: intent.jobId, state: 'needs-inspection' });
+    expect(f.store.readIntent(plan.planId)).toEqual(intent);
+    noRemoteWrites(f);
   });
 });
