@@ -1533,6 +1533,43 @@ describe('read-only publication reconciliation and original-version recovery', (
     },
   );
 
+  it.each(['timeout', 'timeout-after'])(
+    'reconciles %s inside the admitted operation during actual owner shutdown',
+    async (mode) => {
+      const f = await fixture();
+      const { job } = await accepted(f);
+      f.enablePush(mode);
+      const controller = new AbortController();
+      const running = f.publication(f.store, { signal: controller.signal }).execute(job.jobId);
+      let launched = false;
+      for (let i = 0; i < 500; i++) {
+        launched = readFileSync(f.sshLog, 'utf8').includes('git-receive-pack');
+        const effectReady =
+          mode === 'timeout' ||
+          git(f.remote, 'for-each-ref', '--format=%(refname)').includes('refs/tags/v0.1.0');
+        if (launched && effectReady) break;
+        await delay(10);
+      }
+      expect(launched).toBe(true);
+      const shutdown = f.owner.shutdown();
+      expect(f.owner.accepting).toBe(false);
+      controller.abort();
+      const result = await running;
+      const remote = { tag: mode === 'timeout' ? 'absent' : 'exact', release: 'absent' };
+      expect(result).toMatchObject({ state: 'blocked', remote });
+      expect(f.store.readReceipt(result.reconciliationJobId!)).toMatchObject({
+        state: 'blocked',
+        remote,
+        evidence: { publicationJobId: job.jobId, interruptedStep: 'creating-tag' },
+      });
+      expect(await shutdown).toEqual({ drained: true, pending: [], lockReleased: true });
+      const log = readFileSync(f.sshLog, 'utf8');
+      expect(log.slice(log.indexOf('git-receive-pack'))).toContain('git-upload-pack');
+      expect(log.match(/git-receive-pack/g)).toHaveLength(1);
+      expect(new Set(f.methods)).toEqual(new Set(['GET']));
+    },
+  );
+
   it('keeps an exact existing tag/release as a durably verified no-op', async () => {
     const f = await fixture({ baseline: true, sameCandidate: true });
     f.setRelease();

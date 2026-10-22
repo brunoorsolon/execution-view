@@ -50,8 +50,8 @@ export class ReleasePublication {
       );
     }
     const plan = store.readPlan(original.planId);
-    let inspect = false;
     await ownership.runExclusive(plan.payload.repository, async () => {
+      let inspect = false;
       let job = store.readJob(jobId);
       if (job.state !== 'queued') return;
       const save = (patch: Partial<ReleaseJob>) => {
@@ -200,20 +200,20 @@ export class ReleasePublication {
         store.writeIntent(intent!);
         if (p.tag.state !== 'absent') {
           inspect = true;
-          return;
+        } else {
+          save({ step: 'creating-tag', remote: { tag: 'unknown', release: 'unknown' } });
+          inspect = true;
+          const pushed = await checkout.pushPreparedTag(p.tagName, p.tag.objectId!);
+          // Never persist subprocess output or trust a successful response as remote truth.
+          save({
+            blocker: {
+              code: pushed.ok ? 'tag-push-returned' : pushed.blocker.code,
+              message: pushed.ok
+                ? 'One non-force tag push returned; independent inspection is required.'
+                : `One non-force tag push ended with ${pushed.blocker.code}; independent inspection is required.`,
+            },
+          });
         }
-        save({ step: 'creating-tag', remote: { tag: 'unknown', release: 'unknown' } });
-        inspect = true;
-        const pushed = await checkout.pushPreparedTag(p.tagName, p.tag.objectId!);
-        // Never persist subprocess output or trust a successful response as remote truth.
-        save({
-          blocker: {
-            code: pushed.ok ? 'tag-push-returned' : pushed.blocker.code,
-            message: pushed.ok
-              ? 'One non-force tag push returned; independent inspection is required.'
-              : `One non-force tag push ended with ${pushed.blocker.code}; independent inspection is required.`,
-          },
-        });
       } catch (error) {
         const detail =
           error instanceof Stale
@@ -235,11 +235,11 @@ export class ReleasePublication {
           // The durable running/creating-tag marker and intent remain recovery-visible.
         }
       }
+      // Drain inspection with the already-admitted operation, even after shutdown closes admission.
+      if (inspect) {
+        await new ReleaseReconciliation(this.options).reconcileAdmitted(jobId);
+      }
     });
-    // A separate gate permits the existing read-only reconciler to own durable receipt finalization.
-    if (inspect) {
-      await new ReleaseReconciliation(this.options).reconcile(jobId);
-    }
     return store.readJob(jobId);
   }
 }
