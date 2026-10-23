@@ -32,7 +32,7 @@ jobs:
             echo '::error::docker-compose.release.yml rendered without EV_IMAGE; it must refuse a default image'
             exit 1
           fi
-          EV_IMAGE=ghcr.io/brunoorsolon/execution-view:test docker compose -f docker-compose.release.yml config >/dev/null
+          EV_IMAGE=ghcr.io/brunoorsolon/forge-desk:test docker compose -f docker-compose.release.yml config >/dev/null
       - run: bash scripts/smoke-test.sh
 
   forge-integration:

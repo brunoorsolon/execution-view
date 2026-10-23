@@ -6,11 +6,9 @@ Forge Desk is a small self-hosted app that reads the **open issues** of your Git
 
 ## The name
 
-The product is **Forge Desk**; it was previously called execution-view. The CLI is `forge-desk`, the Compose service and container are `forge-desk`, and the tracker `User-Agent`, the DOT export graph id, the server log line and the browser preference keys all use `forge-desk`.
+The product is **Forge Desk**; it was called execution-view until 3.0.0, when the repository and the image moved to `forge-desk`. The CLI, the Compose service and container, the tracker `User-Agent`, the DOT export graph id, the server log line and the browser preference keys all use `forge-desk`.
 
-Two names stay `execution-view` because their new destinations do not exist yet: the repository, `github.com/brunoorsolon/execution-view`, and the image path, `ghcr.io/brunoorsolon/execution-view`. Every link and `docker pull` here uses those paths until they move ([Moving the repository and image](#moving-the-repository-and-image)).
-
-Until the major release that moves the image path, the `execution-view` CLI alias runs the same commands with the same output and exit codes (only help and usage text follow the name you invoked), and the web UI moves a theme or line mode saved under the old `execution-view:*` keys to the new keys. Config syntax, `EV_*` variables, API paths, shared planning URLs, export formats, planning login and release state are unchanged; only the DOT graph id inside exports changed, to `digraph "forge-desk"`. Upgrading an existing deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#upgrading).
+The repository is `github.com/brunoorsolon/forge-desk`; old `execution-view` repository URLs redirect to it. Images are published to `ghcr.io/brunoorsolon/forge-desk`, which carries 2.0.5 and every release from 3.0.0 on. The old path, `ghcr.io/brunoorsolon/execution-view`, keeps its tags up to 2.0.5 and gets no new ones ([The repository and image move](#the-repository-and-image-move)). Upgrading an existing deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#upgrading).
 
 ## Features
 
@@ -30,12 +28,12 @@ Until the major release that moves the image path, the `execution-view` CLI alia
 The demo uses a bundled fixture (no network, no token): the "Acme demo roadmap", two repositories with 23 open issues, a cycle and a dangling reference. It only needs Docker:
 
 ```sh
-docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml ghcr.io/brunoorsolon/execution-view:1
+docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml ghcr.io/brunoorsolon/forge-desk:3
 ```
 
 Open <http://localhost:8080>.
 
-Images are published to the GitHub Container Registry for `linux/amd64` and `linux/arm64` on every release: `ghcr.io/brunoorsolon/execution-view:<tag>`, where the tag is the exact version (`1.0.0`), the minor (`1.0`), the major (`1`) or `latest`.
+Images are published to the GitHub Container Registry for `linux/amd64` and `linux/arm64` on every release: `ghcr.io/brunoorsolon/forge-desk:<tag>`, where the tag is the exact version (`3.0.0`), the minor (`3.0`), the major (`3`) or `latest`.
 
 ## The web UI
 
@@ -75,7 +73,7 @@ mkdir forge-desk && cd forge-desk
 ```yaml
 services:
   forge-desk:
-    image: ghcr.io/brunoorsolon/execution-view:1.1.0
+    image: ghcr.io/brunoorsolon/forge-desk:3.0.0
     container_name: forge-desk
     restart: unless-stopped
     ports:
@@ -137,7 +135,7 @@ Open <http://localhost:8080>.
 docker compose pull && docker compose up -d
 ```
 
-Images are tagged with the exact version (`1.1.0`), the minor (`1.1`), the major (`1`) and `latest`. Use `:1` instead of a pinned version if you prefer to follow every 1.x release without editing the file.
+Images are tagged with the exact version (`3.0.0`), the minor (`3.0`), the major (`3`) and `latest`. Use `:3` instead of a pinned version if you prefer to follow every 3.x release without editing the file.
 
 **Release publication** uses the same image but a different deployment shape: [`docker-compose.release.yml`](docker-compose.release.yml) mounts the private state volume, the config file and the release secrets read-only, and enables the login. Read [docs/RELEASES.md](docs/RELEASES.md) first: it covers volume ownership, the dedicated Gitea 1.26.1 account and token scopes, SSH host trust, the one-writer limit, restart recovery, backup and the legacy cutover. Planning-only deployments above need none of it.
 
@@ -248,7 +246,7 @@ Agents that write your issues can be given the same rules: copy the [`skills/for
 
 ## CLI
 
-The CLI reads the same config as the server (`--config <path>`, then `EV_CONFIG`, then `./config.yaml`, then env-only mode). After `npm run build` it is `node dist/cli/index.js` (also installed as the `forge-desk` bin and its `execution-view` alias; the Docker image uses it as its entrypoint).
+The CLI reads the same config as the server (`--config <path>`, then `EV_CONFIG`, then `./config.yaml`, then env-only mode). After `npm run build` it is `node dist/cli/index.js` (also installed as the `forge-desk` bin; the Docker image uses it as its entrypoint).
 
 | Command                                                      | What it does                                                                                       |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
@@ -318,15 +316,11 @@ npm run typecheck && npm test && npm run format:check
    - in GitHub: **Actions → Release → Run workflow** on `main`, with **version** `1.2.3`. The workflow creates the tag `v1.2.3` on that commit;
    - or push a tag: `git tag v1.2.3 && git push origin v1.2.3`.
 
-The [Release workflow](.github/workflows/release.yml) runs the checks and the Docker smoke test, verifies that the version matches `package.json`, publishes the multi-arch image to `ghcr.io/brunoorsolon/execution-view` (`1.2.3`, `1.2`, `1` and `latest`; prereleases such as `1.3.0-rc.1` never move `latest`) and creates the GitHub Release. Publishing a release from the GitHub UI works too (the image is published; the release already exists). Run workflow with an empty version is a dry run that builds the image without pushing anything.
+The [Release workflow](.github/workflows/release.yml) runs the checks and the Docker smoke test, verifies that the version matches `package.json`, publishes the multi-arch image to `ghcr.io/brunoorsolon/forge-desk` (`1.2.3`, `1.2`, `1` and `latest`; prereleases such as `1.3.0-rc.1` never move `latest`) and creates the GitHub Release. Publishing a release from the GitHub UI works too (the image is published; the release already exists). Run workflow with an empty version is a dry run that builds the image without pushing anything.
 
-### Moving the repository and image
+### The repository and image move
 
-The repository and image still use the execution-view name. Moving them is an owner task, in this order:
-
-1. Rename the repository to `forge-desk` in **Settings → General** (needs admin). GitHub redirects web, API and Git URLs from the old name, as long as no new repository takes the name `execution-view`.
-2. The Release workflow publishes to `ghcr.io/${{ github.repository }}`, so the next release after the rename creates a new `ghcr.io/brunoorsolon/forge-desk` package. Open its package settings and check that it is public and linked to the repository. If you create the package by hand first, give the repository write access under **Manage Actions access**, or the release job cannot push. The old `execution-view` package keeps its tags but gets no new ones, and GHCR does not redirect image paths.
-3. Make that release a major version, because existing deployments must change their image path. In the same change, point the Dockerfile `org.opencontainers.image.source` label, the compose files, CI and the docs at the new paths, remove the `execution-view` CLI alias and the old browser storage keys, and say in the release notes which image path to switch to.
+The repository was renamed from `execution-view` to `forge-desk` in October 2026. The Release workflow publishes to `ghcr.io/${{ github.repository }}`, so releases now go to `ghcr.io/brunoorsolon/forge-desk`; 2.0.5 was published there first so that the package was public before any doc pointed at it, and 3.0.0 is the first release built there. Two things keep the move working: never create a new repository named `brunoorsolon/execution-view`, because reusing the name ends GitHub's redirects from the old URLs, and never delete the `execution-view` package, because pinned deployments and the release notes up to 2.0.5 pull from it.
 
 ## License
 

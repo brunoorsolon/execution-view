@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { main, programNameFor } from './main.js';
+import { main } from './main.js';
 import { readConfirmation } from './confirm.js';
 
 // Setting exitCode (instead of calling process.exit) lets `serve` keep running:
@@ -14,7 +14,6 @@ main(
     isTTY: process.stdout.isTTY === true,
   },
   {
-    programName: programNameFor(process.argv[1]),
     // Publishing asks only where a person can answer; anything else must pass --approve.
     ...(process.stdin.isTTY === true
       ? {
