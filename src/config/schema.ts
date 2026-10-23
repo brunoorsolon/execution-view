@@ -347,8 +347,11 @@ export const rawConfigSchema = z
       })
       .strict()
       .optional(),
+    // Not .int(): Zod 4 caps it at 2^53 - 1, and a larger whole number was always accepted here.
     cache: z
-      .object({ ttlSeconds: z.number().int().min(0).optional() })
+      .object({
+        ttlSeconds: z.number().refine(Number.isInteger, 'expected an integer').min(0).optional(),
+      })
       .strict()
       .optional(),
     ui: z
