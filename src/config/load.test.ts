@@ -342,6 +342,16 @@ describe('basicAuth', () => {
     expect(e2.message).toContain('PW');
   });
 
+  it('rejects an empty username and an unknown key', () => {
+    expect(
+      errorOf(() => parseConfig(auth('    username: ""\n    password: pw'), {})).message,
+    ).toContain('server.basicAuth.username');
+    expect(
+      errorOf(() => parseConfig(auth('    username: admin\n    password: pw\n    role: x'), {}))
+        .message,
+    ).toContain('role');
+  });
+
   it('FD_BASIC_AUTH overrides, splitting on the first colon', () => {
     const cfg = parseConfig(auth('    username: admin\n    password: pw'), {
       FD_BASIC_AUTH: 'bob:pa:ss',
