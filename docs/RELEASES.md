@@ -56,12 +56,12 @@ Release state must live on a private local volume. The pattern below is implemen
 
    The release token file must be readable by the runtime user and should be mode `0600`. The SSH private key must be mode `0600` and owned by uid 1000, and `known_hosts` must be mode `0600` or `0644` and not group- or world-writable. Startup refuses a private key, `known_hosts` or state-directory violation with a diagnostic naming the path, and never rewrites mounted permissions.
 
-4. Start with the login enabled. Releases require `server.basicAuth` (or `EV_BASIC_AUTH`); the browser approval and the CLI both authenticate as that one operator identity.
+4. Start with the login enabled. Releases require `server.basicAuth` (or `FD_BASIC_AUTH`); the browser approval and the CLI both authenticate as that one operator identity.
 
    ```sh
-   # EV_IMAGE must name a Forge Desk image release that ships the release runtime; the Compose
+   # FD_IMAGE must name a Forge Desk image release that ships the release runtime; the Compose
    # file refuses to start without it (or replace `image:` with `build: .` in the file).
-   printf 'EV_IMAGE=ghcr.io/brunoorsolon/forge-desk:%s\n' '<release>' >> .env
+   printf 'FD_IMAGE=ghcr.io/brunoorsolon/forge-desk:%s\n' '<release>' >> .env
    docker compose -f docker-compose.release.yml run --rm forge-desk check
    docker compose -f docker-compose.release.yml up -d
    ```

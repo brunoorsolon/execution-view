@@ -1,7 +1,7 @@
 # Forge Desk with release publication enabled. Planning-only deployments use docker-compose.yml.
 # Operation, permissions, backup and cutover: docs/RELEASES.md. Step-by-step host setup below.
 #
-# 0. Set EV_IMAGE to a Forge Desk image release that ships the release runtime (git, ssh, flock),
+# 0. Set FD_IMAGE to a Forge Desk image release that ships the release runtime (git, ssh, flock),
 #    or replace `image:` below with `build: .` to build this repository. An image from before the
 #    release runtime lacks those tools, so the container refuses to start with releases enabled.
 #    The Compose file stops with a message instead of silently using the planning-only image.
@@ -25,7 +25,7 @@
 services:
   forge-desk:
     # Required, never defaulted: the planning-only image tags predate the release runtime.
-    image: ${EV_IMAGE:?Set EV_IMAGE to a Forge Desk image release that ships the release runtime}
+    image: ${FD_IMAGE:?Set FD_IMAGE to a Forge Desk image release that ships the release runtime}
     container_name: forge-desk
     restart: unless-stopped
     ports:
@@ -34,7 +34,7 @@ services:
       # Read-only planning token. The release token is a separate file and must not be this one.
       - GITEA_TOKEN=${GITEA_TOKEN}
       # Releases require the application login (user:password in .env).
-      - EV_BASIC_AUTH=${EV_BASIC_AUTH}
+      - FD_BASIC_AUTH=${FD_BASIC_AUTH}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       # Private local volume for authoritative release state; owned by uid/gid 1000, mode 0700.

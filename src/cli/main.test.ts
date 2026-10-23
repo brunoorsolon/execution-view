@@ -111,8 +111,8 @@ describe('views', () => {
     ]);
   });
 
-  it('honours EV_CONFIG', async () => {
-    const r = await run(['views'], { env: { EV_CONFIG: 'config.demo.yaml' } });
+  it('honours FD_CONFIG', async () => {
+    const r = await run(['views'], { env: { FD_CONFIG: 'config.demo.yaml' } });
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('demo');
   });
@@ -429,13 +429,13 @@ describe('serve', () => {
     const startServer = vi.fn(() => Promise.resolve({} as never));
     const r = await run(['serve', '--config', 'config.demo.yaml'], {
       startServer,
-      env: { EV_PORT: '9999' },
+      env: { FD_PORT: '9999' },
     });
     expect(r.code).toBe(0);
     expect(startServer).toHaveBeenCalledTimes(1);
     expect(startServer).toHaveBeenCalledWith({
       configPath: path.join(ROOT, 'config.demo.yaml'),
-      env: { EV_PORT: '9999' },
+      env: { FD_PORT: '9999' },
     });
   });
 

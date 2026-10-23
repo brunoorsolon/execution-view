@@ -77,7 +77,7 @@ echo "ok: uid $runtime_uid, $git_path, $ssh_path, $flock_path"
 
 echo "==> demo config"
 docker run -d --name "$DEMO_NAME" -p 127.0.0.1::8080 \
-  -e EV_CONFIG=/app/config.demo.yaml "$IMAGE" >/dev/null
+  -e FD_CONFIG=/app/config.demo.yaml "$IMAGE" >/dev/null
 BASE="http://127.0.0.1:$(host_port "$DEMO_NAME")"
 wait_healthy "$BASE"
 echo "ok: /healthz"
@@ -110,7 +110,7 @@ echo "ok: GET / serves the web UI (Forge Desk, script $asset)"
 
 echo "==> env-only mode (no config file)"
 docker run -d --name "$ENV_NAME" -p 127.0.0.1::8080 \
-  -e EV_PROVIDER=github -e EV_REPOS=octocat/hello-world "$IMAGE" >/dev/null
+  -e FD_PROVIDER=github -e FD_REPOS=octocat/hello-world "$IMAGE" >/dev/null
 ENV_BASE="http://127.0.0.1:$(host_port "$ENV_NAME")"
 wait_healthy "$ENV_BASE"
 echo "ok: env-only /healthz"
@@ -135,7 +135,7 @@ server:
   port: 8080
   basicAuth:
     username: operator
-    passwordEnv: EV_BASIC_AUTH_PASSWORD
+    passwordEnv: FD_BASIC_AUTH_PASSWORD
 sources:
   - id: gt
     kind: gitea
@@ -170,9 +170,9 @@ YAML
 release_args=(
   --user "$(id -u):$(id -g)"
   -e HOME=/tmp
-  -e EV_CONFIG=/app/config.yaml
+  -e FD_CONFIG=/app/config.yaml
   -e GITEA_TOKEN=planning-smoke-token
-  -e EV_BASIC_AUTH_PASSWORD=smoke-pass
+  -e FD_BASIC_AUTH_PASSWORD=smoke-pass
   -v "$TMP_DIR/config.yaml:/app/config.yaml:ro"
   -v "$TMP_DIR/secrets:/run/secrets:ro"
   -v "$TMP_DIR/state:/var/lib/forge-desk"

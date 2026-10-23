@@ -58,7 +58,7 @@ export interface ParseConfigOptions {
 }
 
 const NO_CONFIG_MESSAGE =
-  'No configuration found: create config.yaml (see config.example.yaml), set EV_CONFIG, or set EV_PROVIDER and EV_REPOS for env-only mode';
+  'No configuration found: create config.yaml (see config.example.yaml), set FD_CONFIG, or set FD_PROVIDER and FD_REPOS for env-only mode';
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -70,6 +70,45 @@ function envValue(env: Env, name: string): string | undefined {
   if (v === undefined) return undefined;
   const t = v.trim();
   return t === '' ? undefined : t;
+}
+
+// shortcut: the EV_* names from before the Forge Desk rename still work and still win over FD_*,
+// as in 3.0.0, so a 3.0.x upgrade changes nothing; remove them in the next major release.
+const SETTINGS = [
+  'CONFIG',
+  'PROVIDER',
+  'REPOS',
+  'TOKEN',
+  'BASE_URL',
+  'SUB_ISSUES',
+  'ORDERING_MODE',
+  'VIEW_ID',
+  'VIEW_TITLE',
+  'PRIORITY_LABELS',
+  'HOST',
+  'PORT',
+  'CACHE_TTL',
+  'REFRESH_MINUTES',
+  'BASIC_AUTH',
+  'WEBHOOK_SECRET',
+] as const;
+type Setting = (typeof SETTINGS)[number];
+
+/** The variable that supplies a fixed setting: its legacy `EV_` name when set, else `FD_`. */
+function settingName(env: Env, name: Setting): string {
+  return envValue(env, `EV_${name}`) !== undefined ? `EV_${name}` : `FD_${name}`;
+}
+
+function setting(env: Env, name: Setting): string | undefined {
+  return envValue(env, settingName(env, name));
+}
+
+function legacySettingWarnings(env: Env): string[] {
+  return SETTINGS.filter((name) => envValue(env, `EV_${name}`) !== undefined).map(
+    (name) =>
+      `EV_${name} is deprecated: rename it to FD_${name}` +
+      (envValue(env, `FD_${name}`) !== undefined ? ` (EV_${name} overrides FD_${name})` : ''),
+  );
 }
 
 function stripTrailingSlashes(s: string): string {
@@ -211,11 +250,11 @@ function resolveBasicAuth(
   raw: NonNullable<RawConfig['server']>['basicAuth'],
   env: Env,
 ): { username: string; password: string } | null {
-  const override = envValue(env, 'EV_BASIC_AUTH');
+  const override = setting(env, 'BASIC_AUTH');
   if (override !== undefined) {
     const colon = override.indexOf(':');
     if (colon <= 0 || colon === override.length - 1) {
-      throw new ConfigError('EV_BASIC_AUTH: expected "user:password"');
+      throw new ConfigError(`${settingName(env, 'BASIC_AUTH')}: expected "user:password"`);
     }
     return { username: override.slice(0, colon), password: override.slice(colon + 1) };
   }
@@ -237,7 +276,7 @@ function resolveWebhooks(
   env: Env,
   warnings: string[],
 ): { secret: string } | null {
-  const override = envValue(env, 'EV_WEBHOOK_SECRET');
+  const override = setting(env, 'WEBHOOK_SECRET');
   if (override !== undefined) return { secret: override };
   if (raw === undefined) return null;
   const fromEnv = raw.secretEnv !== undefined ? envValue(env, raw.secretEnv) : undefined;
@@ -277,7 +316,7 @@ function resolveReleases(
   const errors: string[] = [];
   if (!hasLogin) {
     errors.push(
-      'releases.enabled: the application login (server.basicAuth or EV_BASIC_AUTH) is required when releases are enabled',
+      'releases.enabled: the application login (server.basicAuth or FD_BASIC_AUTH) is required when releases are enabled',
     );
   }
 
@@ -363,7 +402,7 @@ function resolveConfig(input: unknown, env: Env, baseDir: string): AppConfig {
   if (errors.length > 0)
     throw new ConfigError(`Invalid configuration:\n  - ${errors.join('\n  - ')}`);
 
-  const warnings: string[] = [];
+  const warnings: string[] = legacySettingWarnings(env);
   const sources = raw.sources.map((s) => resolveSource(s, env, baseDir, warnings));
   const views = raw.views.map(resolveView);
   for (const v of views) {
@@ -372,21 +411,21 @@ function resolveConfig(input: unknown, env: Env, baseDir: string): AppConfig {
     }
   }
 
-  const host = envValue(env, 'EV_HOST') ?? raw.server?.host ?? DEFAULT_HOST;
-  const portEnv = envValue(env, 'EV_PORT');
+  const host = setting(env, 'HOST') ?? raw.server?.host ?? DEFAULT_HOST;
+  const portEnv = setting(env, 'PORT');
   const port =
     portEnv !== undefined
-      ? parseIntEnv('EV_PORT', portEnv, 1, 65535)
+      ? parseIntEnv(settingName(env, 'PORT'), portEnv, 1, 65535)
       : (raw.server?.port ?? DEFAULT_PORT);
-  const ttlEnv = envValue(env, 'EV_CACHE_TTL');
+  const ttlEnv = setting(env, 'CACHE_TTL');
   const ttlSeconds =
     ttlEnv !== undefined
-      ? parseIntEnv('EV_CACHE_TTL', ttlEnv, 0, Number.MAX_SAFE_INTEGER)
+      ? parseIntEnv(settingName(env, 'CACHE_TTL'), ttlEnv, 0, Number.MAX_SAFE_INTEGER)
       : (raw.cache?.ttlSeconds ?? DEFAULT_CACHE_TTL_SECONDS);
-  const refreshEnv = envValue(env, 'EV_REFRESH_MINUTES');
+  const refreshEnv = setting(env, 'REFRESH_MINUTES');
   const refreshMinutes =
     refreshEnv !== undefined
-      ? parseIntEnv('EV_REFRESH_MINUTES', refreshEnv, 0, MAX_REFRESH_MINUTES)
+      ? parseIntEnv(settingName(env, 'REFRESH_MINUTES'), refreshEnv, 0, MAX_REFRESH_MINUTES)
       : (raw.ui?.refreshMinutes ?? DEFAULT_REFRESH_MINUTES);
 
   const basicAuth = resolveBasicAuth(raw.server?.basicAuth, env);
@@ -433,62 +472,62 @@ export function parseConfig(
 }
 
 /**
- * Build a config from EV_* variables alone (used when there is no config file).
+ * Build a config from FD_* variables alone (used when there is no config file).
  * Relative fixture paths do not apply here; `cwd` is only the base directory.
  */
 export function configFromEnv(env: Env, cwd: string = process.cwd()): AppConfig {
-  const provider = envValue(env, 'EV_PROVIDER');
+  const provider = setting(env, 'PROVIDER');
   if (provider === undefined) throw new ConfigError(NO_CONFIG_MESSAGE);
   if (provider !== 'github' && provider !== 'gitea') {
-    throw new ConfigError(`EV_PROVIDER: expected "github" or "gitea" (got "${provider}")`);
+    throw new ConfigError(
+      `${settingName(env, 'PROVIDER')}: expected "github" or "gitea" (got "${provider}")`,
+    );
   }
-  const repos = parseCommaList(env['EV_REPOS']);
+  const repos = parseCommaList(setting(env, 'REPOS'));
   if (repos.length === 0) {
     throw new ConfigError(
-      'EV_REPOS is required in env-only mode (comma-separated owner/repo list)',
+      'FD_REPOS is required in env-only mode (comma-separated owner/repo list)',
     );
   }
   const token =
-    envValue(env, 'EV_TOKEN') ??
-    envValue(env, provider === 'github' ? 'GITHUB_TOKEN' : 'GITEA_TOKEN');
-  const baseUrl = envValue(env, 'EV_BASE_URL');
-  const subIssues = envValue(env, 'EV_SUB_ISSUES');
-  const orderingMode = envValue(env, 'EV_ORDERING_MODE');
+    setting(env, 'TOKEN') ?? envValue(env, provider === 'github' ? 'GITHUB_TOKEN' : 'GITEA_TOKEN');
+  const baseUrl = setting(env, 'BASE_URL');
+  const subIssues = setting(env, 'SUB_ISSUES');
+  const orderingMode = setting(env, 'ORDERING_MODE');
 
   const source: Record<string, unknown> = { id: 'default', kind: provider };
   if (baseUrl !== undefined) source['baseUrl'] = baseUrl;
   if (token !== undefined) source['token'] = token;
 
   const view: Record<string, unknown> = {
-    id: envValue(env, 'EV_VIEW_ID') ?? 'default',
+    id: setting(env, 'VIEW_ID') ?? 'default',
     source: 'default',
     repos,
     ordering: {
-      priorityLabels: parseCommaList(env['EV_PRIORITY_LABELS']),
+      priorityLabels: parseCommaList(setting(env, 'PRIORITY_LABELS')),
       ...(orderingMode !== undefined
-        ? { mode: parseOrderingModeEnv('EV_ORDERING_MODE', orderingMode) }
+        ? { mode: parseOrderingModeEnv(settingName(env, 'ORDERING_MODE'), orderingMode) }
         : {}),
     },
   };
-  const title = envValue(env, 'EV_VIEW_TITLE');
+  const title = setting(env, 'VIEW_TITLE');
   if (title !== undefined) view['title'] = title;
   if (subIssues !== undefined) {
-    view['dependencies'] = { subIssues: parseBoolEnv('EV_SUB_ISSUES', subIssues) };
+    view['dependencies'] = { subIssues: parseBoolEnv(settingName(env, 'SUB_ISSUES'), subIssues) };
   }
 
   return resolveConfig({ sources: [source], views: [view] }, env, cwd);
 }
 
 /**
- * Load the configuration. Path precedence: opts.path, env.EV_CONFIG,
+ * Load the configuration. Path precedence: opts.path, env.FD_CONFIG (or legacy EV_CONFIG),
  * `<cwd>/config.yaml`. An explicit path must exist. When the default path does
  * not exist, fall back to env-only mode.
  */
 export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();
-  const explicit =
-    opts.path !== undefined && opts.path !== '' ? opts.path : envValue(env, 'EV_CONFIG');
+  const explicit = opts.path !== undefined && opts.path !== '' ? opts.path : setting(env, 'CONFIG');
   const filePath = resolve(cwd, explicit ?? 'config.yaml');
 
   let exists = false;
@@ -500,7 +539,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
 
   if (!exists) {
     if (explicit !== undefined) throw new ConfigError(`Config file not found: ${filePath}`);
-    if (envValue(env, 'EV_PROVIDER') === undefined) throw new ConfigError(NO_CONFIG_MESSAGE);
+    if (setting(env, 'PROVIDER') === undefined) throw new ConfigError(NO_CONFIG_MESSAGE);
     return configFromEnv(env, cwd);
   }
 

@@ -28,7 +28,7 @@ The repository is `github.com/brunoorsolon/forge-desk`; old `execution-view` rep
 The demo uses a bundled fixture (no network, no token): the "Acme demo roadmap", two repositories with 23 open issues, a cycle and a dangling reference. It only needs Docker:
 
 ```sh
-docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml ghcr.io/brunoorsolon/forge-desk:3
+docker run --rm -p 8080:8080 -e FD_CONFIG=/app/config.demo.yaml ghcr.io/brunoorsolon/forge-desk:3
 ```
 
 Open <http://localhost:8080>.
@@ -79,24 +79,24 @@ services:
     ports:
       - '8080:8080'
     environment:
-      - EV_PROVIDER=github
-      - EV_REPOS=owner/repo,owner/other-repo
+      - FD_PROVIDER=github
+      - FD_REPOS=owner/repo,owner/other-repo
       - GITHUB_TOKEN=${GITHUB_TOKEN}
     labels:
       - 'wud.tag.include=^v?\d+\.\d+\.\d+$$'
       - 'wud.tag.exclude=.*(alpha|beta|rc|dev|nightly).*'
 ```
 
-For Gitea or Forgejo, use these `environment:` lines instead (`EV_BASE_URL` is the instance root, without `/api/v1`):
+For Gitea or Forgejo, use these `environment:` lines instead (`FD_BASE_URL` is the instance root, without `/api/v1`):
 
 ```yaml
-- EV_PROVIDER=gitea
-- EV_BASE_URL=https://gitea.example.com
-- EV_REPOS=owner/repo
+- FD_PROVIDER=gitea
+- FD_BASE_URL=https://gitea.example.com
+- FD_REPOS=owner/repo
 - GITEA_TOKEN=${GITEA_TOKEN}
 ```
 
-Optional: `- EV_PRIORITY_LABELS=P0,P1,P2` (highest first) and `- EV_BASIC_AUTH=${EV_BASIC_AUTH}` (`user:password`, turns on a login page). Every variable is listed in [docs/CONFIGURATION.md](docs/CONFIGURATION.md#env-only-mode). The `wud.*` labels let [What's Up Docker](https://getwud.github.io/wud/) report new releases; drop them if you do not use it.
+Optional: `- FD_PRIORITY_LABELS=P0,P1,P2` (highest first) and `- FD_BASIC_AUTH=${FD_BASIC_AUTH}` (`user:password`, turns on a login page). Every variable is listed in [docs/CONFIGURATION.md](docs/CONFIGURATION.md#env-only-mode). The `wud.*` labels let [What's Up Docker](https://getwud.github.io/wud/) report new releases; drop them if you do not use it.
 
 If your Gitea runs on the same host behind a reverse proxy and the container cannot reach its public name, map that name to the host's address:
 
@@ -111,7 +111,7 @@ extra_hosts:
 GITHUB_TOKEN=github_pat_xxx
 ```
 
-(`GITEA_TOKEN=xxx` for Gitea or Forgejo, and `EV_BASIC_AUTH=user:password` if you enabled it.)
+(`GITEA_TOKEN=xxx` for Gitea or Forgejo, and `FD_BASIC_AUTH=user:password` if you enabled it.)
 
 **4. Check the setup** (token, access, declared dependencies):
 
@@ -141,7 +141,7 @@ Images are tagged with the exact version (`3.0.0`), the minor (`3.0`), the major
 
 ### Several repositories, views or options: the config file
 
-Env-only mode gives one view on one tracker (`EV_REPOS` can still list several repositories, comma-separated). For several views, GitHub and Gitea together, scope filters, GitHub Enterprise Server, webhooks or the wave-by-wave ordering, use a config file: create `config.yaml` next to `docker-compose.yml` ([`config.example.yaml`](config.example.yaml) shows every option).
+Env-only mode gives one view on one tracker (`FD_REPOS` can still list several repositories, comma-separated). For several views, GitHub and Gitea together, scope filters, GitHub Enterprise Server, webhooks or the wave-by-wave ordering, use a config file: create `config.yaml` next to `docker-compose.yml` ([`config.example.yaml`](config.example.yaml) shows every option).
 
 The config never holds the tokens: `tokenEnv` names the environment variable that does, so you can commit `config.yaml` and keep only `.env` out of Git.
 
@@ -197,7 +197,7 @@ views:
 
 The first view opens by default. Dependencies between a GitHub issue and a Gitea issue are not followed.
 
-**In the compose file**, remove the `EV_*` lines, keep one token line per source, and mount the config:
+**In the compose file**, remove the `FD_*` lines, keep one token line per source, and mount the config:
 
 ```yaml
 environment:
@@ -214,10 +214,10 @@ with both tokens in `.env`. Create `config.yaml` **before** adding the mount: if
 Requires Node.js 22 or newer and a clone of the repository:
 
 ```sh
-npm ci && npm run build && EV_CONFIG=config.demo.yaml npm start
+npm ci && npm run build && FD_CONFIG=config.demo.yaml npm start
 ```
 
-That starts the demo; for your repositories set the same `EV_*` variables (or `EV_CONFIG=config.yaml`) instead.
+That starts the demo; for your repositories set the same `FD_*` variables (or `FD_CONFIG=config.yaml`) instead.
 
 ## Before you start: prerequisites
 
@@ -246,7 +246,7 @@ Agents that write your issues can be given the same rules: copy the [`skills/for
 
 ## CLI
 
-The CLI reads the same config as the server (`--config <path>`, then `EV_CONFIG`, then `./config.yaml`, then env-only mode). After `npm run build` it is `node dist/cli/index.js` (also installed as the `forge-desk` bin; the Docker image uses it as its entrypoint).
+The CLI reads the same config as the server (`--config <path>`, then `FD_CONFIG`, then `./config.yaml`, then env-only mode). After `npm run build` it is `node dist/cli/index.js` (also installed as the `forge-desk` bin; the Docker image uses it as its entrypoint).
 
 | Command                                                      | What it does                                                                                       |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |

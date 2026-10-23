@@ -36,12 +36,12 @@ COPY --from=build /app/dist ./dist
 COPY config.demo.yaml config.example.yaml ./
 COPY test/fixtures/demo.json ./test/fixtures/demo.json
 
-# EV_CONFIG is deliberately NOT set: an explicit path must exist, which would
-# break env-only mode (EV_PROVIDER + EV_REPOS) when no file is mounted. Without
+# FD_CONFIG is deliberately NOT set: an explicit path must exist, which would
+# break env-only mode (FD_PROVIDER + FD_REPOS) when no file is mounted. Without
 # it the default lookup is <cwd>/config.yaml, i.e. /app/config.yaml: mount your
-# config there, or set EV_PROVIDER/EV_REPOS and mount nothing.
-ENV EV_HOST=0.0.0.0 \
-    EV_PORT=8080
+# config there, or set FD_PROVIDER/FD_REPOS and mount nothing.
+ENV FD_HOST=0.0.0.0 \
+    FD_PORT=8080
 
 # Pre-create the release state directory with the runtime user's ownership and mode, so a named
 # volume mounted here inherits them on first use. A bind mount must be prepared on the host
@@ -51,8 +51,9 @@ RUN install -d -m 0700 -o node -g node /var/lib/forge-desk
 USER node
 EXPOSE 8080
 
+# A legacy EV_PORT still wins over FD_PORT, as in the config loader, until the next major release.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.EV_PORT||8080)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.EV_PORT||process.env.FD_PORT||8080)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["node", "dist/cli/index.js"]
 CMD ["serve"]

@@ -15,16 +15,16 @@ Contents:
 The config file path is chosen in this order:
 
 1. `--config <path>` (or `-c <path>`) on the CLI. `serve` accepts it too: `node dist/cli/index.js serve --config /etc/ev/config.yaml`.
-2. The `EV_CONFIG` environment variable.
+2. The `FD_CONFIG` environment variable.
 3. `./config.yaml` in the current working directory (in the Docker image: `/app/config.yaml`).
 
 Rules:
 
 - A path given explicitly (1 or 2) **must exist**, otherwise the app stops with `Config file not found: <path>`.
-- If the default `./config.yaml` does not exist, the app falls back to **env-only mode** when `EV_PROVIDER` is set, and otherwise fails with `No configuration found: ...`.
-- If a config file **is** found, it is used and the env-only variables (`EV_PROVIDER`, `EV_REPOS`, ...) are ignored. Only the [override variables](#overrides-apply-on-top-of-a-config-file-and-in-env-only-mode) still apply.
-- `npm start` runs `node dist/server/index.js`, which takes no command-line flags: use `EV_CONFIG` there, or run `node dist/cli/index.js serve --config <path>`.
-- The Docker image deliberately does not set `EV_CONFIG`. Mount your file at `/app/config.yaml`, or use env-only mode, or set `EV_CONFIG` yourself (for example `EV_CONFIG=/app/config.demo.yaml` for the demo).
+- If the default `./config.yaml` does not exist, the app falls back to **env-only mode** when `FD_PROVIDER` is set, and otherwise fails with `No configuration found: ...`.
+- If a config file **is** found, it is used and the env-only variables (`FD_PROVIDER`, `FD_REPOS`, ...) are ignored. Only the [override variables](#overrides-apply-on-top-of-a-config-file-and-in-env-only-mode) still apply.
+- `npm start` runs `node dist/server/index.js`, which takes no command-line flags: use `FD_CONFIG` there, or run `node dist/cli/index.js serve --config <path>`.
+- The Docker image deliberately does not set `FD_CONFIG`. Mount your file at `/app/config.yaml`, or use env-only mode, or set `FD_CONFIG` yourself (for example `FD_CONFIG=/app/config.demo.yaml` for the demo).
 - Relative `path` values of `fixture` sources are resolved against the **directory of the config file**.
 
 ## Config file reference
@@ -35,9 +35,9 @@ The schema is **strict**: an unknown key is an error, and all errors are reporte
 
 | Key                            | Type            | Default   | Description                                                                                                                                     |
 | ------------------------------ | --------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server.host`                  | string          | `0.0.0.0` | Address to listen on. Overridden by `EV_HOST`.                                                                                                  |
-| `server.port`                  | integer 1-65535 | `8080`    | Port to listen on. Overridden by `EV_PORT`.                                                                                                     |
-| `server.basicAuth`             | object          | none      | Enables the login (login page and HTTP basic auth) for the whole app except `/healthz`. Overridden entirely by `EV_BASIC_AUTH`.                 |
+| `server.host`                  | string          | `0.0.0.0` | Address to listen on. Overridden by `FD_HOST`.                                                                                                  |
+| `server.port`                  | integer 1-65535 | `8080`    | Port to listen on. Overridden by `FD_PORT`.                                                                                                     |
+| `server.basicAuth`             | object          | none      | Enables the login (login page and HTTP basic auth) for the whole app except `/healthz`. Overridden entirely by `FD_BASIC_AUTH`.                 |
 | `server.basicAuth.username`    | string          | required  | The user name (required when `basicAuth` is present).                                                                                           |
 | `server.basicAuth.passwordEnv` | string          | none      | Name of the environment variable that holds the password (recommended). Wins over `password` when the variable is set and not blank.            |
 | `server.basicAuth.password`    | string          | none      | Inline password (discouraged). Used when `passwordEnv` is absent or its variable is unset. One of the two is required, otherwise startup fails. |
@@ -46,13 +46,13 @@ The schema is **strict**: an unknown key is an error, and all errors are reporte
 
 | Key                | Type               | Default | Description                                                                                                                     |
 | ------------------ | ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `cache.ttlSeconds` | integer, 0 or more | `300`   | How long a view's snapshot is served from memory. `0` disables caching (every request refetches). Overridden by `EV_CACHE_TTL`. |
+| `cache.ttlSeconds` | integer, 0 or more | `300`   | How long a view's snapshot is served from memory. `0` disables caching (every request refetches). Overridden by `FD_CACHE_TTL`. |
 
 ### `ui`
 
 | Key                 | Type            | Default | Description                                                                                                                                                                                                                                                   |
 | ------------------- | --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ui.refreshMinutes` | integer, 0-1440 | `5`     | How often the web UI refreshes the view it shows, like a click on Refresh. Switching back to a view already shown in the tab displays it as it was, without a fetch. `0` turns the timer off: only Refresh fetches again. Overridden by `EV_REFRESH_MINUTES`. |
+| `ui.refreshMinutes` | integer, 0-1440 | `5`     | How often the web UI refreshes the view it shows, like a click on Refresh. Switching back to a view already shown in the tab displays it as it was, without a fetch. `0` turns the timer off: only Refresh fetches again. Overridden by `FD_REFRESH_MINUTES`. |
 
 ### `webhooks`
 
@@ -63,7 +63,7 @@ Optional. Enables the webhook endpoints (`POST /api/webhooks/github` and `POST /
 | `webhooks.secretEnv` | string | none    | Name of the environment variable that holds the shared secret (recommended). Wins over `secret` when the variable is set and not blank. A variable that is not set gives a warning, not an error. |
 | `webhooks.secret`    | string | none    | Inline secret (discouraged). Used when `secretEnv` is absent or its variable is unset.                                                                                                            |
 
-When neither yields a secret, startup prints a warning and webhooks stay disabled. `EV_WEBHOOK_SECRET` overrides the whole block (and also works without a config file).
+When neither yields a secret, startup prints a warning and webhooks stay disabled. `FD_WEBHOOK_SECRET` overrides the whole block (and also works without a config file).
 
 ### `sources`
 
@@ -106,7 +106,7 @@ Scope filters combine with AND, are case-insensitive, and only choose the roots 
 
 ### `releases`
 
-Optional and disabled by default. Planning-only YAML and env-only mode need no release configuration, credentials or writable state; they keep their existing behavior. Enabling releases adds release publication to the same server and requires the application login (`server.basicAuth` or `EV_BASIC_AUTH`). Volume setup, forge permissions, SSH trust, recovery, backup and the legacy cutover are in [RELEASES.md](RELEASES.md).
+Optional and disabled by default. Planning-only YAML and env-only mode need no release configuration, credentials or writable state; they keep their existing behavior. Enabling releases adds release publication to the same server and requires the application login (`server.basicAuth` or `FD_BASIC_AUTH`). Volume setup, forge permissions, SSH trust, recovery, backup and the legacy cutover are in [RELEASES.md](RELEASES.md).
 
 ```yaml
 releases:
@@ -156,36 +156,38 @@ Enabled startup then claims release execution for that state directory through a
 
 Empty or blank values are treated as unset.
 
+Before 3.0.1 these variables started with `EV_` instead of `FD_`. An `EV_` name still works until the next major release and still wins over its `FD_` counterpart, so an existing deployment keeps its behavior; startup prints a warning for each one, naming the `FD_` name to rename it to. Rename the variable in `.env` and in the compose file's `environment:` lines together, because Compose passes the container only the names listed there. Variable names you chose yourself in `tokenEnv`, `passwordEnv` or `secretEnv` are read as written.
+
 ### Overrides (apply on top of a config file, and in env-only mode)
 
 | Variable             | Effect                                                                                                                 |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `EV_HOST`            | Overrides `server.host`.                                                                                               |
-| `EV_PORT`            | Overrides `server.port` (integer 1-65535, otherwise startup fails).                                                    |
-| `EV_CACHE_TTL`       | Overrides `cache.ttlSeconds` (integer of 0 or more).                                                                   |
-| `EV_REFRESH_MINUTES` | Overrides `ui.refreshMinutes` (integer 0-1440).                                                                        |
-| `EV_BASIC_AUTH`      | `user:password`. Overrides the whole `server.basicAuth` block. Split at the first colon; both parts must be non-empty. |
-| `EV_WEBHOOK_SECRET`  | The webhook secret. Overrides the whole `webhooks` block and enables the webhook endpoints (also in env-only mode).    |
-| `EV_CONFIG`          | Path of the config file (see the lookup order above).                                                                  |
+| `FD_HOST`            | Overrides `server.host`.                                                                                               |
+| `FD_PORT`            | Overrides `server.port` (integer 1-65535, otherwise startup fails).                                                    |
+| `FD_CACHE_TTL`       | Overrides `cache.ttlSeconds` (integer of 0 or more).                                                                   |
+| `FD_REFRESH_MINUTES` | Overrides `ui.refreshMinutes` (integer 0-1440).                                                                        |
+| `FD_BASIC_AUTH`      | `user:password`. Overrides the whole `server.basicAuth` block. Split at the first colon; both parts must be non-empty. |
+| `FD_WEBHOOK_SECRET`  | The webhook secret. Overrides the whole `webhooks` block and enables the webhook endpoints (also in env-only mode).    |
+| `FD_CONFIG`          | Path of the config file (see the lookup order above).                                                                  |
 | `NO_COLOR`           | When set, the CLI prints no ANSI colours (colours are only used on a terminal anyway).                                 |
 
-Docker image defaults: `EV_HOST=0.0.0.0`, `EV_PORT=8080`.
+Docker image defaults: `FD_HOST=0.0.0.0`, `FD_PORT=8080`.
 
 ### Env-only mode
 
-Used when no config file is found and `EV_PROVIDER` is set. It builds one source (`id: default`) and one view (`id: default` unless `EV_VIEW_ID` is set) with all other options at their defaults.
+Used when no config file is found and `FD_PROVIDER` is set. It builds one source (`id: default`) and one view (`id: default` unless `FD_VIEW_ID` is set) with all other options at their defaults.
 
 | Variable             | Required    | Description                                                                                                                                      |
 | -------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `EV_PROVIDER`        | yes         | `github` or `gitea`.                                                                                                                             |
-| `EV_REPOS`           | yes         | Comma-separated `owner/repo` list.                                                                                                               |
-| `EV_BASE_URL`        | for `gitea` | API root for GitHub Enterprise Server (`https://<host>/api/v3`) or the instance root for Gitea. Defaults to `https://api.github.com` for GitHub. |
-| `EV_TOKEN`           | no          | The token. Falls back to `GITHUB_TOKEN` (for `github`) or `GITEA_TOKEN` (for `gitea`).                                                           |
-| `EV_VIEW_ID`         | no          | View id (default `default`; must match the id pattern).                                                                                          |
-| `EV_VIEW_TITLE`      | no          | View title (default: the id).                                                                                                                    |
-| `EV_PRIORITY_LABELS` | no          | Comma-separated priority labels, highest first.                                                                                                  |
-| `EV_SUB_ISSUES`      | no          | `true` or `false`: sets `dependencies.subIssues`.                                                                                                |
-| `EV_ORDERING_MODE`   | no          | `priority` (default) or `waves`: sets `ordering.mode`. Anything else is a configuration error.                                                   |
+| `FD_PROVIDER`        | yes         | `github` or `gitea`.                                                                                                                             |
+| `FD_REPOS`           | yes         | Comma-separated `owner/repo` list.                                                                                                               |
+| `FD_BASE_URL`        | for `gitea` | API root for GitHub Enterprise Server (`https://<host>/api/v3`) or the instance root for Gitea. Defaults to `https://api.github.com` for GitHub. |
+| `FD_TOKEN`           | no          | The token. Falls back to `GITHUB_TOKEN` (for `github`) or `GITEA_TOKEN` (for `gitea`).                                                           |
+| `FD_VIEW_ID`         | no          | View id (default `default`; must match the id pattern).                                                                                          |
+| `FD_VIEW_TITLE`      | no          | View title (default: the id).                                                                                                                    |
+| `FD_PRIORITY_LABELS` | no          | Comma-separated priority labels, highest first.                                                                                                  |
+| `FD_SUB_ISSUES`      | no          | `true` or `false`: sets `dependencies.subIssues`.                                                                                                |
+| `FD_ORDERING_MODE`   | no          | `priority` (default) or `waves`: sets `ordering.mode`. Anything else is a configuration error.                                                   |
 
 Env-only mode cannot express: several views or sources, scope filters, custom keywords, `native: false`, `body: false` or `body: strict`, a `webUrl`. Use a config file for those.
 
@@ -311,7 +313,7 @@ views:
 server:
   basicAuth:
     username: admin
-    passwordEnv: EV_BASIC_AUTH_PASSWORD
+    passwordEnv: FD_BASIC_AUTH_PASSWORD
 
 sources:
   - id: gh
@@ -325,13 +327,13 @@ views:
       - acme/app
 ```
 
-Or, without a file: `EV_BASIC_AUTH=admin:change-me`. Use TLS in front of the app: see [DEPLOYMENT.md](DEPLOYMENT.md#login).
+Or, without a file: `FD_BASIC_AUTH=admin:change-me`. Use TLS in front of the app: see [DEPLOYMENT.md](DEPLOYMENT.md#login).
 
 ### Webhooks
 
 ```yaml
 webhooks:
-  secretEnv: EV_WEBHOOK_SECRET
+  secretEnv: FD_WEBHOOK_SECRET
 
 sources:
   - id: gh
@@ -345,15 +347,15 @@ views:
       - acme/app
 ```
 
-Or, without a file: `EV_WEBHOOK_SECRET=<a long random string>`. See [DEPLOYMENT.md](DEPLOYMENT.md#webhooks) for the tracker side.
+Or, without a file: `FD_WEBHOOK_SECRET=<a long random string>`. See [DEPLOYMENT.md](DEPLOYMENT.md#webhooks) for the tracker side.
 
 ### Env-only, GitHub
 
 ```sh
-EV_PROVIDER=github
-EV_REPOS=acme/api,acme/web
+FD_PROVIDER=github
+FD_REPOS=acme/api,acme/web
 GITHUB_TOKEN=ghp_your_token_here
-EV_PRIORITY_LABELS=P0,P1,P2
+FD_PRIORITY_LABELS=P0,P1,P2
 ```
 
 (For example in the `environment:` block of `docker-compose.yml`, with the token written as `GITHUB_TOKEN=${GITHUB_TOKEN}` and its value in `.env`.) No config file is needed.
@@ -361,9 +363,9 @@ EV_PRIORITY_LABELS=P0,P1,P2
 ### Env-only, Gitea
 
 ```sh
-EV_PROVIDER=gitea
-EV_BASE_URL=https://gitea.example.com
-EV_REPOS=team/app
+FD_PROVIDER=gitea
+FD_BASE_URL=https://gitea.example.com
+FD_REPOS=team/app
 GITEA_TOKEN=your_token_here
 ```
 

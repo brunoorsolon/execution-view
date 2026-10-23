@@ -342,18 +342,18 @@ describe('basicAuth', () => {
     expect(e2.message).toContain('PW');
   });
 
-  it('EV_BASIC_AUTH overrides, splitting on the first colon', () => {
+  it('FD_BASIC_AUTH overrides, splitting on the first colon', () => {
     const cfg = parseConfig(auth('    username: admin\n    password: pw'), {
-      EV_BASIC_AUTH: 'bob:pa:ss',
+      FD_BASIC_AUTH: 'bob:pa:ss',
     });
     expect(cfg.server.basicAuth).toEqual({ username: 'bob', password: 'pa:ss' });
-    const plain = parseConfig(MIN, { EV_BASIC_AUTH: 'bob:pw' });
+    const plain = parseConfig(MIN, { FD_BASIC_AUTH: 'bob:pw' });
     expect(plain.server.basicAuth).toEqual({ username: 'bob', password: 'pw' });
   });
 
-  it('rejects a malformed EV_BASIC_AUTH', () => {
-    expect(errorOf(() => parseConfig(MIN, { EV_BASIC_AUTH: 'nocolon' })).message).toContain(
-      'EV_BASIC_AUTH',
+  it('rejects a malformed FD_BASIC_AUTH', () => {
+    expect(errorOf(() => parseConfig(MIN, { FD_BASIC_AUTH: 'nocolon' })).message).toContain(
+      'FD_BASIC_AUTH',
     );
   });
 });
@@ -400,22 +400,22 @@ describe('webhooks', () => {
     expect(cfg.warnings![0]).toContain('no secret');
   });
 
-  it('EV_WEBHOOK_SECRET overrides the file, and enables webhooks without a block', () => {
-    const cfg = parseConfig(hooks('  secret: inline'), { EV_WEBHOOK_SECRET: 'override' });
+  it('FD_WEBHOOK_SECRET overrides the file, and enables webhooks without a block', () => {
+    const cfg = parseConfig(hooks('  secret: inline'), { FD_WEBHOOK_SECRET: 'override' });
     expect(cfg.webhooks).toEqual({ secret: 'override' });
-    expect(parseConfig(MIN, { EV_WEBHOOK_SECRET: 'only-env' }).webhooks).toEqual({
+    expect(parseConfig(MIN, { FD_WEBHOOK_SECRET: 'only-env' }).webhooks).toEqual({
       secret: 'only-env',
     });
   });
 
-  it('EV_WEBHOOK_SECRET also works in env-only mode', () => {
+  it('FD_WEBHOOK_SECRET also works in env-only mode', () => {
     const cfg = configFromEnv({
-      EV_PROVIDER: 'github',
-      EV_REPOS: 'a/b',
-      EV_WEBHOOK_SECRET: 's',
+      FD_PROVIDER: 'github',
+      FD_REPOS: 'a/b',
+      FD_WEBHOOK_SECRET: 's',
     });
     expect(cfg.webhooks).toEqual({ secret: 's' });
-    expect(configFromEnv({ EV_PROVIDER: 'github', EV_REPOS: 'a/b' }).webhooks).toBeNull();
+    expect(configFromEnv({ FD_PROVIDER: 'github', FD_REPOS: 'a/b' }).webhooks).toBeNull();
   });
 
   it('rejects unknown keys', () => {
@@ -423,48 +423,108 @@ describe('webhooks', () => {
   });
 });
 
-describe('EV_* overrides', () => {
-  it('EV_HOST, EV_PORT, EV_CACHE_TTL and EV_REFRESH_MINUTES override the file', () => {
+describe('FD_* overrides', () => {
+  it('FD_HOST, FD_PORT, FD_CACHE_TTL and FD_REFRESH_MINUTES override the file', () => {
     const yaml = `server: { host: 1.2.3.4, port: 9000 }\ncache: { ttlSeconds: 10 }\nui: { refreshMinutes: 15 }\n${MIN}`;
     const base = parseConfig(yaml, {});
     expect(base.server).toMatchObject({ host: '1.2.3.4', port: 9000 });
     expect(base.cache.ttlSeconds).toBe(10);
     expect(base.ui.refreshMinutes).toBe(15);
     const cfg = parseConfig(yaml, {
-      EV_HOST: 'localhost',
-      EV_PORT: '3000',
-      EV_CACHE_TTL: '0',
-      EV_REFRESH_MINUTES: '0',
+      FD_HOST: 'localhost',
+      FD_PORT: '3000',
+      FD_CACHE_TTL: '0',
+      FD_REFRESH_MINUTES: '0',
     });
     expect(cfg.server).toMatchObject({ host: 'localhost', port: 3000 });
     expect(cfg.cache.ttlSeconds).toBe(0);
     expect(cfg.ui.refreshMinutes).toBe(0);
   });
 
-  it('validates EV_PORT and EV_CACHE_TTL', () => {
+  it('validates FD_PORT and FD_CACHE_TTL', () => {
     for (const port of ['0', '65536', 'abc', '1.5', '-1']) {
-      expect(errorOf(() => parseConfig(MIN, { EV_PORT: port })).message).toContain('EV_PORT');
+      expect(errorOf(() => parseConfig(MIN, { FD_PORT: port })).message).toContain('FD_PORT');
     }
-    expect(parseConfig(MIN, { EV_PORT: '65535' }).server.port).toBe(65535);
+    expect(parseConfig(MIN, { FD_PORT: '65535' }).server.port).toBe(65535);
     for (const ttl of ['-1', 'x', '2.5']) {
-      expect(errorOf(() => parseConfig(MIN, { EV_CACHE_TTL: ttl })).message).toContain(
-        'EV_CACHE_TTL',
+      expect(errorOf(() => parseConfig(MIN, { FD_CACHE_TTL: ttl })).message).toContain(
+        'FD_CACHE_TTL',
       );
     }
     for (const minutes of ['-1', 'x', '2.5', '1441']) {
-      expect(errorOf(() => parseConfig(MIN, { EV_REFRESH_MINUTES: minutes })).message).toContain(
-        'EV_REFRESH_MINUTES',
+      expect(errorOf(() => parseConfig(MIN, { FD_REFRESH_MINUTES: minutes })).message).toContain(
+        'FD_REFRESH_MINUTES',
       );
     }
-    expect(parseConfig(MIN, { EV_REFRESH_MINUTES: '1440' }).ui.refreshMinutes).toBe(1440);
+    expect(parseConfig(MIN, { FD_REFRESH_MINUTES: '1440' }).ui.refreshMinutes).toBe(1440);
     expect(
       errorOf(() => parseConfig(`ui: { refreshMinutes: 1441 }\n${MIN}`, {})).message,
     ).toContain('refreshMinutes');
   });
 
   it('treats empty values as unset', () => {
-    const cfg = parseConfig(MIN, { EV_PORT: '', EV_HOST: '  ' });
+    const cfg = parseConfig(MIN, { FD_PORT: '', FD_HOST: '  ' });
     expect(cfg.server).toMatchObject({ host: '0.0.0.0', port: 8080 });
+  });
+});
+
+describe('EV_* names from before 3.0.1', () => {
+  const deprecated = (warnings: string[] | undefined) =>
+    (warnings ?? []).filter((w) => w.includes('is deprecated'));
+
+  it('still apply alone, and each one warns with its FD_ name', () => {
+    const cfg = parseConfig(MIN, { EV_PORT: '3000', EV_REFRESH_MINUTES: '5' });
+    expect(cfg.server.port).toBe(3000);
+    expect(cfg.ui.refreshMinutes).toBe(5);
+    expect(deprecated(cfg.warnings)).toEqual([
+      'EV_PORT is deprecated: rename it to FD_PORT',
+      'EV_REFRESH_MINUTES is deprecated: rename it to FD_REFRESH_MINUTES',
+    ]);
+    expect(deprecated(parseConfig(MIN, { FD_PORT: '3000' }).warnings)).toEqual([]);
+  });
+
+  it('win over a conflicting FD_ value, such as the image default FD_PORT', () => {
+    const cfg = parseConfig(MIN, {
+      FD_HOST: '0.0.0.0',
+      FD_PORT: '8080',
+      EV_HOST: '127.0.0.1',
+      EV_PORT: '9000',
+    });
+    expect(cfg.server).toMatchObject({ host: '127.0.0.1', port: 9000 });
+    expect(deprecated(cfg.warnings)).toContain(
+      'EV_PORT is deprecated: rename it to FD_PORT (EV_PORT overrides FD_PORT)',
+    );
+  });
+
+  it('keep the login: FD_BASIC_AUTH and EV_BASIC_AUTH both enable it', () => {
+    const login = { username: 'ops', password: 'pa:ss' };
+    expect(parseConfig(MIN, { FD_BASIC_AUTH: 'ops:pa:ss' }).server.basicAuth).toEqual(login);
+    expect(parseConfig(MIN, { EV_BASIC_AUTH: 'ops:pa:ss' }).server.basicAuth).toEqual(login);
+    // A blank legacy value counts as unset, so a renamed FD_BASIC_AUTH still applies.
+    expect(
+      parseConfig(MIN, { EV_BASIC_AUTH: '', FD_BASIC_AUTH: 'ops:pa:ss' }).server.basicAuth,
+    ).toEqual(login);
+  });
+
+  it('reject a malformed login value under the name that was set', () => {
+    expect(errorOf(() => parseConfig(MIN, { FD_BASIC_AUTH: 'nocolon' })).message).toBe(
+      'FD_BASIC_AUTH: expected "user:password"',
+    );
+    expect(errorOf(() => parseConfig(MIN, { EV_BASIC_AUTH: 'ops:' })).message).toBe(
+      'EV_BASIC_AUTH: expected "user:password"',
+    );
+  });
+
+  it('still drive env-only mode', () => {
+    const cfg = configFromEnv({ EV_PROVIDER: 'github', EV_REPOS: 'a/b, c/d', EV_VIEW_ID: 'old' });
+    expect(cfg.views[0]).toMatchObject({
+      id: 'old',
+      repos: [
+        { owner: 'a', repo: 'b' },
+        { owner: 'c', repo: 'd' },
+      ],
+    });
+    expect(deprecated(cfg.warnings)).toHaveLength(3);
   });
 });
 
@@ -495,7 +555,7 @@ views:
     expect(cfg.sources[1]!.path).toBe('/abs/x.json');
   });
 
-  it('path precedence: opts.path, then EV_CONFIG, then <cwd>/config.yaml', () => {
+  it('path precedence: opts.path, then FD_CONFIG, then <cwd>/config.yaml', () => {
     const mk = (name: string, id: string) =>
       writeFileSync(
         join(dir, name),
@@ -505,20 +565,20 @@ views:
     mk('env.yaml', 'fromenv');
     mk('opt.yaml', 'fromopt');
     expect(loadConfig({ env: {}, cwd: dir }).views[0]!.id).toBe('fromcwd');
-    expect(loadConfig({ env: { EV_CONFIG: 'env.yaml' }, cwd: dir }).views[0]!.id).toBe('fromenv');
+    expect(loadConfig({ env: { FD_CONFIG: 'env.yaml' }, cwd: dir }).views[0]!.id).toBe('fromenv');
     expect(
-      loadConfig({ path: 'opt.yaml', env: { EV_CONFIG: 'env.yaml' }, cwd: dir }).views[0]!.id,
+      loadConfig({ path: 'opt.yaml', env: { FD_CONFIG: 'env.yaml' }, cwd: dir }).views[0]!.id,
     ).toBe('fromopt');
   });
 
   it('errors on an explicit path that does not exist', () => {
     const missing = join(dir, 'nope.yaml');
     const e = errorOf(() =>
-      loadConfig({ path: missing, env: { EV_PROVIDER: 'github' }, cwd: dir }),
+      loadConfig({ path: missing, env: { FD_PROVIDER: 'github' }, cwd: dir }),
     );
     expect(e.message).toContain('Config file not found');
     expect(e.message).toContain(missing);
-    const e2 = errorOf(() => loadConfig({ env: { EV_CONFIG: 'nope.yaml' }, cwd: dir }));
+    const e2 = errorOf(() => loadConfig({ env: { FD_CONFIG: 'nope.yaml' }, cwd: dir }));
     expect(e2.message).toContain('Config file not found');
   });
 
@@ -529,17 +589,17 @@ views:
     expect(e.message).toContain('at least one source is required');
   });
 
-  it('fails clearly with neither a file nor EV_PROVIDER', () => {
+  it('fails clearly with neither a file nor FD_PROVIDER', () => {
     const e = errorOf(() => loadConfig({ env: {}, cwd: dir }));
     expect(e.message).toBe(
-      'No configuration found: create config.yaml (see config.example.yaml), set EV_CONFIG, or set EV_PROVIDER and EV_REPOS for env-only mode',
+      'No configuration found: create config.yaml (see config.example.yaml), set FD_CONFIG, or set FD_PROVIDER and FD_REPOS for env-only mode',
     );
   });
 
   describe('env-only mode', () => {
     it('github with the GITHUB_TOKEN fallback', () => {
       const cfg = loadConfig({
-        env: { EV_PROVIDER: 'github', EV_REPOS: 'Acme/API, acme/web,', GITHUB_TOKEN: 'ghtok' },
+        env: { FD_PROVIDER: 'github', FD_REPOS: 'Acme/API, acme/web,', GITHUB_TOKEN: 'ghtok' },
         cwd: dir,
       });
       expect(cfg.sources).toEqual([
@@ -567,9 +627,9 @@ views:
       expect(cfg.server).toEqual({ host: '0.0.0.0', port: 8080, basicAuth: null });
     });
 
-    it('EV_TOKEN wins over GITHUB_TOKEN', () => {
+    it('FD_TOKEN wins over GITHUB_TOKEN', () => {
       const cfg = loadConfig({
-        env: { EV_PROVIDER: 'github', EV_REPOS: 'a/b', EV_TOKEN: 'ev', GITHUB_TOKEN: 'gh' },
+        env: { FD_PROVIDER: 'github', FD_REPOS: 'a/b', FD_TOKEN: 'ev', GITHUB_TOKEN: 'gh' },
         cwd: dir,
       });
       expect(cfg.sources[0]!.token).toBe('ev');
@@ -578,16 +638,16 @@ views:
     it('gitea with base URL, token fallback, view options and overrides', () => {
       const cfg = loadConfig({
         env: {
-          EV_PROVIDER: 'gitea',
-          EV_REPOS: 'team/app',
-          EV_BASE_URL: 'https://gitea.example.com/',
+          FD_PROVIDER: 'gitea',
+          FD_REPOS: 'team/app',
+          FD_BASE_URL: 'https://gitea.example.com/',
           GITEA_TOKEN: 'gttok',
           GITHUB_TOKEN: 'ignored',
-          EV_VIEW_ID: 'main',
-          EV_VIEW_TITLE: 'Main view',
-          EV_PRIORITY_LABELS: 'P0, P1 ,P2',
-          EV_SUB_ISSUES: 'true',
-          EV_PORT: '9090',
+          FD_VIEW_ID: 'main',
+          FD_VIEW_TITLE: 'Main view',
+          FD_PRIORITY_LABELS: 'P0, P1 ,P2',
+          FD_SUB_ISSUES: 'true',
+          FD_PORT: '9090',
         },
         cwd: dir,
       });
@@ -607,62 +667,62 @@ views:
       expect(cfg.server.port).toBe(9090);
     });
 
-    it('EV_ORDERING_MODE selects the ordering mode (default priority)', () => {
-      const base = { EV_PROVIDER: 'github', EV_REPOS: 'a/b' };
+    it('FD_ORDERING_MODE selects the ordering mode (default priority)', () => {
+      const base = { FD_PROVIDER: 'github', FD_REPOS: 'a/b' };
       expect(loadConfig({ env: base, cwd: dir }).views[0]!.ordering.mode).toBe('priority');
-      const cfg = loadConfig({ env: { ...base, EV_ORDERING_MODE: 'waves' }, cwd: dir });
+      const cfg = loadConfig({ env: { ...base, FD_ORDERING_MODE: 'waves' }, cwd: dir });
       expect(cfg.views[0]!.ordering.mode).toBe('waves');
-      const upper = loadConfig({ env: { ...base, EV_ORDERING_MODE: 'Priority' }, cwd: dir });
+      const upper = loadConfig({ env: { ...base, FD_ORDERING_MODE: 'Priority' }, cwd: dir });
       expect(upper.views[0]!.ordering.mode).toBe('priority');
     });
 
-    it('rejects an invalid EV_ORDERING_MODE with a readable message', () => {
+    it('rejects an invalid FD_ORDERING_MODE with a readable message', () => {
       const e = errorOf(() =>
         loadConfig({
-          env: { EV_PROVIDER: 'github', EV_REPOS: 'a/b', EV_ORDERING_MODE: 'fastest' },
+          env: { FD_PROVIDER: 'github', FD_REPOS: 'a/b', FD_ORDERING_MODE: 'fastest' },
           cwd: dir,
         }),
       );
-      expect(e.message).toBe('EV_ORDERING_MODE: expected "priority" or "waves" (got "fastest")');
+      expect(e.message).toBe('FD_ORDERING_MODE: expected "priority" or "waves" (got "fastest")');
     });
 
-    it('gitea without EV_BASE_URL is an error', () => {
+    it('gitea without FD_BASE_URL is an error', () => {
       const e = errorOf(() =>
-        loadConfig({ env: { EV_PROVIDER: 'gitea', EV_REPOS: 'a/b' }, cwd: dir }),
+        loadConfig({ env: { FD_PROVIDER: 'gitea', FD_REPOS: 'a/b' }, cwd: dir }),
       );
       expect(e.message).toContain('baseUrl is required');
     });
 
-    it('a missing EV_REPOS is an error', () => {
-      const e = errorOf(() => loadConfig({ env: { EV_PROVIDER: 'github' }, cwd: dir }));
-      expect(e.message).toContain('EV_REPOS');
+    it('a missing FD_REPOS is an error', () => {
+      const e = errorOf(() => loadConfig({ env: { FD_PROVIDER: 'github' }, cwd: dir }));
+      expect(e.message).toContain('FD_REPOS');
     });
 
-    it('rejects a bad EV_PROVIDER, EV_REPOS entry and EV_SUB_ISSUES', () => {
+    it('rejects a bad FD_PROVIDER, FD_REPOS entry and FD_SUB_ISSUES', () => {
       expect(
-        errorOf(() => loadConfig({ env: { EV_PROVIDER: 'gitlab', EV_REPOS: 'a/b' }, cwd: dir }))
+        errorOf(() => loadConfig({ env: { FD_PROVIDER: 'gitlab', FD_REPOS: 'a/b' }, cwd: dir }))
           .message,
-      ).toContain('EV_PROVIDER');
+      ).toContain('FD_PROVIDER');
       expect(
-        errorOf(() => loadConfig({ env: { EV_PROVIDER: 'github', EV_REPOS: 'oops' }, cwd: dir }))
+        errorOf(() => loadConfig({ env: { FD_PROVIDER: 'github', FD_REPOS: 'oops' }, cwd: dir }))
           .message,
       ).toContain('invalid repo "oops"');
       expect(
         errorOf(() =>
           loadConfig({
-            env: { EV_PROVIDER: 'github', EV_REPOS: 'a/b', EV_SUB_ISSUES: 'maybe' },
+            env: { FD_PROVIDER: 'github', FD_REPOS: 'a/b', FD_SUB_ISSUES: 'maybe' },
             cwd: dir,
           }),
         ).message,
-      ).toContain('EV_SUB_ISSUES');
+      ).toContain('FD_SUB_ISSUES');
     });
 
-    it('a config file takes precedence over EV_PROVIDER', () => {
+    it('a config file takes precedence over FD_PROVIDER', () => {
       writeFileSync(
         join(dir, 'config.yaml'),
         'sources: [{ id: gh, kind: github }]\nviews: [{ id: filev, source: gh, repos: [a/b] }]\n',
       );
-      const cfg = loadConfig({ env: { EV_PROVIDER: 'github', EV_REPOS: 'x/y' }, cwd: dir });
+      const cfg = loadConfig({ env: { FD_PROVIDER: 'github', FD_REPOS: 'x/y' }, cwd: dir });
       expect(cfg.views[0]!.id).toBe('filev');
     });
   });
@@ -673,7 +733,7 @@ describe('config.example.yaml', () => {
     const text = readFileSync(new URL('../../config.example.yaml', import.meta.url), 'utf8');
     const cfg = parseConfig(
       text,
-      { GITHUB_TOKEN: 't', GITEA_TOKEN: 't', EV_BASIC_AUTH_PASSWORD: 'pw' },
+      { GITHUB_TOKEN: 't', GITEA_TOKEN: 't', FD_BASIC_AUTH_PASSWORD: 'pw' },
       { baseDir: '/repo' },
     );
     expect(cfg.warnings).toEqual([]);
@@ -757,9 +817,9 @@ describe('release configuration', () => {
 
   it('leaves environment-only deployments without release configuration', () => {
     const cfg = configFromEnv({
-      EV_PROVIDER: 'gitea',
-      EV_REPOS: 'example/app',
-      EV_BASE_URL: 'https://gitea.example.com',
+      FD_PROVIDER: 'gitea',
+      FD_REPOS: 'example/app',
+      FD_BASE_URL: 'https://gitea.example.com',
     });
     expect(cfg.releases).toEqual({ enabled: false });
   });

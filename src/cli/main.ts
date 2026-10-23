@@ -273,7 +273,7 @@ export async function main(argv: string[], io: CliIo, deps: CliDeps = {}): Promi
     .version(packageVersion())
     .option(
       '-c, --config <path>',
-      'path to the config file (default: EV_CONFIG, then ./config.yaml)',
+      'path to the config file (default: FD_CONFIG, then ./config.yaml)',
     )
     .exitOverride()
     .configureOutput({
