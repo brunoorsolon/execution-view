@@ -24,10 +24,10 @@ Contents:
 The published image is the same image for planning and release publication, built as a multi-stage `node:22-alpine` image. Its final stage runs as the non-root user `node` (uid/gid 1000) and contains:
 
 - `git`, the real executable, used to fetch the verified candidate into a private bare cache under the state directory;
-- OpenSSH `ssh` and `ssh-keygen`, used for the approved tag push over the configured `ssh://` origin;
+- OpenSSH `ssh`, used for the approved tag push over the configured `ssh://` origin (`ssh-keygen` ships in the same package and is available to inspect the mounted key);
 - `flock` from util-linux, which backs the OS-level exclusive owner lock on the state directory (`owner.lock` and, while work runs, `work.lock`).
 
-Those tools are proven in the final image by `scripts/smoke-test.sh`, which runs them as the runtime user, then starts a planning-only container without a volume and a release-enabled container with a private state volume and read-only secret files. CI runs that script. The smoke test does not contact a forge; live publication evidence is separate (see [Unsupported versions and residual risk](#unsupported-versions-and-residual-risk)).
+Those tools are proven in the final image by `scripts/smoke-test.sh`, which runs them as the runtime user, then starts two planning-only containers (demo config and env-only, neither with a volume) and a release-enabled container with a private state volume and read-only secret files. CI runs that script. The smoke test does not contact a forge; live publication evidence is separate (see [Unsupported versions and residual risk](#unsupported-versions-and-residual-risk)).
 
 `/healthz` remains process liveness. Repository release readiness is reported separately at `GET /api/releases/repositories` with a sanitized `capability: available|blocked` and a stable blocker code, so a forge outage or a wrong credential blocks publication for that repository without pretending the process is dead.
 
@@ -54,7 +54,7 @@ Release state must live on a private local volume. The pattern below is implemen
    secrets/known_hosts                          -> /run/secrets/forge_desk_known_hosts:ro
    ```
 
-   The release token file is mode `0600`, the SSH private key is mode `0600` and owned by uid 1000, and `known_hosts` is mode `0600` or `0644` and not group- or world-writable. Startup refuses a violation with a diagnostic naming the path, and does not rewrite it.
+   The release token file must be readable by the runtime user and should be mode `0600`. The SSH private key must be mode `0600` and owned by uid 1000, and `known_hosts` must be mode `0600` or `0644` and not group- or world-writable. Startup refuses a private key, `known_hosts` or state-directory violation with a diagnostic naming the path, and never rewrites mounted permissions.
 
 4. Start with the login enabled. Releases require `server.basicAuth` (or `EV_BASIC_AUTH`); the browser approval and the CLI both authenticate as that one operator identity.
 
@@ -168,7 +168,7 @@ These are intentional, not parity gaps:
 - Only **Gitea 1.26.1** is a verified publication target. Gitea 1.25 and Forgejo 11 are exercised for planning only; other versions and Forgejo are unsupported for publication until their tag/release behavior is verified.
 - GitHub release publication, release assets, drafts/prereleases, major/minor bumps, editable notes and multi-user attribution are out of scope.
 - Shared/network filesystems and multiple writers are unsupported and refused.
-- Live Gitea 1.26.1 publication, restart-during-publication and backup/restore evidence requires a host with Docker or a disposable runner; the pull request records whether that evidence was obtained and what remains for a human to run. Offline tests do not prove account permissions.
+- Publication, restart-during-publication, restart-after-publication and backup/restore were verified against a disposable Gitea 1.26.1 instance at the commit named in the pull request that introduced this page; repeating that evidence needs a host with Docker or an equivalent disposable runner. Offline tests do not prove account permissions.
 - Remote state can change between Forge Desk's read and write. The engine detects divergence and fails closed, but it cannot promise permanent immutability or an automatic rollback.
 
 ## Attribution

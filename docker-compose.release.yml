@@ -1,6 +1,9 @@
 # Forge Desk with release publication enabled. Planning-only deployments use docker-compose.yml.
 # Operation, permissions, backup and cutover: docs/RELEASES.md. Step-by-step host setup below.
 #
+# 0. Pin an image release of Forge Desk that ships the release runtime. An image from before it
+#    lacks git, ssh and flock, and the container refuses to start with releases enabled.
+#
 # 1. Create the private state directory owned by the image's runtime user (uid/gid 1000):
 #      install -d -m 0700 -o 1000 -g 1000 release-state
 # 2. Create ./config.yaml with a `releases:` block, `stateDir: /var/lib/forge-desk`, and the
