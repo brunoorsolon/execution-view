@@ -22,8 +22,12 @@ function read(key: string, legacyKey: string): string | null {
   if (v !== null) return v;
   const old = localStorage.getItem(legacyKey);
   if (old !== null) {
-    localStorage.setItem(key, old);
-    localStorage.removeItem(legacyKey);
+    try {
+      localStorage.setItem(key, old);
+      localStorage.removeItem(legacyKey);
+    } catch {
+      // storage full: keep the old key and its value; the move runs again on the next read
+    }
   }
   return old;
 }
@@ -48,6 +52,8 @@ export function saveTheme(pref: ThemePref): void {
   try {
     if (pref === 'system') localStorage.removeItem(KEY);
     else localStorage.setItem(KEY, pref);
+    // The new choice replaces a pre-rename value, which would otherwise come back on reload.
+    localStorage.removeItem(LEGACY_KEY);
   } catch {
     // storage blocked: the choice lasts for this page only
   }
