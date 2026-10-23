@@ -1,6 +1,6 @@
 # Forge Desk
 
-Forge Desk is a small self-hosted app that reads the **open issues** of your GitHub, GitHub Enterprise Server or Gitea repositories, builds a **dependency graph** from the relations you already declare (native issue dependencies and simple `Depends on #12` lines in issue bodies), and turns it into an **execution order**: what can start now, what can run in parallel, and what blocks everything else. The output is fully deterministic: the same issues always give the same order, the same layout and the same content hash. It has a web UI, a REST API, exports (JSON, Markdown, Mermaid, DOT) and a CLI that checks your setup. Planning keeps the planner, relation format, configuration, URLs and exports it had before the rename to Forge Desk.
+Forge Desk is a small self-hosted app that reads the **open issues** of your GitHub, GitHub Enterprise Server or Gitea repositories, builds a **dependency graph** from the relations you already declare (native issue dependencies and simple `Depends on #12` lines in issue bodies), and turns it into an **execution order**: what can start now, what can run in parallel, and what blocks everything else. The output is fully deterministic: the same issues always give the same order, the same layout and the same content hash. It has a web UI, a REST API, exports (JSON, Markdown, Mermaid, DOT) and a CLI that checks your setup. Planning keeps the planner, relation format, configuration, URLs and export formats it had before the rename to Forge Desk.
 
 ![Dependency graph of the demo roadmap](docs/screenshots/graph.png)
 
@@ -10,7 +10,7 @@ The product is **Forge Desk**; it was previously called execution-view. The CLI 
 
 Two names stay `execution-view` because their new destinations do not exist yet: the repository, `github.com/brunoorsolon/execution-view`, and the image path, `ghcr.io/brunoorsolon/execution-view`. Every link and `docker pull` here uses those paths until they move ([Moving the repository and image](#moving-the-repository-and-image)).
 
-Until the major release that moves the image path, the `execution-view` CLI alias runs the same commands with the same output and exit codes, and the web UI moves a theme or line mode saved under the old `execution-view:*` keys to the new keys. Config syntax, `EV_*` variables, API paths, shared planning URLs, export formats, planning login and release state are unchanged. Upgrading an existing deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#upgrading).
+Until the major release that moves the image path, the `execution-view` CLI alias runs the same commands with the same output and exit codes (only help and usage text follow the name you invoked), and the web UI moves a theme or line mode saved under the old `execution-view:*` keys to the new keys. Config syntax, `EV_*` variables, API paths, shared planning URLs, export formats, planning login and release state are unchanged; only the DOT graph id inside exports changed, to `digraph "forge-desk"`. Upgrading an existing deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#upgrading).
 
 ## Features
 
