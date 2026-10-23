@@ -3,7 +3,7 @@
 The Forge Desk server (`forge-desk serve`, or `npm start`) exposes a small API next to the web UI. Planning reads tracker state; opt-in release publication can create approved tags and releases. All paths are at the root (there is no base-path option). The examples assume a local server on port 8080 started with the demo config:
 
 ```sh
-EV_CONFIG=config.demo.yaml npm start
+FD_CONFIG=config.demo.yaml npm start
 ```
 
 Contents:
@@ -62,7 +62,7 @@ Returns the settings the web UI reads at startup:
 { "refreshMinutes": 5, "version": "2.0.1" }
 ```
 
-`refreshMinutes` is `ui.refreshMinutes` (or `EV_REFRESH_MINUTES`): the UI calls `POST /api/views/:id/refresh` for the view it shows at that interval. `0` means no automatic refresh.
+`refreshMinutes` is `ui.refreshMinutes` (or `FD_REFRESH_MINUTES`): the UI calls `POST /api/views/:id/refresh` for the view it shows at that interval. `0` means no automatic refresh.
 
 `version` is the running server's version. The theme menu shows it at the bottom.
 
@@ -93,7 +93,7 @@ Same response as the snapshot endpoint (always `200` with a body, `ETag` header)
 
 ### `POST /api/webhooks/github` and `POST /api/webhooks/gitea`
 
-Receivers for the tracker's webhooks: a verified delivery drops the cached snapshot of every view whose repositories include the repository named in the payload, so the next request refetches. They exist only when a webhook secret is configured (`webhooks` in the config, or `EV_WEBHOOK_SECRET`); otherwise they answer `404` like any unknown path. Setup: [DEPLOYMENT.md](DEPLOYMENT.md#webhooks).
+Receivers for the tracker's webhooks: a verified delivery drops the cached snapshot of every view whose repositories include the repository named in the payload, so the next request refetches. They exist only when a webhook secret is configured (`webhooks` in the config, or `FD_WEBHOOK_SECRET`); otherwise they answer `404` like any unknown path. Setup: [DEPLOYMENT.md](DEPLOYMENT.md#webhooks).
 
 - **Authentication** is the signature, not basic auth: these two `POST` paths (and nothing else) are exempt from basic auth. The signature is the HMAC-SHA256 of the raw request body, keyed with the secret, compared in constant time.
   - `/api/webhooks/github`: header `X-Hub-Signature-256: sha256=<hex>`.
@@ -113,7 +113,7 @@ Receivers for the tracker's webhooks: a verified delivery drops the cached snaps
 
 ```sh
 BODY='{"action":"opened","repository":{"full_name":"acme/api"}}'
-SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$EV_WEBHOOK_SECRET" | sed 's/^.* //')
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$FD_WEBHOOK_SECRET" | sed 's/^.* //')
 curl -X POST http://localhost:8080/api/webhooks/github \
   -H 'Content-Type: application/json' -H "X-Hub-Signature-256: sha256=$SIG" \
   --data "$BODY"
@@ -144,7 +144,7 @@ Everything else is served from the built web UI directory (`dist/web`). A `GET` 
 
 ## Authentication
 
-When `server.basicAuth` (or `EV_BASIC_AUTH`) is configured, **every** path except `/healthz`, `/login` and `/logout` requires a session cookie from the login page or an HTTP basic-auth header with the same credentials, including the web UI and the exports. The only other exception is the pair of `POST /api/webhooks/*` endpoints (when enabled), which require a valid signature instead. Use it over TLS (see [DEPLOYMENT.md](DEPLOYMENT.md#login)).
+When `server.basicAuth` (or `FD_BASIC_AUTH`) is configured, **every** path except `/healthz`, `/login` and `/logout` requires a session cookie from the login page or an HTTP basic-auth header with the same credentials, including the web UI and the exports. The only other exception is the pair of `POST /api/webhooks/*` endpoints (when enabled), which require a valid signature instead. Use it over TLS (see [DEPLOYMENT.md](DEPLOYMENT.md#login)).
 
 Scripts send basic auth preemptively; there is no `WWW-Authenticate` challenge, because it would make browsers show their own dialog instead of the login page:
 

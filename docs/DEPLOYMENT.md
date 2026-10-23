@@ -34,7 +34,7 @@ Every release publishes a multi-arch image (`linux/amd64`, `linux/arm64`) to the
 docker pull ghcr.io/brunoorsolon/forge-desk:3
 ```
 
-Tags: the exact version (`3.0.0`), the minor (`3.0`), the major (`3`, used in these examples: it follows the newest 3.x release) and `latest`. Pin an exact version if you want to upgrade by hand.
+Tags: the exact version (`3.0.1`), the minor (`3.0`), the major (`3`, used in these examples: it follows the newest 3.x release) and `latest`. Pin an exact version if you want to upgrade by hand.
 
 To build the image yourself instead (for example to test unreleased changes), run this from the repository root and use `forge-desk` as the image name in the commands below:
 
@@ -42,12 +42,12 @@ To build the image yourself instead (for example to test unreleased changes), ru
 docker build -t forge-desk .
 ```
 
-The image is a multi-stage build on `node:22-alpine`: it compiles the server and the web UI, then keeps only production dependencies and the compiled output. Its final stage also contains real `git`, OpenSSH `ssh` and util-linux `flock`, so the same image can publish releases; a planning-only container never uses them. It runs as the non-root user `node`, exposes port 8080, has `EV_HOST=0.0.0.0` and `EV_PORT=8080` set, and its entrypoint is the CLI with the default command `serve`. So `docker run ghcr.io/brunoorsolon/forge-desk:3 check` runs the check instead of the server.
+The image is a multi-stage build on `node:22-alpine`: it compiles the server and the web UI, then keeps only production dependencies and the compiled output. Its final stage also contains real `git`, OpenSSH `ssh` and util-linux `flock`, so the same image can publish releases; a planning-only container never uses them. It runs as the non-root user `node`, exposes port 8080, has `FD_HOST=0.0.0.0` and `FD_PORT=8080` set, and its entrypoint is the CLI with the default command `serve`. So `docker run ghcr.io/brunoorsolon/forge-desk:3 check` runs the check instead of the server.
 
 ### The demo (no token, no network)
 
 ```sh
-docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml ghcr.io/brunoorsolon/forge-desk:3
+docker run --rm -p 8080:8080 -e FD_CONFIG=/app/config.demo.yaml ghcr.io/brunoorsolon/forge-desk:3
 ```
 
 `config.demo.yaml`, `config.example.yaml` and the demo fixture are part of the image.
@@ -55,10 +55,10 @@ docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml ghcr.io/brunoors
 ### Env-only (no config file)
 
 ```sh
-docker run -d --name forge-desk -p 8080:8080 --restart unless-stopped -e EV_PROVIDER=github -e EV_REPOS=owner/repo -e GITHUB_TOKEN ghcr.io/brunoorsolon/forge-desk:3
+docker run -d --name forge-desk -p 8080:8080 --restart unless-stopped -e FD_PROVIDER=github -e FD_REPOS=owner/repo -e GITHUB_TOKEN ghcr.io/brunoorsolon/forge-desk:3
 ```
 
-For Gitea add `-e EV_BASE_URL=https://gitea.example.com` and use `-e GITEA_TOKEN`. All variables are listed in [CONFIGURATION.md](CONFIGURATION.md#env-only-mode). Put the variables in a file to keep them out of your shell history and process list:
+For Gitea add `-e FD_BASE_URL=https://gitea.example.com` and use `-e GITEA_TOKEN`. All variables are listed in [CONFIGURATION.md](CONFIGURATION.md#env-only-mode). Put the variables in a file to keep them out of your shell history and process list:
 
 ```sh
 docker run -d --name forge-desk -p 8080:8080 --restart unless-stopped --env-file .env ghcr.io/brunoorsolon/forge-desk:3
@@ -66,7 +66,7 @@ docker run -d --name forge-desk -p 8080:8080 --restart unless-stopped --env-file
 
 ### With a config file
 
-The image does **not** set `EV_CONFIG`. Without it, the default lookup is `<cwd>/config.yaml`, which is `/app/config.yaml` in the image: mount your file there.
+The image does **not** set `FD_CONFIG`. Without it, the default lookup is `<cwd>/config.yaml`, which is `/app/config.yaml` in the image: mount your file there.
 
 ```sh
 docker run -d --name forge-desk -p 8080:8080 --restart unless-stopped -v "$PWD/config.yaml:/app/config.yaml:ro" --env-file .env ghcr.io/brunoorsolon/forge-desk:3
@@ -104,11 +104,11 @@ docker compose up -d
 What the compose file does:
 
 - runs `ghcr.io/brunoorsolon/forge-desk` pinned to an exact version, as `container_name: forge-desk`, publishes `8080:8080` and restarts `unless-stopped`;
-- sets the env-only settings (`EV_PROVIDER`, `EV_REPOS`, and `EV_BASE_URL` for Gitea) in `environment:`, and passes the token as `GITHUB_TOKEN=${GITHUB_TOKEN}` (or `GITEA_TOKEN`). Docker Compose fills in `${...}` from `.env` in the same folder; nothing else from `.env` reaches the container. With a config file, keep only the token lines: `tokenEnv: GITHUB_TOKEN` in the config finds them;
+- sets the env-only settings (`FD_PROVIDER`, `FD_REPOS`, and `FD_BASE_URL` for Gitea) in `environment:`, and passes the token as `GITHUB_TOKEN=${GITHUB_TOKEN}` (or `GITEA_TOKEN`). Docker Compose fills in `${...}` from `.env` in the same folder; nothing else from `.env` reaches the container. With a config file, keep only the token lines: `tokenEnv: GITHUB_TOKEN` in the config finds them;
 - has a commented-out `volumes:` entry that mounts `./config.yaml` at `/app/config.yaml` for config-file mode. Create the file before you uncomment it, otherwise Docker creates a directory with that name;
 - carries `wud.tag.include` / `wud.tag.exclude` labels so [What's Up Docker](https://getwud.github.io/wud/) reports new releases (exact `X.Y.Z` tags only). They do nothing without it.
 
-No data volume is needed for planning: the app has no database, and snapshots are cached in memory (`EV_CACHE_TTL`) and fetched again after a restart. Release publication is different: it requires the private state volume, login and dedicated credentials described in [RELEASES.md](RELEASES.md), and [`docker-compose.release.yml`](../docker-compose.release.yml) is the ready-made compose file for that mode.
+No data volume is needed for planning: the app has no database, and snapshots are cached in memory (`FD_CACHE_TTL`) and fetched again after a restart. Release publication is different: it requires the private state volume, login and dedicated credentials described in [RELEASES.md](RELEASES.md), and [`docker-compose.release.yml`](../docker-compose.release.yml) is the ready-made compose file for that mode.
 
 To build from source instead of pulling, replace the `image:` line with `build: .` and run `docker compose up -d --build` from the repository root. To publish only on localhost (when a reverse proxy runs on the same host), change the port mapping to `'127.0.0.1:8080:8080'`.
 
@@ -118,9 +118,9 @@ Release publication is opt-in and runs in the same non-root image. It needs an i
 
 ```sh
 install -d -m 0700 -o 1000 -g 1000 release-state
-# EV_IMAGE must name a Forge Desk image release that ships the release runtime; the Compose file
+# FD_IMAGE must name a Forge Desk image release that ships the release runtime; the Compose file
 # refuses to start without it. Replace `image:` with `build: .` instead to build this repository.
-printf 'EV_IMAGE=ghcr.io/brunoorsolon/forge-desk:%s\n' '<release>' >> .env
+printf 'FD_IMAGE=ghcr.io/brunoorsolon/forge-desk:%s\n' '<release>' >> .env
 docker compose -f docker-compose.release.yml run --rm forge-desk check
 docker compose -f docker-compose.release.yml up -d
 ```
@@ -139,7 +139,7 @@ npm ci
 npm run build
 ```
 
-`npm run build` compiles the server to `dist/` and the web UI to `dist/web/`. Then start it, with the config chosen by `EV_CONFIG` (or `./config.yaml`, or env-only variables):
+`npm run build` compiles the server to `dist/` and the web UI to `dist/web/`. Then start it, with the config chosen by `FD_CONFIG` (or `./config.yaml`, or env-only variables):
 
 ```sh
 npm start
@@ -187,8 +187,8 @@ WantedBy=multi-user.target
 
 ```sh
 GITHUB_TOKEN=ghp_your_token_here
-EV_HOST=127.0.0.1
-EV_BASIC_AUTH=admin:change-me
+FD_HOST=127.0.0.1
+FD_BASIC_AUTH=admin:change-me
 ```
 
 ```sh
@@ -235,7 +235,7 @@ Notes:
 
 - A cold refresh of a large view makes many requests to the tracker and can take a while: allow a generous read timeout (the nginx example uses 120 s).
 - Static files are resolved on every request, so after `npm run build` (or replacing `dist/web`) the new UI is served without restarting the app; a `dist/web` created after startup is picked up too. `index.html` is sent with `Cache-Control: no-cache` (also for the deep-link fallback), files under `assets/` (hashed names) with `Cache-Control: public, max-age=31536000, immutable`, other static files with `no-cache`, and `/api/*` with `no-store`. A proxy that caches should keep honouring these headers.
-- Bind the app to loopback (`EV_HOST=127.0.0.1`, or publish `127.0.0.1:8080:8080` from Docker) so that only the proxy can reach it.
+- Bind the app to loopback (`FD_HOST=127.0.0.1`, or publish `127.0.0.1:8080:8080` from Docker) so that only the proxy can reach it.
 - The proxy is a good place for authentication and TLS; see the next section.
 
 ## Login
@@ -246,10 +246,10 @@ The app has an optional login that protects **everything except `/healthz`** (we
 server:
   basicAuth:
     username: admin
-    passwordEnv: EV_BASIC_AUTH_PASSWORD
+    passwordEnv: FD_BASIC_AUTH_PASSWORD
 ```
 
-or with the environment variable `EV_BASIC_AUTH=user:password`, which overrides the config block. Prefer `passwordEnv` (or an env file) over an inline `password`.
+or with the environment variable `FD_BASIC_AUTH=user:password`, which overrides the config block. Prefer `passwordEnv` (or an env file) over an inline `password`.
 
 In a browser, the app shows a login page that password managers can fill. Logging in sets an HttpOnly session cookie that lasts 30 days, and **Log out** is in the theme menu. Sessions live in memory, so a restart (an upgrade, for example) means logging in again. Scripts send HTTP basic auth with the same credentials instead; they must send it **preemptively** (`curl -u` does), because the app does not answer with a `WWW-Authenticate` challenge.
 
@@ -264,10 +264,10 @@ The UI labels below may vary between versions of GitHub, Gitea and Forgejo.
 **1. Choose a secret** and give it to the app. Use a long random string, for example `openssl rand -hex 32`:
 
 ```sh
-EV_WEBHOOK_SECRET=<the secret>
+FD_WEBHOOK_SECRET=<the secret>
 ```
 
-or, in the config file, `webhooks.secretEnv: EV_WEBHOOK_SECRET` (the name of an environment variable; recommended) or an inline `webhooks.secret` (see [CONFIGURATION.md](CONFIGURATION.md#webhooks)). Without a secret, the webhook endpoints do not exist.
+or, in the config file, `webhooks.secretEnv: FD_WEBHOOK_SECRET` (the name of an environment variable; recommended) or an inline `webhooks.secret` (see [CONFIGURATION.md](CONFIGURATION.md#webhooks)). Without a secret, the webhook endpoints do not exist.
 
 **2. Add a webhook to each repository** of your views, pointing at your public URL (the tracker must be able to reach it; see the reverse proxy notes below):
 
@@ -297,7 +297,7 @@ The cache TTL still applies as a safety net: a missed or failed delivery only de
 
 `GET /healthz` returns `200` and `{"status":"ok"}`, with no authentication. It only says that the process is up and serving; it does **not** call your tracker. Use `forge-desk check` to verify tokens and repositories.
 
-The Docker image already declares a `HEALTHCHECK` (every 30 s, 5 s timeout, 10 s start period, 3 retries) that requests `/healthz` on `EV_PORT`. `docker ps` shows `healthy` when it works.
+The Docker image already declares a `HEALTHCHECK` (every 30 s, 5 s timeout, 10 s start period, 3 retries) that requests `/healthz` on `FD_PORT`. `docker ps` shows `healthy` when it works.
 
 ```sh
 curl -fsS http://localhost:8080/healthz
@@ -314,10 +314,10 @@ Small for planning. There is no database, and planning keeps no persistent state
 - **The token is never logged.** Error messages that could contain it are redacted, and the request log records the method, path and host but not headers. The HTTP client refuses to send the token to any host other than the configured `baseUrl`. API error responses redact the token too.
 - Keep tokens out of the image, the repository and the config file: use `tokenEnv`, `--env-file`, Docker or systemd secrets. `.env` and `config.yaml` are git-ignored, and `.env` is excluded from the Docker build context.
 - **What the app exposes:** issue titles, labels, assignees, milestones and URLs of the configured repositories (bodies are not exposed). Anyone who can reach the service can read those, including titles from **private** repositories your token can see. Use the login and/or the proxy's authentication, and TLS.
-- The process runs as a non-root user in the Docker image and listens on all interfaces by default (`0.0.0.0`): restrict `EV_HOST` or the published port when you do not want that.
+- The process runs as a non-root user in the Docker image and listens on all interfaces by default (`0.0.0.0`): restrict `FD_HOST` or the published port when you do not want that.
 - The login over plain HTTP is not confidential (see above).
 - **Webhooks** are authenticated only by the HMAC signature (constant-time comparison); use a long random secret and keep it like a token. Anyone who has it can make the app drop its caches (the worst effect is extra tracker requests), nothing more.
-- `EV_BASIC_AUTH` and `-e TOKEN=value` are visible to anyone who can run `docker inspect` or read the process environment; prefer files and secrets on shared hosts.
+- `FD_BASIC_AUTH` and `-e TOKEN=value` are visible to anyone who can run `docker inspect` or read the process environment; prefer files and secrets on shared hosts.
 
 ## Upgrading
 
@@ -336,6 +336,8 @@ From source: `git pull`, then `docker build -t forge-desk .` (or `docker compose
 Bare Node.js: `git pull && npm ci && npm run build`, then restart the service (`sudo systemctl restart forge-desk`).
 
 Upgrading from 2.x to 3.0.0: the image moved, so change `ghcr.io/brunoorsolon/execution-view` to `ghcr.io/brunoorsolon/forge-desk` in your compose file or `docker run` command; the old path gets no tags after 2.0.5. Your config, `.env` and `EV_*` variables stay as they are. The current compose files name the service and container `forge-desk`; if you switch to them, remove the old container once with `docker rm -f execution-view` before `docker compose up -d`, because it still holds the port. With plain Docker, do the same and use `--name forge-desk`. The `execution-view` command is gone: scripts and systemd units must call `forge-desk` (an existing unit can keep its own name and paths). Anything that matches the old tracker `User-Agent` (`execution-view`), the DOT graph id (`digraph "execution-view"`) or the `execution-view listening on` log line must match `forge-desk` instead. The web UI no longer reads the theme and line mode that 2.x saved, so pick them again once. If you copied `skills/execution-view-issues/` for your agents, replace it with [`skills/forge-desk-issues/`](../skills/forge-desk-issues/SKILL.md).
+
+Upgrading to 3.0.1: the environment variables are renamed from `EV_` to `FD_` (`EV_BASIC_AUTH` becomes `FD_BASIC_AUTH`, `EV_IMAGE` becomes `FD_IMAGE`, and so on). Nothing changes until you rename: every `EV_` name still works until the next major release, still wins over its `FD_` counterpart, and gets a startup warning. Rename each variable in `.env` and in your compose file's `environment:` lines in one step, because Compose passes the container only the names listed there; a `FD_BASIC_AUTH` that is set in `.env` but not listed under `environment:` never reaches the app, so it starts without its login. The release Compose file now requires `FD_IMAGE` and stops with a message while only `EV_IMAGE` is set. Then run `forge-desk check`: it prints a warning for every remaining `EV_` name.
 
 After every upgrade, run `forge-desk check`. The configuration schema is strict, so a key that was removed or renamed makes the app refuse to start with a clear message; compare your `config.yaml` with `config.example.yaml`. Cached snapshots are in memory only and start empty after a restart.
 

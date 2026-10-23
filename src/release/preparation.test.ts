@@ -1448,8 +1448,8 @@ describe('read-only publication reconciliation and original-version recovery', (
         PASSWORD: 'password',
         PLANNING: 'read-token',
         RELEASE: TOKEN,
-        EV_HOST: '127.0.0.1',
-        EV_PORT: '43197',
+        FD_HOST: '127.0.0.1',
+        FD_PORT: '43197',
       },
     });
     cleanups.push(async () => {

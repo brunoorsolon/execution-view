@@ -11,29 +11,29 @@ services:
   forge-desk:
     # Pinned version; the What's Up Docker labels below report new releases.
     # To build from source instead, replace this line with `build: .`.
-    image: ghcr.io/brunoorsolon/forge-desk:3.0.0
+    image: ghcr.io/brunoorsolon/forge-desk:3.0.1
     container_name: forge-desk
     restart: unless-stopped
     ports:
       - '8080:8080'
     environment:
       # Env-only mode: one view over one or more repositories.
-      - EV_PROVIDER=github
-      - EV_REPOS=owner/repo,owner/other-repo
+      - FD_PROVIDER=github
+      - FD_REPOS=owner/repo,owner/other-repo
       - GITHUB_TOKEN=${GITHUB_TOKEN}
-      # Gitea or Forgejo instead (EV_BASE_URL is the instance root, without /api/v1):
-      # - EV_PROVIDER=gitea
-      # - EV_BASE_URL=https://gitea.example.com
-      # - EV_REPOS=owner/repo
+      # Gitea or Forgejo instead (FD_BASE_URL is the instance root, without /api/v1):
+      # - FD_PROVIDER=gitea
+      # - FD_BASE_URL=https://gitea.example.com
+      # - FD_REPOS=owner/repo
       # - GITEA_TOKEN=${GITEA_TOKEN}
       # Optional: priority labels (highest first) and the login (user:password).
-      # - EV_PRIORITY_LABELS=P0,P1,P2
-      # - EV_BASIC_AUTH=${EV_BASIC_AUTH}
+      # - FD_PRIORITY_LABELS=P0,P1,P2
+      # - FD_BASIC_AUTH=${FD_BASIC_AUTH}
       # Optional: how often the web UI refreshes the open view, in minutes
       # (default 5; 0 = only the Refresh button).
-      # - EV_REFRESH_MINUTES=5
+      # - FD_REFRESH_MINUTES=5
     # Config-file mode (several views, scope filters, webhooks, ...): create
-    # config.yaml from config.example.yaml first, remove EV_PROVIDER/EV_REPOS
+    # config.yaml from config.example.yaml first, remove FD_PROVIDER/FD_REPOS
     # above (keep the token lines), then uncomment. If the file does not exist,
     # Docker creates a directory named config.yaml instead.
     # volumes:

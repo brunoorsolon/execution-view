@@ -70,7 +70,7 @@ Open an issue, find the **Relationships** area of the sidebar, and use **Mark as
 
 ### Gitea
 
-Forgejo uses the same API and is supported with `kind: gitea` (env-only mode: `EV_PROVIDER=gitea`). CI tests the app against live Gitea 1.25 and Forgejo 11 instances (`scripts/forge-integration.sh`); other versions are expected to work but are not tested.
+Forgejo uses the same API and is supported with `kind: gitea` (env-only mode: `FD_PROVIDER=gitea`). CI tests the app against live Gitea 1.25 and Forgejo 11 instances (`scripts/forge-integration.sh`); other versions are expected to work but are not tested.
 
 Open an issue and use the **Dependencies** section of the sidebar: add the issue that **this issue depends on**. **(may vary by version)**
 
@@ -313,7 +313,7 @@ The same rules are packaged as a skill for coding agents: [`skills/forge-desk-is
 
 ## 7. Tokens and permissions
 
-The app only ever sends `GET` requests and needs **read-only** access. Use a dedicated token with the fewest permissions, and give it via an environment variable (`tokenEnv` in the config, or `GITHUB_TOKEN` / `GITEA_TOKEN` / `EV_TOKEN` in env-only mode). **Never commit tokens** to Git; `.env` is git-ignored, and `config.yaml` should not contain an inline `token`. The token is never logged, and it is redacted from error messages; the app also refuses to send it to a host other than the configured one.
+The app only ever sends `GET` requests and needs **read-only** access. Use a dedicated token with the fewest permissions, and give it via an environment variable (`tokenEnv` in the config, or `GITHUB_TOKEN` / `GITEA_TOKEN` / `FD_TOKEN` in env-only mode). **Never commit tokens** to Git; `.env` is git-ignored, and `config.yaml` should not contain an inline `token`. The token is never logged, and it is redacted from error messages; the app also refuses to send it to a host other than the configured one.
 
 ### GitHub and GitHub Enterprise Server
 

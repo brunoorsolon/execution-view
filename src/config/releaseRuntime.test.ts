@@ -291,7 +291,7 @@ describe('release runtime startup', () => {
     const port = await freePort();
     const app = await startServer({
       configPath: writeConfig(f),
-      env: { EV_PORT: String(port) },
+      env: { FD_PORT: String(port) },
     });
     cleanups.push(() => app.close());
     const response = await fetch(`http://127.0.0.1:${port}/healthz`);
@@ -340,7 +340,7 @@ describe('release runtime startup', () => {
     const f = files();
     const app = await startServer({
       configPath: writeOutageConfig(f),
-      env: { EV_PORT: String(await freePort()) },
+      env: { FD_PORT: String(await freePort()) },
     });
     cleanups.push(() => app.close());
     const authorization = `Basic ${Buffer.from('admin:pw').toString('base64')}`;
@@ -377,19 +377,19 @@ describe('release runtime startup', () => {
     const configPath = writeConfig(f);
     const first = await startServer({
       configPath,
-      env: { EV_PORT: String(await freePort()) },
+      env: { FD_PORT: String(await freePort()) },
     });
     cleanups.push(() => first.close());
 
     await expect(
-      startServer({ configPath, env: { EV_PORT: String(await freePort()) } }),
+      startServer({ configPath, env: { FD_PORT: String(await freePort()) } }),
     ).rejects.toThrow(/owns release state directory/);
 
     // Closing the first process releases ownership, so a restart can take over.
     await first.close();
     const restarted = await startServer({
       configPath,
-      env: { EV_PORT: String(await freePort()) },
+      env: { FD_PORT: String(await freePort()) },
     });
     cleanups.push(() => restarted.close());
     expect(restarted.server.listening).toBe(true);

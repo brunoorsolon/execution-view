@@ -169,7 +169,7 @@ echo "ok: 6 issues created, #4 depends on #3 natively, #1 closed"
 
 echo "==> running the CLI (env-only mode)"
 run_cli() {
-  EV_PROVIDER=gitea EV_BASE_URL="$BASE" EV_TOKEN="$READ_TOKEN" EV_REPOS="$ADMIN_USER/$REPO" \
+  FD_PROVIDER=gitea FD_BASE_URL="$BASE" FD_TOKEN="$READ_TOKEN" FD_REPOS="$ADMIN_USER/$REPO" \
     node dist/cli/index.js "$@"
 }
 set +e

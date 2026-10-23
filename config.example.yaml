@@ -1,12 +1,12 @@
 # Forge Desk example configuration.
 #
 # Copy this file to config.yaml (the default location), or point to another
-# file with `--config <path>` or the EV_CONFIG environment variable. Without a
-# config file, the app falls back to env-only mode (EV_PROVIDER, EV_REPOS, ...).
+# file with `--config <path>` or the FD_CONFIG environment variable. Without a
+# config file, the app falls back to env-only mode (FD_PROVIDER, FD_REPOS, ...).
 #
 # Environment overrides that apply on top of this file:
-#   EV_HOST, EV_PORT (1-65535), EV_CACHE_TTL (seconds, >= 0),
-#   EV_REFRESH_MINUTES (0-1440), EV_BASIC_AUTH (user:password), EV_WEBHOOK_SECRET
+#   FD_HOST, FD_PORT (1-65535), FD_CACHE_TTL (seconds, >= 0),
+#   FD_REFRESH_MINUTES (0-1440), FD_BASIC_AUTH (user:password), FD_WEBHOOK_SECRET
 
 server:
   host: 0.0.0.0 # default: 0.0.0.0
@@ -15,10 +15,10 @@ server:
   # password is required, from one of:
   #   passwordEnv: name of the env var holding it (recommended; wins when set)
   #   password:    inline value (discouraged)
-  # EV_BASIC_AUTH=user:password overrides this whole block.
+  # FD_BASIC_AUTH=user:password overrides this whole block.
   basicAuth:
     username: admin
-    passwordEnv: EV_BASIC_AUTH_PASSWORD
+    passwordEnv: FD_BASIC_AUTH_PASSWORD
     # password: change-me
 
 cache:
@@ -31,10 +31,10 @@ ui:
 # (POST /api/webhooks/github and /api/webhooks/gitea). Disabled without a secret. One of:
 #   secretEnv: name of the env var holding the secret (recommended; wins when set)
 #   secret:    inline value (discouraged)
-# EV_WEBHOOK_SECRET overrides this block. A secretEnv naming an unset variable only warns.
+# FD_WEBHOOK_SECRET overrides this block. A secretEnv naming an unset variable only warns.
 # The cache TTL above still applies as a safety net. See docs/DEPLOYMENT.md#webhooks.
 # webhooks:
-#   secretEnv: EV_WEBHOOK_SECRET
+#   secretEnv: FD_WEBHOOK_SECRET
 #   # secret: change-me
 
 # Sources: where issues come from. ids are unique and match ^[a-z0-9][a-z0-9-_]*$

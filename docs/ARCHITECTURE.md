@@ -21,7 +21,7 @@
 >   of `contentHash`. The Markdown export has a Priority column, and the web UI
 >   shows the exact name.
 > - `Snapshot` has an `orderingMode: 'priority' | 'waves'` field (the view's
->   `ordering.mode`, default `priority`; env-only mode: `EV_ORDERING_MODE`).
+>   `ordering.mode`, default `priority`; env-only mode: `FD_ORDERING_MODE`).
 >   In `waves` mode the Kahn queue in §8 picks by **(wave asc, priority asc,
 >   remainingDepth desc, compareKeys asc)**, so the linear order runs wave by
 >   wave; `priority` mode is exactly the rule in §8. It is not hashed on its
@@ -39,7 +39,7 @@
 >   file's directory (default `process.cwd()`).
 > - `server.basicAuth` needs `username` plus either `passwordEnv` or
 >   `password`, not "both keys".
-> - The Docker image does **not** set `EV_CONFIG` (an explicit path must exist,
+> - The Docker image does **not** set `FD_CONFIG` (an explicit path must exist,
 >   which would break env-only mode). The default lookup is `/app/config.yaml`.
 > - `dangling-reference` and `fetch-error` warnings are dropped when the issue
 >   that declares the reference is not part of the plan (out of scope), so they
@@ -67,7 +67,7 @@
 >   (also via the SPA fallback) is `Cache-Control: no-cache`; files under
 >   `assets/` are `public, max-age=31536000, immutable`; other files `no-cache`.
 > - Webhooks: an optional top-level `webhooks: { secret?, secretEnv? }` config
->   (resolved to `AppConfig.webhooks: { secret } | null`; `EV_WEBHOOK_SECRET`
+>   (resolved to `AppConfig.webhooks: { secret } | null`; `FD_WEBHOOK_SECRET`
 >   overrides it, also in env-only mode; a `secretEnv` naming an unset variable
 >   is a warning) enables `POST /api/webhooks/github` and
 >   `POST /api/webhooks/gitea` (`src/server/webhooks.ts`). They verify an
@@ -544,7 +544,7 @@ Markdown shows in a single header line.
 
 ## 11. Configuration (`src/config/*`)
 
-YAML file. The path comes from `--config`, then `EV_CONFIG`, then
+YAML file. The path comes from `--config`, then `FD_CONFIG`, then
 `./config.yaml`. With no file, fall back to **env-only mode**.
 
 ```yaml
@@ -553,7 +553,7 @@ server:
   port: 8080 # default
   basicAuth: # optional; both keys required if present
     username: admin
-    passwordEnv: EV_BASIC_AUTH_PASSWORD
+    passwordEnv: FD_BASIC_AUTH_PASSWORD
 cache:
   ttlSeconds: 300 # default
 sources:
@@ -599,15 +599,20 @@ error (the token is null and a warning is logged). Anonymous access works for
 public repos.
 
 **Env-only mode**, used when no config file exists:
-`EV_PROVIDER` (github|gitea, required), `EV_REPOS` (comma-separated
-owner/repo, required), `EV_BASE_URL`, `EV_TOKEN` (falls back to
-`GITHUB_TOKEN` / `GITEA_TOKEN`), `EV_VIEW_ID` (default `default`),
-`EV_VIEW_TITLE`, `EV_PRIORITY_LABELS` (comma-separated), `EV_SUB_ISSUES`
-(`true`/`false`). With neither a file nor `EV_PROVIDER`, fail with a clear
+`FD_PROVIDER` (github|gitea, required), `FD_REPOS` (comma-separated
+owner/repo, required), `FD_BASE_URL`, `FD_TOKEN` (falls back to
+`GITHUB_TOKEN` / `GITEA_TOKEN`), `FD_VIEW_ID` (default `default`),
+`FD_VIEW_TITLE`, `FD_PRIORITY_LABELS` (comma-separated), `FD_SUB_ISSUES`
+(`true`/`false`). With neither a file nor `FD_PROVIDER`, fail with a clear
 message.
 
-These env vars override values in either mode: `EV_HOST`, `EV_PORT`,
-`EV_CACHE_TTL`, `EV_BASIC_AUTH` (`user:password`).
+These env vars override values in either mode: `FD_HOST`, `FD_PORT`,
+`FD_CACHE_TTL`, `FD_BASIC_AUTH` (`user:password`).
+
+Until the next major release, every fixed `FD_` name also reads its
+pre-3.0.1 `EV_` spelling. A set `EV_` value wins over the `FD_` one, as
+it did before the rename, and adds a deprecation warning to
+`AppConfig.warnings`.
 
 ```ts
 export interface ResolvedSource {

@@ -16,7 +16,7 @@ const RELEASE_YAML = `
 server:
   basicAuth:
     username: admin
-    passwordEnv: EV_BASIC_AUTH_PASSWORD
+    passwordEnv: FD_BASIC_AUTH_PASSWORD
 sources:
   - id: gt
     kind: gitea
@@ -51,7 +51,7 @@ const LOGIN_PASSWORD = 'canary_login_password_2c9e';
 const ENV = {
   PLANNING_TOKEN_ENV: PLANNING_TOKEN,
   RELEASE_TOKEN_ENV: RELEASE_TOKEN,
-  EV_BASIC_AUTH_PASSWORD: LOGIN_PASSWORD,
+  FD_BASIC_AUTH_PASSWORD: LOGIN_PASSWORD,
 };
 const LOGIN_HEADER = `Basic ${Buffer.from(`admin:${LOGIN_PASSWORD}`).toString('base64')}`;
 

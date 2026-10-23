@@ -22,7 +22,7 @@ const RELEASE_YAML = `
 server:
   basicAuth:
     username: admin
-    passwordEnv: EV_BASIC_AUTH_PASSWORD
+    passwordEnv: FD_BASIC_AUTH_PASSWORD
 sources:
   - id: gt
     kind: gitea
@@ -56,7 +56,7 @@ releases:
 const ENV = {
   PLANNING_TOKEN_ENV: PLANNING_TOKEN,
   RELEASE_TOKEN_ENV: RELEASE_TOKEN,
-  EV_BASIC_AUTH_PASSWORD: 'canary_login_password_2c9e',
+  FD_BASIC_AUTH_PASSWORD: 'canary_login_password_2c9e',
 };
 
 function releaseConfig(): AppConfig {
