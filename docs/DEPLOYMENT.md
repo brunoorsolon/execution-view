@@ -34,7 +34,7 @@ Every release publishes a multi-arch image (`linux/amd64`, `linux/arm64`) to the
 docker pull ghcr.io/brunoorsolon/forge-desk:3
 ```
 
-Tags: the exact version (`3.0.0`), the minor (`3.0`), the major (`3`, used in these examples: it follows the newest 3.x release) and `latest`. Pin an exact version if you want to upgrade by hand.
+Tags: the exact version (`3.0.1`), the minor (`3.0`), the major (`3`, used in these examples: it follows the newest 3.x release) and `latest`. Pin an exact version if you want to upgrade by hand.
 
 To build the image yourself instead (for example to test unreleased changes), run this from the repository root and use `forge-desk` as the image name in the commands below:
 

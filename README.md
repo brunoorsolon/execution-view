@@ -33,7 +33,7 @@ docker run --rm -p 8080:8080 -e FD_CONFIG=/app/config.demo.yaml ghcr.io/brunoors
 
 Open <http://localhost:8080>.
 
-Images are published to the GitHub Container Registry for `linux/amd64` and `linux/arm64` on every release: `ghcr.io/brunoorsolon/forge-desk:<tag>`, where the tag is the exact version (`3.0.0`), the minor (`3.0`), the major (`3`) or `latest`.
+Images are published to the GitHub Container Registry for `linux/amd64` and `linux/arm64` on every release: `ghcr.io/brunoorsolon/forge-desk:<tag>`, where the tag is the exact version (`3.0.1`), the minor (`3.0`), the major (`3`) or `latest`.
 
 ## The web UI
 
@@ -73,7 +73,7 @@ mkdir forge-desk && cd forge-desk
 ```yaml
 services:
   forge-desk:
-    image: ghcr.io/brunoorsolon/forge-desk:3.0.0
+    image: ghcr.io/brunoorsolon/forge-desk:3.0.1
     container_name: forge-desk
     restart: unless-stopped
     ports:
@@ -135,7 +135,7 @@ Open <http://localhost:8080>.
 docker compose pull && docker compose up -d
 ```
 
-Images are tagged with the exact version (`3.0.0`), the minor (`3.0`), the major (`3`) and `latest`. Use `:3` instead of a pinned version if you prefer to follow every 3.x release without editing the file.
+Images are tagged with the exact version (`3.0.1`), the minor (`3.0`), the major (`3`) and `latest`. Use `:3` instead of a pinned version if you prefer to follow every 3.x release without editing the file.
 
 **Release publication** uses the same image but a different deployment shape: [`docker-compose.release.yml`](docker-compose.release.yml) mounts the private state volume, the config file and the release secrets read-only, and enables the login. Read [docs/RELEASES.md](docs/RELEASES.md) first: it covers volume ownership, the dedicated Gitea 1.26.1 account and token scopes, SSH host trust, the one-writer limit, restart recovery, backup and the legacy cutover. Planning-only deployments above need none of it.
 
