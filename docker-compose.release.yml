@@ -1,8 +1,10 @@
 # Forge Desk with release publication enabled. Planning-only deployments use docker-compose.yml.
 # Operation, permissions, backup and cutover: docs/RELEASES.md. Step-by-step host setup below.
 #
-# 0. Pin an image release of Forge Desk that ships the release runtime. An image from before it
-#    lacks git, ssh and flock, and the container refuses to start with releases enabled.
+# 0. Set EV_IMAGE to a Forge Desk image release that ships the release runtime (git, ssh, flock),
+#    or replace `image:` below with `build: .` to build this repository. An image from before the
+#    release runtime lacks those tools, so the container refuses to start with releases enabled.
+#    The Compose file stops with a message instead of silently using the planning-only image.
 #
 # 1. Create the private state directory owned by the image's runtime user (uid/gid 1000):
 #      install -d -m 0700 -o 1000 -g 1000 release-state
@@ -22,7 +24,8 @@
 # would expose credentials or state that the one-writer rule cannot protect.
 services:
   execution-view:
-    image: ghcr.io/brunoorsolon/execution-view:1.1.0
+    # Required, never defaulted: the planning-only image tags predate the release runtime.
+    image: ${EV_IMAGE:?Set EV_IMAGE to a Forge Desk image release that ships the release runtime}
     container_name: execution-view
     restart: unless-stopped
     ports:

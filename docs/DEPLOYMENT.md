@@ -114,10 +114,13 @@ To build from source instead of pulling, replace the `image:` line with `build: 
 
 ## Release publication
 
-Release publication is opt-in and runs in the same non-root image. It needs the four mounts and the private local state volume built by [`docker-compose.release.yml`](../docker-compose.release.yml), the application login, and dedicated release credentials for Gitea 1.26.1. The complete operational guide is [RELEASES.md](RELEASES.md): volume ownership, token scopes and account permissions, SSH host trust, the one-writer limit, shutdown and restart recovery, backup and restore, state-schema compatibility, the absence of remote rollback, MIT attribution and the legacy cutover from the terminal publisher.
+Release publication is opt-in and runs in the same non-root image. It needs an image release that ships the release runtime (real `git`, `ssh` and `flock`), the four mounts and the private local state volume built by [`docker-compose.release.yml`](../docker-compose.release.yml), the application login, and dedicated release credentials for Gitea 1.26.1. The complete operational guide is [RELEASES.md](RELEASES.md): volume ownership, token scopes and account permissions, SSH host trust, the one-writer limit, shutdown and restart recovery, backup and restore, state-schema compatibility, the absence of remote rollback, MIT attribution and the legacy cutover from the terminal publisher.
 
 ```sh
 install -d -m 0700 -o 1000 -g 1000 release-state
+# EV_IMAGE must name a Forge Desk image release that ships the release runtime; the Compose file
+# refuses to start without it. Replace `image:` with `build: .` instead to build this repository.
+printf 'EV_IMAGE=ghcr.io/brunoorsolon/execution-view:%s\n' '<release>' >> .env
 docker compose -f docker-compose.release.yml run --rm execution-view check
 docker compose -f docker-compose.release.yml up -d
 ```

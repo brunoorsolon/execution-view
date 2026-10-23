@@ -59,6 +59,9 @@ Release state must live on a private local volume. The pattern below is implemen
 4. Start with the login enabled. Releases require `server.basicAuth` (or `EV_BASIC_AUTH`); the browser approval and the CLI both authenticate as that one operator identity.
 
    ```sh
+   # EV_IMAGE must name a Forge Desk image release that ships the release runtime; the Compose
+   # file refuses to start without it (or replace `image:` with `build: .` in the file).
+   printf 'EV_IMAGE=ghcr.io/brunoorsolon/execution-view:%s\n' '<release>' >> .env
    docker compose -f docker-compose.release.yml run --rm execution-view check
    docker compose -f docker-compose.release.yml up -d
    ```
@@ -78,7 +81,9 @@ The account must be able to:
 - push the approved tag over SSH. Use a deploy key with write access, or an account SSH key placed on an account that is a collaborator with **Write** permission; an organisation team with **Write** on the repository is equivalent. Read-only access fails the tag push and therefore publication.
 - read the designated Actions workflow run. Gitea must have Actions enabled for the repository and the configured workflow must exist on the default branch.
 
-Set `releases.repositories[].expectedApiUser` to the login of the release account. Startup and every job verify the authenticated API user against it, so a token for another account blocks instead of silently adopting it. The recommended repository unit permissions are therefore **Code: Read and Write** and **Releases: Read and Write** for the release account; planning never needs write.
+Set `releases.repositories[].expectedApiUser` to the login of the release account. Startup and every job verify the authenticated API user against it, so a token for another account blocks instead of silently adopting it. The recommended grants are **Code: Read**, **Actions: Read** and **Releases: Read and Write** for the API account, plus a **write-capable deploy key** on that repository for the tag push; the API account itself needs no code write. Planning never needs write. Gitea 1.26.1 expresses the account's units as a custom organisation team with `repo.code` read, `repo.actions` read, `repo.releases` write and `repo.issues`, `repo.pulls`, `repo.wiki` and `repo.projects` none, or as the equivalent per-repository grant where your Gitea version offers one.
+
+Verified on Gitea 1.26.1 with exactly that team, a write deploy key and a `read:user,read:repository,write:repository` token: the SSH tag push and the API release create both succeed, Actions runs stay readable, the contents API refuses a code write (`403`) and a second release for the same tag is rejected (`409`). The repository units are not a complete API ceiling: with `repo.issues: none`, an issue create still answered `201` when the token itself carried `write:issue`. Keep the API token at those three scopes rather than relying on the units alone.
 
 The token is never logged, written to state or included in a receipt. Forge errors are redacted and the release client refuses to send it to any origin other than the configured `baseUrl`.
 
@@ -123,12 +128,14 @@ Back up the durable evidence, not the whole working directory blindly:
 4. Start the owner and reconcile interrupted jobs before preparing or publishing anything new. A restored interrupted job is inspected read-only first; a completed exact job stays complete without a version bump.
 
 ```sh
-# backup (with the container stopped)
-tar --numeric-owner -C release-state --exclude=./checkout -czf "forge-desk-state-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" .
+# backup (with the container stopped); umask 077 keeps the archive private
+( umask 077 && tar --numeric-owner -C release-state --exclude=./checkout -czf "forge-desk-state-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" . )
 # restore
 install -d -m 0700 -o 1000 -g 1000 release-state
 tar --numeric-owner -xzf forge-desk-state-<stamp>.tar.gz -C release-state
 ```
+
+The archive holds the private plans, approval identity, notes and receipts: it must stay private. Create it under `umask 077` as above (or `chmod 600` it afterwards) and keep it private in transit and at rest; a world-readable archive exposes release records to every local user.
 
 Cached checkouts alone are not a backup of publication evidence, and a record directory copied while the owner was writing is not a trusted backup.
 
