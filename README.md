@@ -6,7 +6,7 @@ Forge Desk is a small self-hosted app that reads the **open issues** of your Git
 
 ## The name
 
-The product is **Forge Desk**; it was called execution-view until 3.0.0. The CLI, the Compose service and container, the tracker `User-Agent`, the DOT export graph id, the server log line and the browser preference keys all use `forge-desk`.
+The product is **Forge Desk**; it was called execution-view until 3.0.0, when the repository and the image moved to `forge-desk`. The CLI, the Compose service and container, the tracker `User-Agent`, the DOT export graph id, the server log line and the browser preference keys all use `forge-desk`.
 
 The repository is `github.com/brunoorsolon/forge-desk`; old `execution-view` repository URLs redirect to it. Images are published to `ghcr.io/brunoorsolon/forge-desk`, which carries 2.0.5 and every release from 3.0.0 on. The old path, `ghcr.io/brunoorsolon/execution-view`, keeps its tags up to 2.0.5 and gets no new ones ([The repository and image move](#the-repository-and-image-move)). Upgrading an existing deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#upgrading).
 
@@ -135,7 +135,7 @@ Open <http://localhost:8080>.
 docker compose pull && docker compose up -d
 ```
 
-Images are tagged with the exact version (`1.1.0`), the minor (`1.1`), the major (`1`) and `latest`. Use `:1` instead of a pinned version if you prefer to follow every 1.x release without editing the file.
+Images are tagged with the exact version (`3.0.0`), the minor (`3.0`), the major (`3`) and `latest`. Use `:3` instead of a pinned version if you prefer to follow every 3.x release without editing the file.
 
 **Release publication** uses the same image but a different deployment shape: [`docker-compose.release.yml`](docker-compose.release.yml) mounts the private state volume, the config file and the release secrets read-only, and enables the login. Read [docs/RELEASES.md](docs/RELEASES.md) first: it covers volume ownership, the dedicated Gitea 1.26.1 account and token scopes, SSH host trust, the one-writer limit, restart recovery, backup and the legacy cutover. Planning-only deployments above need none of it.
 
