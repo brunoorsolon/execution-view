@@ -23,8 +23,6 @@ export interface CliDeps {
   providerFor?: (source: ResolvedSource) => IssueProvider;
   now?: () => Date;
   startServer?: typeof startServer;
-  /** Name shown in help and usage. Default: `forge-desk`. */
-  programName?: string;
   /**
    * Interactive yes/no confirmation for a release publication. Absent when stdin cannot answer,
    * which is what makes a non-interactive publication require its explicit approval option.
@@ -32,14 +30,6 @@ export interface CliDeps {
   confirm?: (question: string) => Promise<boolean>;
   /** Poll interval for `releases --wait`. Default: 1000 ms. */
   releasePollMs?: number;
-}
-
-/**
- * The name this CLI was installed as: `forge-desk`, or its pre-rename `execution-view` alias. The
- * alias keeps existing scripts working; remove it in the major release that moves the image path.
- */
-export function programNameFor(invokedPath: string | undefined): string {
-  return path.basename(invokedPath ?? '') === 'execution-view' ? 'execution-view' : 'forge-desk';
 }
 
 /** Exit codes. */
@@ -278,7 +268,7 @@ export async function main(argv: string[], io: CliIo, deps: CliDeps = {}): Promi
 
   const program = new Command();
   program
-    .name(deps.programName ?? 'forge-desk')
+    .name('forge-desk')
     .description('Deterministic dependency graph and execution order for open issues')
     .version(packageVersion())
     .option(

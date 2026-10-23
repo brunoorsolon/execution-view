@@ -11,7 +11,7 @@ services:
   forge-desk:
     # Pinned version; the What's Up Docker labels below report new releases.
     # To build from source instead, replace this line with `build: .`.
-    image: ghcr.io/brunoorsolon/execution-view:1.1.0
+    image: ghcr.io/brunoorsolon/forge-desk:3.0.0
     container_name: forge-desk
     restart: unless-stopped
     ports:

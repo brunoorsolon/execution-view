@@ -61,7 +61,7 @@ Release state must live on a private local volume. The pattern below is implemen
    ```sh
    # EV_IMAGE must name a Forge Desk image release that ships the release runtime; the Compose
    # file refuses to start without it (or replace `image:` with `build: .` in the file).
-   printf 'EV_IMAGE=ghcr.io/brunoorsolon/execution-view:%s\n' '<release>' >> .env
+   printf 'EV_IMAGE=ghcr.io/brunoorsolon/forge-desk:%s\n' '<release>' >> .env
    docker compose -f docker-compose.release.yml run --rm forge-desk check
    docker compose -f docker-compose.release.yml up -d
    ```

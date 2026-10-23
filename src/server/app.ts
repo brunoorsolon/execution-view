@@ -68,8 +68,7 @@ function loginPage(failed: boolean): string {
     <title>Log in · Forge Desk</title>
     <script>
       try {
-        var theme =
-          localStorage.getItem('forge-desk:theme') || localStorage.getItem('execution-view:theme');
+        var theme = localStorage.getItem('forge-desk:theme');
         if (theme === 'light' || theme === 'dark') {
           document.documentElement.setAttribute('data-theme', theme);
         }

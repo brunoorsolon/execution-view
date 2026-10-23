@@ -16,7 +16,7 @@ RUN npm run build
 FROM node:22-alpine AS runtime
 LABEL org.opencontainers.image.title="Forge Desk" \
       org.opencontainers.image.description="Deterministic dependency graph and execution order for open GitHub/Gitea issues" \
-      org.opencontainers.image.source="https://github.com/brunoorsolon/execution-view" \
+      org.opencontainers.image.source="https://github.com/brunoorsolon/forge-desk" \
       org.opencontainers.image.licenses="MIT"
 
 ENV NODE_ENV=production
