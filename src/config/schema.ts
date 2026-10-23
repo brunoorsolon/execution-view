@@ -87,20 +87,17 @@ export const ID_PATTERN = /^[a-z0-9][a-z0-9-_]*$/;
 export const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const HTTP_URL_PATTERN = /^https?:\/\/\S+$/i;
 
-const idSchema = z.string().refine(
-  (s) => ID_PATTERN.test(s),
-  (s) => ({ message: `invalid id "${s}" (must match ${ID_PATTERN.source})` }),
-);
+const idSchema = z.string().refine((s) => ID_PATTERN.test(s), {
+  error: (iss) => `invalid id "${iss.input as string}" (must match ${ID_PATTERN.source})`,
+});
 
-const urlSchema = z.string().refine(
-  (s) => HTTP_URL_PATTERN.test(s),
-  (s) => ({ message: `invalid URL "${s}" (must start with http:// or https://)` }),
-);
+const urlSchema = z.string().refine((s) => HTTP_URL_PATTERN.test(s), {
+  error: (iss) => `invalid URL "${iss.input as string}" (must start with http:// or https://)`,
+});
 
-const repoSchema = z.string().refine(
-  (s) => REPO_PATTERN.test(s),
-  (s) => ({ message: `invalid repo "${s}" (expected owner/repo)` }),
-);
+const repoSchema = z.string().refine((s) => REPO_PATTERN.test(s), {
+  error: (iss) => `invalid repo "${iss.input as string}" (expected owner/repo)`,
+});
 
 const keywordList = z.array(z.string().trim().min(1)).optional();
 const stringList = z.array(z.string()).optional();
@@ -122,12 +119,9 @@ function absolutePathProblem(s: string): string | null {
 const absolutePathSchema = z
   .string()
   .min(1)
-  .refine(
-    (s) => absolutePathProblem(s) === null,
-    (s) => ({
-      message: `invalid path: ${absolutePathProblem(s)}`,
-    }),
-  );
+  .refine((s) => absolutePathProblem(s) === null, {
+    error: (iss) => `invalid path: ${absolutePathProblem(iss.input as string)}`,
+  });
 
 function publicOriginProblem(s: string): string | null {
   if (!printable(s) || /\s/.test(s)) return 'must not contain whitespace or control characters';
@@ -155,12 +149,9 @@ export function isLoopbackHost(hostname: string): boolean {
   return ipv4 !== null && ipv4.slice(1).every((part) => Number(part) <= 255);
 }
 
-const publicOriginSchema = z.string().refine(
-  (s) => publicOriginProblem(s) === null,
-  (s) => ({
-    message: `invalid publicOrigin: ${publicOriginProblem(s)}`,
-  }),
-);
+const publicOriginSchema = z.string().refine((s) => publicOriginProblem(s) === null, {
+  error: (iss) => `invalid publicOrigin: ${publicOriginProblem(iss.input as string)}`,
+});
 
 function sshOriginProblem(s: string): string | null {
   if (!printable(s) || /\s/.test(s)) return 'must not contain whitespace or control characters';
@@ -180,12 +171,9 @@ function sshOriginProblem(s: string): string | null {
   return null;
 }
 
-const sshOriginSchema = z.string().refine(
-  (s) => sshOriginProblem(s) === null,
-  (s) => ({
-    message: `invalid SSH origin: ${sshOriginProblem(s)}`,
-  }),
-);
+const sshOriginSchema = z.string().refine((s) => sshOriginProblem(s) === null, {
+  error: (iss) => `invalid SSH origin: ${sshOriginProblem(iss.input as string)}`,
+});
 
 /** Why a configured designated CI workflow path is unusable, or null when it is a safe path. */
 export function workflowPathProblem(s: string): string | null {
@@ -199,12 +187,9 @@ export function workflowPathProblem(s: string): string | null {
   return null;
 }
 
-const workflowPathSchema = z.string().refine(
-  (s) => workflowPathProblem(s) === null,
-  (s) => ({
-    message: `invalid workflow path: ${workflowPathProblem(s)}`,
-  }),
-);
+const workflowPathSchema = z.string().refine((s) => workflowPathProblem(s) === null, {
+  error: (iss) => `invalid workflow path: ${workflowPathProblem(iss.input as string)}`,
+});
 
 const envNameSchema = z
   .string()
@@ -218,18 +203,14 @@ const gitIdentitySchema = z
       .min(1)
       .refine(
         (s) => printable(s) && !/[<>]/.test(s),
-        () => ({
-          message: 'must not contain control characters, "<" or ">"',
-        }),
+        'must not contain control characters, "<" or ">"',
       ),
     email: z
       .string()
       .trim()
       .refine(
         (s) => printable(s) && /^[^@<>\s]+@[^@<>\s]+$/.test(s),
-        () => ({
-          message: 'must be a plain email address without control characters, "<" or ">"',
-        }),
+        'must be a plain email address without control characters, "<" or ">"',
       ),
   })
   .strict();
@@ -246,10 +227,7 @@ const releaseRepoSchema = z
       .string()
       .trim()
       .min(1)
-      .refine(
-        (s) => printable(s),
-        () => ({ message: 'must not contain control characters' }),
-      ),
+      .refine((s) => printable(s), 'must not contain control characters'),
     ci: z.object({ workflowPath: workflowPathSchema }).strict(),
     ssh: z
       .object({ privateKeyFile: absolutePathSchema, knownHostsFile: absolutePathSchema })
@@ -260,7 +238,7 @@ const releaseRepoSchema = z
   .superRefine((r, ctx) => {
     if ((r.apiTokenFile === undefined) === (r.apiTokenEnv === undefined)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['apiTokenFile'],
         message: 'exactly one of apiTokenFile or apiTokenEnv is required',
       });
@@ -304,14 +282,14 @@ const sourceSchema = z
   .superRefine((s, ctx) => {
     if (s.kind === 'gitea' && s.baseUrl === undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['baseUrl'],
         message: 'baseUrl is required for gitea sources',
       });
     }
     if (s.kind === 'fixture' && s.path === undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['path'],
         message: 'path is required for fixture sources',
       });
@@ -369,8 +347,11 @@ export const rawConfigSchema = z
       })
       .strict()
       .optional(),
+    // Not .int(): Zod 4 caps it at 2^53 - 1, and a larger whole number was always accepted here.
     cache: z
-      .object({ ttlSeconds: z.number().int().min(0).optional() })
+      .object({
+        ttlSeconds: z.number().refine(Number.isInteger, 'expected an integer').min(0).optional(),
+      })
       .strict()
       .optional(),
     ui: z

@@ -319,6 +319,13 @@ views:
     expect(errorOf(() => parseConfig('a: [', {})).message).toContain('Invalid YAML');
     expect(errorOf(() => parseConfig('', {})).message).toContain('sources');
   });
+
+  it('accepts any whole cache.ttlSeconds, however large, and rejects a fraction', () => {
+    const big = parseConfig(`cache: { ttlSeconds: 10000000000000000 }\n${MIN}`, {});
+    expect(big.cache.ttlSeconds).toBe(1e16);
+    const e = errorOf(() => parseConfig(`cache: { ttlSeconds: 1.5 }\n${MIN}`, {}));
+    expect(e.message).toContain('cache.ttlSeconds');
+  });
 });
 
 describe('basicAuth', () => {
@@ -340,6 +347,16 @@ describe('basicAuth', () => {
     expect(e.message).toContain('server.basicAuth');
     const e2 = errorOf(() => parseConfig(auth('    username: admin\n    passwordEnv: PW'), {}));
     expect(e2.message).toContain('PW');
+  });
+
+  it('rejects an empty username and an unknown key', () => {
+    expect(
+      errorOf(() => parseConfig(auth('    username: ""\n    password: pw'), {})).message,
+    ).toContain('server.basicAuth.username');
+    expect(
+      errorOf(() => parseConfig(auth('    username: admin\n    password: pw\n    role: x'), {}))
+        .message,
+    ).toContain('role');
   });
 
   it('FD_BASIC_AUTH overrides, splitting on the first colon', () => {

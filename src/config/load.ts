@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import type { ZodIssue } from 'zod';
+import type { z } from 'zod';
 import type { OrderingMode, ProviderKind } from '../core/types.js';
 import {
   DEFAULT_KEYWORDS,
@@ -115,16 +115,16 @@ function stripTrailingSlashes(s: string): string {
   return s.replace(/\/+$/, '');
 }
 
-function formatPath(path: ReadonlyArray<string | number>): string {
+function formatPath(path: ReadonlyArray<PropertyKey>): string {
   let out = '';
   for (const seg of path) {
     if (typeof seg === 'number') out += `[${seg}]`;
-    else out += out === '' ? seg : `.${seg}`;
+    else out += out === '' ? String(seg) : `.${String(seg)}`;
   }
   return out === '' ? 'config' : out;
 }
 
-function formatIssues(issues: ZodIssue[]): string {
+function formatIssues(issues: z.core.$ZodIssue[]): string {
   const lines = issues.map((i) => `  - ${formatPath(i.path)}: ${i.message}`);
   return `Invalid configuration:\n${lines.join('\n')}`;
 }

@@ -22,7 +22,8 @@ const DEFAULT_WEB_URL = 'https://fixture.local';
 const fixtureIssueSchema = z.object({
   owner: z.string().min(1),
   repo: z.string().min(1),
-  number: z.number().int().min(1),
+  // Not .int(): Zod 4 caps it at 2^53 - 1, and a larger whole number was always accepted here.
+  number: z.number().refine(Number.isInteger, 'expected an integer').min(1),
   title: z.string(),
   state: z.enum(['open', 'closed']),
   body: z.string().nullish(),
