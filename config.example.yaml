@@ -100,3 +100,27 @@ views:
     source: demo
     repos:
       - demo/app
+
+# Release publication is opt-in and off by default. It needs the application login above, the
+# image's git/ssh/flock runtime, a private state volume and dedicated credentials; see
+# docs/RELEASES.md and docs/CONFIGURATION.md#releases before enabling it. Each release repository
+# must reference a gitea source and an explicit owner/repo.
+# releases:
+#   enabled: true
+#   publicOrigin: https://forge-desk.example.com
+#   stateDir: /var/lib/forge-desk
+#   repositories:
+#     - id: app
+#       source: gt
+#       repo: example/app
+#       origin: ssh://git@gitea.example.com/example/app.git
+#       apiTokenFile: /run/secrets/forge_desk_release_token
+#       expectedApiUser: release-bot
+#       ci:
+#         workflowPath: .gitea/workflows/validate.yaml
+#       ssh:
+#         privateKeyFile: /run/secrets/forge_desk_release_key
+#         knownHostsFile: /run/secrets/forge_desk_known_hosts
+#       tagger:
+#         name: Forge Desk Release Bot
+#         email: releases@example.com

@@ -8,7 +8,8 @@ IMAGE="${IMAGE:-execution-view:smoke}"
 SUFFIX="$$"
 DEMO_NAME="ev-smoke-demo-$SUFFIX"
 ENV_NAME="ev-smoke-env-$SUFFIX"
-CONTAINERS=("$DEMO_NAME" "$ENV_NAME")
+REL_NAME="ev-smoke-release-$SUFFIX"
+CONTAINERS=("$DEMO_NAME" "$ENV_NAME" "$REL_NAME")
 TMP_DIR="$(mktemp -d)"
 FAILED=1
 
@@ -58,6 +59,22 @@ json_eval() {
 echo "==> building $IMAGE"
 docker build -t "$IMAGE" .
 
+# The release path runs real Git, OpenSSH and flock(2) in the final image as the runtime user.
+echo "==> runtime capabilities of the final image"
+runtime="$(docker run --rm --entrypoint sh "$IMAGE" -c 'id -u; command -v git; command -v ssh; command -v flock')"
+runtime_uid="$(printf '%s\n' "$runtime" | sed -n 1p)"
+git_path="$(printf '%s\n' "$runtime" | sed -n 2p)"
+ssh_path="$(printf '%s\n' "$runtime" | sed -n 3p)"
+flock_path="$(printf '%s\n' "$runtime" | sed -n 4p)"
+[ "$runtime_uid" != "0" ] || fail "the final image defaults to root"
+[ -n "$git_path" ] || fail "git is missing from the final image"
+[ -n "$ssh_path" ] || fail "ssh is missing from the final image"
+[ -n "$flock_path" ] || fail "flock is missing from the final image"
+# A release-ready process asks the helper for a lock through the `flock <file> <command>` form.
+docker run --rm --entrypoint sh "$IMAGE" -c 'f="$(mktemp)"; flock "$f" true' \
+  || fail "flock cannot take a lock as the runtime user"
+echo "ok: uid $runtime_uid, $git_path, $ssh_path, $flock_path"
+
 echo "==> demo config"
 docker run -d --name "$DEMO_NAME" -p 127.0.0.1::8080 \
   -e EV_CONFIG=/app/config.demo.yaml "$IMAGE" >/dev/null
@@ -97,6 +114,104 @@ docker run -d --name "$ENV_NAME" -p 127.0.0.1::8080 \
 ENV_BASE="http://127.0.0.1:$(host_port "$ENV_NAME")"
 wait_healthy "$ENV_BASE"
 echo "ok: env-only /healthz"
+
+# Release-enabled startup uses a private state volume and read-only credential files. No forge is
+# contacted at startup, so this proves the deployment shape and the one-writer lock without a
+# live server; publication itself needs the live Gitea evidence recorded in the pull request.
+echo "==> release-enabled startup (private volume, read-only secrets)"
+command -v ssh-keygen >/dev/null || fail "ssh-keygen is required to create the smoke credentials"
+mkdir -p "$TMP_DIR/secrets" "$TMP_DIR/state"
+chmod 700 "$TMP_DIR/secrets" "$TMP_DIR/state"
+printf 'smoke-release-token\n' >"$TMP_DIR/secrets/forge_desk_release_token"
+ssh-keygen -q -t ed25519 -N '' -f "$TMP_DIR/secrets/forge_desk_release_key"
+: >"$TMP_DIR/secrets/forge_desk_known_hosts"
+chmod 600 "$TMP_DIR/secrets/forge_desk_release_token" \
+  "$TMP_DIR/secrets/forge_desk_release_key"
+chmod 644 "$TMP_DIR/secrets/forge_desk_known_hosts"
+
+cat >"$TMP_DIR/config.yaml" <<'YAML'
+server:
+  host: 0.0.0.0
+  port: 8080
+  basicAuth:
+    username: operator
+    passwordEnv: EV_BASIC_AUTH_PASSWORD
+sources:
+  - id: gt
+    kind: gitea
+    baseUrl: https://gitea.invalid
+    tokenEnv: GITEA_TOKEN
+views:
+  - id: app
+    source: gt
+    repos:
+      - acme/app
+releases:
+  enabled: true
+  publicOrigin: http://localhost
+  stateDir: /var/lib/forge-desk
+  repositories:
+    - id: app
+      source: gt
+      repo: acme/app
+      origin: ssh://git@gitea.invalid:2222/acme/app.git
+      apiTokenFile: /run/secrets/forge_desk_release_token
+      expectedApiUser: release-bot
+      ci:
+        workflowPath: .gitea/workflows/validate.yml
+      ssh:
+        privateKeyFile: /run/secrets/forge_desk_release_key
+        knownHostsFile: /run/secrets/forge_desk_known_hosts
+      tagger:
+        name: Forge Desk Smoke
+        email: smoke@example.invalid
+YAML
+
+release_args=(
+  --user "$(id -u):$(id -g)"
+  -e HOME=/tmp
+  -e EV_CONFIG=/app/config.yaml
+  -e GITEA_TOKEN=planning-smoke-token
+  -e EV_BASIC_AUTH_PASSWORD=smoke-pass
+  -v "$TMP_DIR/config.yaml:/app/config.yaml:ro"
+  -v "$TMP_DIR/secrets:/run/secrets:ro"
+  -v "$TMP_DIR/state:/var/lib/forge-desk"
+)
+docker run -d --name "$REL_NAME" -p 127.0.0.1::8080 "${release_args[@]}" "$IMAGE" >/dev/null
+REL_BASE="http://127.0.0.1:$(host_port "$REL_NAME")"
+wait_healthy "$REL_BASE"
+echo "ok: release-enabled /healthz (planning stays up)"
+
+lock_mode="$(docker exec "$REL_NAME" stat -c '%a' /var/lib/forge-desk/owner.lock)"
+[ "$lock_mode" = "600" ] || fail "owner.lock mode is $lock_mode, expected 600"
+echo "ok: owner.lock is 0600"
+
+# Release readiness is reported per repository, sanitized, and separate from process liveness.
+capability="$(curl -fsS -u operator:smoke-pass "$REL_BASE/api/releases/repositories")"
+case "$capability" in
+  *'"capability":"blocked"'*) echo "ok: release capability is blocked and sanitized, /healthz stays 200" ;;
+  *) fail "unexpected release capability: $capability" ;;
+esac
+
+set +e
+second_owner="$(docker run --rm "${release_args[@]}" "$IMAGE" 2>&1)"
+second_status=$?
+set -e
+[ "$second_status" -ne 0 ] || fail "a second process claimed the same release state directory"
+case "$second_owner" in
+  *'owns release state directory'*) echo "ok: a second owner is refused (one writer)" ;;
+  *) fail "second owner did not report the ownership conflict: ${second_owner:0:400}" ;;
+esac
+
+docker restart "$REL_NAME" >/dev/null
+# An ephemeral host port is allocated per container start, so read it again after the restart.
+REL_BASE="http://127.0.0.1:$(host_port "$REL_NAME")"
+wait_healthy "$REL_BASE"
+capability="$(curl -fsS -u operator:smoke-pass "$REL_BASE/api/releases/repositories")"
+case "$capability" in
+  *'"capability":"blocked"'*) echo "ok: restart reacquires the state directory" ;;
+  *) fail "release capability after restart: $capability" ;;
+esac
 
 FAILED=0
 echo "smoke test passed"

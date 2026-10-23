@@ -18,9 +18,10 @@ The CLI installs as both `forge-desk` and `execution-view`, and both run the sam
 - **Cycle and dangling-reference detection**: circular dependencies and references to issues that do not exist or are not accessible are reported, not hidden.
 - **Deterministic output and content hash**: no dependence on API response order, clocks or locale. The hash doubles as an `ETag`. See [docs/DETERMINISM.md](docs/DETERMINISM.md).
 - **Exports** to JSON, Markdown, Mermaid and Graphviz DOT.
-- **GitHub, GitHub Enterprise Server and Gitea** (Forgejo works through the Gitea provider). The Gitea provider is tested in CI against live instances: Gitea 1.25 and Forgejo 11 (see `scripts/forge-integration.sh`).
-- **Docker** image and `docker-compose.yml`; also runs on plain Node.js 22.
-- Read-only: it only issues `GET` requests to your tracker.
+- **GitHub, GitHub Enterprise Server and Gitea** (Forgejo works through the Gitea provider). The Gitea provider is tested in CI against live instances: Gitea 1.25, Gitea 1.26.1 and Forgejo 11 (see `scripts/forge-integration.sh`).
+- **Docker** image and `docker-compose.yml`; also runs on plain Node.js 22. The same non-root image carries real `git`, `ssh` and `flock` for the opt-in release publication runtime.
+- **Release publication (opt-in)**: review one prepared Gitea release plan and explicitly approve it, then publish the annotated tag and stable release through durable server jobs with reconciliation and recovery. Gitea 1.26.1 only, with a private state volume and dedicated credentials: see [docs/RELEASES.md](docs/RELEASES.md).
+- Planning is read-only: it only issues `GET` requests to your tracker. Release publication writes only the explicitly approved tag and release.
 
 ## Quickstart (demo in 1 minute)
 
@@ -59,7 +60,7 @@ Issues labelled `agent:claimed` or `agent/claimed` (case-insensitive exact match
 
 Read [Before you start: prerequisites](#before-you-start-prerequisites) first: without declared dependencies the graph is empty. You need Docker with Compose v2 (`docker compose version`).
 
-There is no database and nothing to persist: snapshots are cached in memory and fetched again from your tracker after a restart, so no data volume is needed.
+There is no database and nothing to persist for planning: snapshots are cached in memory and fetched again from your tracker after a restart, so no data volume is needed. Release publication is opt-in and different: it needs the private state volume, login and dedicated credentials, and uses [`docker-compose.release.yml`](docker-compose.release.yml) ([docs/RELEASES.md](docs/RELEASES.md)).
 
 **1. Create a folder for it.**
 
@@ -135,6 +136,8 @@ docker compose pull && docker compose up -d
 ```
 
 Images are tagged with the exact version (`1.1.0`), the minor (`1.1`), the major (`1`) and `latest`. Use `:1` instead of a pinned version if you prefer to follow every 1.x release without editing the file.
+
+**Release publication** uses the same image but a different deployment shape: [`docker-compose.release.yml`](docker-compose.release.yml) mounts the private state volume, the config file and the release secrets read-only, and enables the login. Read [docs/RELEASES.md](docs/RELEASES.md) first: it covers volume ownership, the dedicated Gitea 1.26.1 account and token scopes, SSH host trust, the one-writer limit, restart recovery, backup and the legacy cutover. Planning-only deployments above need none of it.
 
 ### Several repositories, views or options: the config file
 
@@ -236,6 +239,7 @@ Agents that write your issues can be given the same rules: copy the [`skills/exe
 | [docs/PREREQUISITES.md](docs/PREREQUISITES.md) | What the app reads, how to declare dependencies, tokens, rate limits, warning codes and a checklist |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every config option and environment variable, with complete examples                                |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)       | Docker, docker-compose, bare Node, systemd, reverse proxy, login, security, upgrading               |
+| [docs/RELEASES.md](docs/RELEASES.md)           | Release runtime, volume and secrets, forge permissions, SSH trust, recovery, backup, cutover        |
 | [docs/DETERMINISM.md](docs/DETERMINISM.md)     | The guarantees, the exact ordering rules, the content hash                                          |
 | [docs/API.md](docs/API.md)                     | HTTP endpoints, headers, snapshot schema, curl examples                                             |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)   | The implementation contract (for contributors)                                                      |
@@ -316,4 +320,4 @@ The [Release workflow](.github/workflows/release.yml) runs the checks and the Do
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The release engine is a behavioral port of the MIT-licensed Release Publisher 0.3.0 snapshot; see [NOTICE](NOTICE) and [docs/RELEASES.md](docs/RELEASES.md#attribution).

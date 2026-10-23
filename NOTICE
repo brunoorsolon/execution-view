@@ -1,0 +1,14 @@
+Release Publisher attribution
+=============================
+
+Forge Desk's release engine is a behavioral port of the supplied Release Publisher 0.3.0
+snapshot at commit bd134565629a1771d2111a3a06ec47c9643d2c1d, not a source copy.
+
+The supplied publisher is MIT-licensed and its LICENSE carries the copyright line
+"Copyright (c) 2026 bruno.orsolon", the same holder named in this project's LICENSE. Forge Desk
+is distributed under the same MIT License (see LICENSE), which covers the ported behavior and
+requires that copyright and permission notice to be retained; keep the publisher's own LICENSE
+with this file if you redistribute a fuller copy.
+
+No Tea bindings, publisher state or publisher receipts are imported. See
+docs/RELEASES.md#legacy-cutover-from-the-terminal-publisher.

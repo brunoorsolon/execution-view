@@ -1,12 +1,13 @@
 # Deployment
 
-Forge Desk is a single stateless Node.js process: no database, no disk state. It listens on one port and serves the web UI and the API. Pick one of the setups below. The image keeps its current registry path, `ghcr.io/brunoorsolon/execution-view` (see [the name](../README.md#the-name)).
+Forge Desk is a single Node.js process: no database, and planning keeps no disk state. It listens on one port and serves the web UI and the API. Pick one of the setups below. Release publication is opt-in and adds a private state volume, a login and dedicated credentials; its deployment, permissions, backup and cutover guide is [RELEASES.md](RELEASES.md). The image keeps its current registry path, `ghcr.io/brunoorsolon/execution-view` (see [the name](../README.md#the-name)).
 
 Contents:
 
 - [Before you deploy](#before-you-deploy)
 - [Docker](#docker)
 - [docker-compose](#docker-compose)
+- [Release publication](#release-publication)
 - [Bare Node.js](#bare-nodejs)
 - [systemd](#systemd)
 - [Reverse proxy](#reverse-proxy)
@@ -41,7 +42,7 @@ To build the image yourself instead (for example to test unreleased changes), ru
 docker build -t execution-view .
 ```
 
-The image is a multi-stage build on `node:22-alpine`: it compiles the server and the web UI, then keeps only production dependencies and the compiled output. It runs as the non-root user `node`, exposes port 8080, has `EV_HOST=0.0.0.0` and `EV_PORT=8080` set, and its entrypoint is the CLI with the default command `serve`. So `docker run ghcr.io/brunoorsolon/execution-view:1 check` runs the check instead of the server.
+The image is a multi-stage build on `node:22-alpine`: it compiles the server and the web UI, then keeps only production dependencies and the compiled output. Its final stage also contains real `git`, OpenSSH `ssh` and util-linux `flock`, so the same image can publish releases; a planning-only container never uses them. It runs as the non-root user `node`, exposes port 8080, has `EV_HOST=0.0.0.0` and `EV_PORT=8080` set, and its entrypoint is the CLI with the default command `serve`. So `docker run ghcr.io/brunoorsolon/execution-view:1 check` runs the check instead of the server.
 
 ### The demo (no token, no network)
 
@@ -107,9 +108,24 @@ What the compose file does:
 - has a commented-out `volumes:` entry that mounts `./config.yaml` at `/app/config.yaml` for config-file mode. Create the file before you uncomment it, otherwise Docker creates a directory with that name;
 - carries `wud.tag.include` / `wud.tag.exclude` labels so [What's Up Docker](https://getwud.github.io/wud/) reports new releases (exact `X.Y.Z` tags only). They do nothing without it.
 
-No data volume is needed: the app has no database, and snapshots are cached in memory (`EV_CACHE_TTL`) and fetched again after a restart.
+No data volume is needed for planning: the app has no database, and snapshots are cached in memory (`EV_CACHE_TTL`) and fetched again after a restart. Release publication is different: it requires the private state volume, login and dedicated credentials described in [RELEASES.md](RELEASES.md), and [`docker-compose.release.yml`](../docker-compose.release.yml) is the ready-made compose file for that mode.
 
 To build from source instead of pulling, replace the `image:` line with `build: .` and run `docker compose up -d --build` from the repository root. To publish only on localhost (when a reverse proxy runs on the same host), change the port mapping to `'127.0.0.1:8080:8080'`.
+
+## Release publication
+
+Release publication is opt-in and runs in the same non-root image. It needs an image release that ships the release runtime (real `git`, `ssh` and `flock`), the four mounts and the private local state volume built by [`docker-compose.release.yml`](../docker-compose.release.yml), the application login, and dedicated release credentials for Gitea 1.26.1. The complete operational guide is [RELEASES.md](RELEASES.md): volume ownership, token scopes and account permissions, SSH host trust, the one-writer limit, shutdown and restart recovery, backup and restore, state-schema compatibility, the absence of remote rollback, MIT attribution and the legacy cutover from the terminal publisher.
+
+```sh
+install -d -m 0700 -o 1000 -g 1000 release-state
+# EV_IMAGE must name a Forge Desk image release that ships the release runtime; the Compose file
+# refuses to start without it. Replace `image:` with `build: .` instead to build this repository.
+printf 'EV_IMAGE=ghcr.io/brunoorsolon/execution-view:%s\n' '<release>' >> .env
+docker compose -f docker-compose.release.yml run --rm execution-view check
+docker compose -f docker-compose.release.yml up -d
+```
+
+Planning-only deployments do not need any of it: they keep the env-only or config-file setup above, with no volume, no release credentials and no login.
 
 ## Bare Node.js
 
@@ -289,11 +305,12 @@ curl -fsS http://localhost:8080/healthz
 
 ## Resource needs
 
-Small. There is no database and no persistent state: the process keeps one snapshot per view in memory, and the cost of a refresh is a burst of HTTP requests to your tracker (see [API usage](PREREQUISITES.md#8-api-usage-and-rate-limits)) plus a graph computation that is fast for hundreds or thousands of issues. A small container or VM is enough (for example 256 MB of memory and a fraction of a CPU). These are rough sizing hints; the project has no published benchmarks.
+Small for planning. There is no database, and planning keeps no persistent state: the process keeps one snapshot per view in memory, and the cost of a refresh is a burst of HTTP requests to your tracker (see [API usage](PREREQUISITES.md#8-api-usage-and-rate-limits)) plus a graph computation that is fast for hundreds or thousands of issues. A small container or VM is enough (for example 256 MB of memory and a fraction of a CPU). Release publication adds one private state volume, the Git/SSH binaries and a short-lived candidate checkout; it does not change the memory profile materially. These are rough sizing hints; the project has no published benchmarks.
 
 ## Security notes
 
-- **Use read-only tokens** with the minimum scope ([PREREQUISITES.md](PREREQUISITES.md#7-tokens-and-permissions)). The app only sends `GET` requests, but a token can do whatever its scopes allow.
+- **Use read-only tokens** with the minimum scope ([PREREQUISITES.md](PREREQUISITES.md#7-tokens-and-permissions)) for planning. The planning app only sends `GET` requests, but a token can do whatever its scopes allow.
+- **Release publication needs write access, and only there.** Enabling `releases` mounts a dedicated `write:repository` token and an SSH key that can push the approved tag; the planning token must stay separate. Keep both read-only mounts, the login and the private state volume as described in [RELEASES.md](RELEASES.md). Publication only ever creates the explicitly approved tag and release; it cannot force-push, delete or upload assets.
 - **The token is never logged.** Error messages that could contain it are redacted, and the request log records the method, path and host but not headers. The HTTP client refuses to send the token to any host other than the configured `baseUrl`. API error responses redact the token too.
 - Keep tokens out of the image, the repository and the config file: use `tokenEnv`, `--env-file`, Docker or systemd secrets. `.env` and `config.yaml` are git-ignored, and `.env` is excluded from the Docker build context.
 - **What the app exposes:** issue titles, labels, assignees, milestones and URLs of the configured repositories (bodies are not exposed). Anyone who can reach the service can read those, including titles from **private** repositories your token can see. Use the login and/or the proxy's authentication, and TLS.
@@ -304,7 +321,7 @@ Small. There is no database and no persistent state: the process keeps one snaps
 
 ## Upgrading
 
-The app keeps no persistent state, so upgrading means replacing the code and restarting.
+The application itself keeps no persistent state in planning mode, so a planning-only upgrade means replacing the code and restarting. With releases enabled, keep the private state volume: stop the owner, replace the image and start it again, then let startup reconcile interrupted jobs ([RELEASES.md](RELEASES.md#upgrading-state-schema-and-rollback)).
 
 Docker with compose:
 
