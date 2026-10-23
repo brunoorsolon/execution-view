@@ -204,6 +204,8 @@ case "$second_owner" in
 esac
 
 docker restart "$REL_NAME" >/dev/null
+# An ephemeral host port is allocated per container start, so read it again after the restart.
+REL_BASE="http://127.0.0.1:$(host_port "$REL_NAME")"
 wait_healthy "$REL_BASE"
 capability="$(curl -fsS -u operator:smoke-pass "$REL_BASE/api/releases/repositories")"
 case "$capability" in
