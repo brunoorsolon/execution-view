@@ -2,7 +2,13 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+# PRs validate feature branches; main still gets its own post-merge validation.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ci:
@@ -21,7 +27,6 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
-    needs: ci
     steps:
       - uses: actions/checkout@v4
       # The release deployment must not silently select a planning-only image, which lacks the
@@ -37,7 +42,6 @@ jobs:
 
   forge-integration:
     runs-on: ubuntu-latest
-    needs: ci
     strategy:
       fail-fast: false
       matrix:
