@@ -141,7 +141,7 @@ describe('listOpenIssues: listing', () => {
     expect(calls[0]!.headers).toMatchObject({
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'execution-view',
+      'User-Agent': 'forge-desk',
       Authorization: `Bearer ${TOKEN}`,
     });
   });

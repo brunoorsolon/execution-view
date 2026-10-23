@@ -117,7 +117,7 @@ jobs:
           flavor: |
             latest=${{ needs.verify.outputs.latest }}
           labels: |
-            org.opencontainers.image.title=execution-view
+            org.opencontainers.image.title=Forge Desk
             org.opencontainers.image.description=Deterministic dependency graph and execution order for open GitHub/Gitea issues
             org.opencontainers.image.licenses=MIT
       - name: Build and push

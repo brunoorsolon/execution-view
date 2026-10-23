@@ -290,7 +290,7 @@ describe('toDot', () => {
   it('has the digraph header, wave subgraphs and an unschedulable subgraph', () => {
     const out = toDot(multi);
     const lines = out.split('\n');
-    expect(lines[0]).toBe('digraph "execution-view" {');
+    expect(lines[0]).toBe('digraph "forge-desk" {');
     expect(lines).toContain('  rankdir=LR;');
     expect(lines).toContain('  node [shape=box, style="rounded,filled"];');
     expect(lines).toContain('  subgraph "wave_1" {');

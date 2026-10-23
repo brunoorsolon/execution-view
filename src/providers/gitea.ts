@@ -165,7 +165,7 @@ export function createGiteaProvider(opts: GiteaProviderOptions): IssueProvider {
   const apiBase = `${opts.baseUrl.replace(/\/+$/, '')}/api/v1`;
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    'User-Agent': 'execution-view',
+    'User-Agent': 'forge-desk',
   };
   if (opts.token !== null) headers.Authorization = `token ${opts.token}`;
 

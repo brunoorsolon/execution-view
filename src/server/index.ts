@@ -115,7 +115,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Fastif
   }
 
   const shownHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
-  server.log.info(`execution-view listening on http://${shownHost}:${port}`);
+  server.log.info(`forge-desk listening on http://${shownHost}:${port}`);
   for (const view of service.listViews()) {
     server.log.info(`view "${view.id}" (${view.title}): ${view.repos.join(', ')}`);
   }

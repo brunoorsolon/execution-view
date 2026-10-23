@@ -1,6 +1,6 @@
 # HTTP API
 
-The Forge Desk server (`execution-view serve`, or `npm start`) exposes a small API next to the web UI. Planning reads tracker state; opt-in release publication can create approved tags and releases. All paths are at the root (there is no base-path option). The examples assume a local server on port 8080 started with the demo config:
+The Forge Desk server (`forge-desk serve`, or `npm start`) exposes a small API next to the web UI. Planning reads tracker state; opt-in release publication can create approved tags and releases. All paths are at the root (there is no base-path option). The examples assume a local server on port 8080 started with the demo config:
 
 ```sh
 EV_CONFIG=config.demo.yaml npm start
@@ -89,7 +89,7 @@ Same response as the snapshot endpoint (always `200` with a body, `ETag` header)
 | `mmd`     | `text/plain; charset=utf-8`        | `inline; filename="<viewId>.mmd"`  | A Mermaid `flowchart LR`                                                         |
 | `dot`     | `text/vnd.graphviz; charset=utf-8` | `inline; filename="<viewId>.dot"`  | A Graphviz `digraph`, one `rank=same` group per wave                             |
 
-`?refresh=1` works here too. Exports have no `ETag`. Any other extension answers `404`. The CLI produces the same text: `execution-view plan <viewId> -f md|json|mermaid|dot`.
+`?refresh=1` works here too. Exports have no `ETag`. Any other extension answers `404`. The CLI produces the same text: `forge-desk plan <viewId> -f md|json|mermaid|dot`.
 
 ### `POST /api/webhooks/github` and `POST /api/webhooks/gitea`
 

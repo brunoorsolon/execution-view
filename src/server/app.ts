@@ -54,7 +54,7 @@ const UI_NOT_BUILT_HTML = `<!doctype html>
 `;
 
 /**
- * Static login form. The head script applies the theme saved by the app's theme menu (same key as
+ * Static login form. The head script applies the theme saved by the app's theme menu (same keys as
  * `web/src/theme.ts`) before the first paint; the body script keeps a shared `#/view/...` link
  * across the login redirect.
  */
@@ -68,7 +68,8 @@ function loginPage(failed: boolean): string {
     <title>Log in · Forge Desk</title>
     <script>
       try {
-        var theme = localStorage.getItem('execution-view:theme');
+        var theme =
+          localStorage.getItem('forge-desk:theme') || localStorage.getItem('execution-view:theme');
         if (theme === 'light' || theme === 'dark') {
           document.documentElement.setAttribute('data-theme', theme);
         }
