@@ -1,7 +1,7 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`toDot > matches the snapshot (multi-repo) 1`] = `
-"digraph "execution-view" {
+"digraph "forge-desk" {
   rankdir=LR;
   node [shape=box, style="rounded,filled"];
   subgraph "wave_1" {
@@ -31,7 +31,7 @@ exports[`toDot > matches the snapshot (multi-repo) 1`] = `
 `;
 
 exports[`toDot > matches the snapshot (single repo) 1`] = `
-"digraph "execution-view" {
+"digraph "forge-desk" {
   rankdir=LR;
   node [shape=box, style="rounded,filled"];
   subgraph "wave_1" {

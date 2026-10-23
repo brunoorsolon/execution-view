@@ -425,20 +425,20 @@ describe('executable names', () => {
     });
     expect(programNameFor('/usr/local/bin/forge-desk')).toBe('forge-desk');
     expect(programNameFor('/usr/local/bin/execution-view')).toBe('execution-view');
-    expect(programNameFor('dist/cli/index.js')).toBe('execution-view');
+    expect(programNameFor('dist/cli/index.js')).toBe('forge-desk');
 
-    // The renamed executable runs the same commands with the same output and exit code.
-    const legacy = await run(['views', '--config', 'config.demo.yaml']);
-    const renamed = await run(['views', '--config', 'config.demo.yaml'], {
-      programName: programNameFor('/usr/local/bin/forge-desk'),
+    // The alias runs the same commands with the same output and exit code.
+    const renamed = await run(['views', '--config', 'config.demo.yaml']);
+    const legacy = await run(['views', '--config', 'config.demo.yaml'], {
+      programName: programNameFor('/usr/local/bin/execution-view'),
     });
-    expect(legacy.code).toBe(0);
-    expect(renamed).toEqual(legacy);
+    expect(renamed.code).toBe(0);
+    expect(legacy).toEqual(renamed);
 
-    // Help and usage follow the invoked name; the alias name stays unchanged.
-    expect((await run(['--help'])).stdout).toContain('Usage: execution-view');
-    expect((await run(['--help'], { programName: 'forge-desk' })).stdout).toContain(
-      'Usage: forge-desk',
+    // Help and usage follow the invoked name, and default to forge-desk.
+    expect((await run(['--help'])).stdout).toContain('Usage: forge-desk');
+    expect((await run(['--help'], { programName: 'execution-view' })).stdout).toContain(
+      'Usage: execution-view',
     );
   });
 });

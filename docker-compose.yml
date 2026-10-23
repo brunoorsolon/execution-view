@@ -1,5 +1,5 @@
-# Forge Desk with the published image (the service name stays execution-view). Step-by-step setup: README.md,
-# "Run it on your repo with docker compose".
+# Forge Desk with the published image. Step-by-step setup: README.md, "Run it on your repo with
+# docker compose". Upgrading from a file whose service is still execution-view: docs/DEPLOYMENT.md#upgrading.
 #
 # Settings live in `environment:` below. Secrets (tokens, passwords) go in a
 # .env file next to this one: Docker Compose reads it on its own to fill in the
@@ -8,11 +8,11 @@
 # There is no database and no data volume: snapshots are cached in memory and
 # fetched again from the tracker after a restart.
 services:
-  execution-view:
+  forge-desk:
     # Pinned version; the What's Up Docker labels below report new releases.
     # To build from source instead, replace this line with `build: .`.
     image: ghcr.io/brunoorsolon/execution-view:1.1.0
-    container_name: execution-view
+    container_name: forge-desk
     restart: unless-stopped
     ports:
       - '8080:8080'

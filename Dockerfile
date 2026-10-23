@@ -14,7 +14,7 @@ RUN npm run build
 
 # ---- runtime stage: production dependencies and compiled output only ----
 FROM node:22-alpine AS runtime
-LABEL org.opencontainers.image.title="execution-view" \
+LABEL org.opencontainers.image.title="Forge Desk" \
       org.opencontainers.image.description="Deterministic dependency graph and execution order for open GitHub/Gitea issues" \
       org.opencontainers.image.source="https://github.com/brunoorsolon/execution-view" \
       org.opencontainers.image.licenses="MIT"

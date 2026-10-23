@@ -1,9 +1,9 @@
 ---
-name: execution-view-issues
-description: Use when writing or editing an issue in a repository execution-view reads, especially when adding blockers or a parent, so the relations parse in every dependencies.body mode.
+name: forge-desk-issues
+description: Use when writing or editing an issue in a repository Forge Desk plans, especially when adding blockers or a parent, so the relations parse in every dependencies.body mode.
 ---
 
-# Writing issues execution-view reads
+# Writing issues Forge Desk plans
 
 Write each relation on its own relation line. Relation lines are read in every `dependencies.body` mode; no other line form is read in every mode.
 

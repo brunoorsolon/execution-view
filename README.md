@@ -1,14 +1,16 @@
 # Forge Desk
 
-Forge Desk is a small self-hosted app that reads the **open issues** of your GitHub, GitHub Enterprise Server or Gitea repositories, builds a **dependency graph** from the relations you already declare (native issue dependencies and simple `Depends on #12` lines in issue bodies), and turns it into an **execution order**: what can start now, what can run in parallel, and what blocks everything else. The output is fully deterministic: the same issues always give the same order, the same layout and the same content hash. It has a web UI, a REST API, exports (JSON, Markdown, Mermaid, DOT) and a CLI that checks your setup. Planning is the existing execution-view capability: the same planner, relation format, configuration, URLs and exports.
+Forge Desk is a small self-hosted app that reads the **open issues** of your GitHub, GitHub Enterprise Server or Gitea repositories, builds a **dependency graph** from the relations you already declare (native issue dependencies and simple `Depends on #12` lines in issue bodies), and turns it into an **execution order**: what can start now, what can run in parallel, and what blocks everything else. The output is fully deterministic: the same issues always give the same order, the same layout and the same content hash. It has a web UI, a REST API, exports (JSON, Markdown, Mermaid, DOT) and a CLI that checks your setup. Planning keeps the planner, relation format, configuration, URLs and exports it had before the rename to Forge Desk.
 
 ![Dependency graph of the demo roadmap](docs/screenshots/graph.png)
 
 ## The name
 
-The product is **Forge Desk**. It was previously called execution-view, and that name stays wherever tools and scripts depend on it: the npm package, the `execution-view` CLI alias, the Docker image, the repository, the HTTP `User-Agent`, the DOT export graph id, the `localStorage` keys and the server log lines.
+The product is **Forge Desk**; it was previously called execution-view. The CLI is `forge-desk`, the Compose service and container are `forge-desk`, and the tracker `User-Agent`, the DOT export graph id, the server log line and the browser preference keys all use `forge-desk`.
 
-The CLI installs as both `forge-desk` and `execution-view`, and both run the same commands with the same output and exit codes; only the help and usage text follows the name you invoked. The image keeps its current registry path, `ghcr.io/brunoorsolon/execution-view`; a new registry identity is a separate decision. Config syntax, `EV_*` variables, API paths, shared planning URLs, exports and planning login are unchanged, so upgrading needs no rename, environment-variable change or registry migration.
+Two names stay `execution-view` because their new destinations do not exist yet: the repository, `github.com/brunoorsolon/execution-view`, and the image path, `ghcr.io/brunoorsolon/execution-view`. Every link and `docker pull` here uses those paths until they move ([Moving the repository and image](#moving-the-repository-and-image)).
+
+Until the major release that moves the image path, the `execution-view` CLI alias runs the same commands with the same output and exit codes, and the web UI moves a theme or line mode saved under the old `execution-view:*` keys to the new keys. Config syntax, `EV_*` variables, API paths, shared planning URLs, export formats, planning login and release state are unchanged. Upgrading an existing deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#upgrading).
 
 ## Features
 
@@ -65,16 +67,16 @@ There is no database and nothing to persist for planning: snapshots are cached i
 **1. Create a folder for it.**
 
 ```sh
-mkdir execution-view && cd execution-view
+mkdir forge-desk && cd forge-desk
 ```
 
 **2. Create `docker-compose.yml`** with this content (it is also [in the repository](docker-compose.yml), with comments):
 
 ```yaml
 services:
-  execution-view:
+  forge-desk:
     image: ghcr.io/brunoorsolon/execution-view:1.1.0
-    container_name: execution-view
+    container_name: forge-desk
     restart: unless-stopped
     ports:
       - '8080:8080'
@@ -116,7 +118,7 @@ GITHUB_TOKEN=github_pat_xxx
 **4. Check the setup** (token, access, declared dependencies):
 
 ```sh
-docker compose run --rm execution-view check
+docker compose run --rm forge-desk check
 ```
 
 Exit code `0` means everything is fine, `1` a configuration, token or access problem, `2` dependency cycles or references to issues that do not exist; every warning comes with a hint. "0 dependencies" means no dependencies are declared yet (see the prerequisites).
@@ -207,7 +209,7 @@ volumes:
   - ./config.yaml:/app/config.yaml:ro
 ```
 
-with both tokens in `.env`. Create `config.yaml` **before** adding the mount: if the file does not exist, Docker creates a directory with that name. Then run `docker compose run --rm execution-view check`, which reports each view separately. Every option is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md); deployment recipes (plain `docker run`, systemd, reverse proxy, login, webhooks) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+with both tokens in `.env`. Create `config.yaml` **before** adding the mount: if the file does not exist, Docker creates a directory with that name. Then run `docker compose run --rm forge-desk check`, which reports each view separately. Every option is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md); deployment recipes (plain `docker run`, systemd, reverse proxy, login, webhooks) are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Without Docker
 
@@ -228,9 +230,9 @@ The app can only show what your issues declare. In short:
 - [ ] Native dependencies are **available** on your platform (a setting that must be enabled on Gitea; possibly missing on older GitHub Enterprise Server versions). If not, use body lines only.
 - [ ] You know that only **open** issues are shown, and a **closed** issue never blocks anything.
 
-The full explanation, the accepted and rejected syntax, token permissions, API usage and a verification checklist are in **[docs/PREREQUISITES.md](docs/PREREQUISITES.md)**. Verify your setup at any time with `docker compose run --rm execution-view check` (or `node dist/cli/index.js check` from a source checkout).
+The full explanation, the accepted and rejected syntax, token permissions, API usage and a verification checklist are in **[docs/PREREQUISITES.md](docs/PREREQUISITES.md)**. Verify your setup at any time with `docker compose run --rm forge-desk check` (or `node dist/cli/index.js check` from a source checkout).
 
-Agents that write your issues can be given the same rules: copy the [`skills/execution-view-issues/`](skills/execution-view-issues/SKILL.md) folder into the skill directory your agent reads. Claude Code reads `~/.claude/skills/` or `.claude/skills/`; Codex and Pi both read `~/.agents/skills/` or `.agents/skills/`. The skill teaches only the relation-line format that every `dependencies.body` mode reads.
+Agents that write your issues can be given the same rules: copy the [`skills/forge-desk-issues/`](skills/forge-desk-issues/SKILL.md) folder into the skill directory your agent reads. Claude Code reads `~/.claude/skills/` or `.claude/skills/`; Codex and Pi both read `~/.agents/skills/` or `.agents/skills/`. The skill teaches only the relation-line format that every `dependencies.body` mode reads.
 
 ## Documentation
 
@@ -246,7 +248,7 @@ Agents that write your issues can be given the same rules: copy the [`skills/exe
 
 ## CLI
 
-The CLI reads the same config as the server (`--config <path>`, then `EV_CONFIG`, then `./config.yaml`, then env-only mode). After `npm run build` it is `node dist/cli/index.js` (also installed as the `forge-desk` and `execution-view` bins; the Docker image uses it as its entrypoint).
+The CLI reads the same config as the server (`--config <path>`, then `EV_CONFIG`, then `./config.yaml`, then env-only mode). After `npm run build` it is `node dist/cli/index.js` (also installed as the `forge-desk` bin and its `execution-view` alias; the Docker image uses it as its entrypoint).
 
 | Command                                                      | What it does                                                                                       |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
@@ -317,6 +319,14 @@ npm run typecheck && npm test && npm run format:check
    - or push a tag: `git tag v1.2.3 && git push origin v1.2.3`.
 
 The [Release workflow](.github/workflows/release.yml) runs the checks and the Docker smoke test, verifies that the version matches `package.json`, publishes the multi-arch image to `ghcr.io/brunoorsolon/execution-view` (`1.2.3`, `1.2`, `1` and `latest`; prereleases such as `1.3.0-rc.1` never move `latest`) and creates the GitHub Release. Publishing a release from the GitHub UI works too (the image is published; the release already exists). Run workflow with an empty version is a dry run that builds the image without pushing anything.
+
+### Moving the repository and image
+
+The repository and image still use the execution-view name. Moving them is an owner task, in this order:
+
+1. Rename the repository to `forge-desk` in **Settings → General** (needs admin). GitHub redirects web, API and Git URLs from the old name, as long as no new repository takes the name `execution-view`.
+2. The Release workflow publishes to `ghcr.io/${{ github.repository }}`, so the next release after the rename creates a new `ghcr.io/brunoorsolon/forge-desk` package. Open its package settings and check that it is public and linked to the repository. If you create the package by hand first, give the repository write access under **Manage Actions access**, or the release job cannot push. The old `execution-view` package keeps its tags but gets no new ones, and GHCR does not redirect image paths.
+3. Make that release a major version, because existing deployments must change their image path. In the same change, point the Dockerfile `org.opencontainers.image.source` label, the compose files, CI and the docs at the new paths, remove the `execution-view` CLI alias and the old browser storage keys, and say in the release notes which image path to switch to.
 
 ## License
 

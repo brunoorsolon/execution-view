@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-IMAGE="${IMAGE:-execution-view:smoke}"
+IMAGE="${IMAGE:-forge-desk:smoke}"
 SUFFIX="$$"
 DEMO_NAME="ev-smoke-demo-$SUFFIX"
 ENV_NAME="ev-smoke-env-$SUFFIX"

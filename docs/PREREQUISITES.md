@@ -290,7 +290,7 @@ Rules 1 and 2 are ignored by `body: strict`, so an issue template that keeps onl
 
 ### Hand the format to your agents
 
-The same rules are packaged as a skill for coding agents: [`skills/execution-view-issues/SKILL.md`](../skills/execution-view-issues/SKILL.md). Copy the `skills/execution-view-issues/` folder into the skill directory your agent reads. Two copy targets cover Claude Code, Codex and Pi: Claude Code reads `~/.claude/skills/` or `.claude/skills/`, and Codex and Pi both read `~/.agents/skills/` or `.agents/skills/` (paths checked against each agent's documentation on 2026-10-03). Once copied, the agent can write the relation-line format on its own, so its issue bodies parse in both `body: true` and `body: strict`.
+The same rules are packaged as a skill for coding agents: [`skills/forge-desk-issues/SKILL.md`](../skills/forge-desk-issues/SKILL.md). Copy the `skills/forge-desk-issues/` folder into the skill directory your agent reads. Two copy targets cover Claude Code, Codex and Pi: Claude Code reads `~/.claude/skills/` or `.claude/skills/`, and Codex and Pi both read `~/.agents/skills/` or `.agents/skills/` (paths checked against each agent's documentation on 2026-10-03). Once copied, the agent can write the relation-line format on its own, so its issue bodies parse in both `body: true` and `body: strict`.
 
 ## 5. Cross-repository and external issues
 
@@ -387,9 +387,9 @@ Before you run against a real repository:
 - [ ] Referenced issues are **issues, not pull requests**.
 - [ ] You understand that closing an issue (for any reason) releases the issues that wait for it.
 - [ ] For GHES, `baseUrl` ends in `/api/v3`; for Gitea, `baseUrl` is the instance root (no `/api/v1`).
-- [ ] You have run `execution-view check` and it exits `0` (or you understand each warning).
+- [ ] You have run `forge-desk check` and it exits `0` (or you understand each warning).
 
-### Verify with `execution-view check`
+### Verify with `forge-desk check`
 
 `check` loads the configuration, fetches every view (or the views you name), and prints statistics and problems with a hint per warning code.
 

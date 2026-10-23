@@ -1,6 +1,6 @@
 # Deployment
 
-Forge Desk is a single Node.js process: no database, and planning keeps no disk state. It listens on one port and serves the web UI and the API. Pick one of the setups below. Release publication is opt-in and adds a private state volume, a login and dedicated credentials; its deployment, permissions, backup and cutover guide is [RELEASES.md](RELEASES.md). The image keeps its current registry path, `ghcr.io/brunoorsolon/execution-view` (see [the name](../README.md#the-name)).
+Forge Desk is a single Node.js process: no database, and planning keeps no disk state. It listens on one port and serves the web UI and the API. Pick one of the setups below. Release publication is opt-in and adds a private state volume, a login and dedicated credentials; its deployment, permissions, backup and cutover guide is [RELEASES.md](RELEASES.md). The image registry path, `ghcr.io/brunoorsolon/execution-view`, keeps the name from before the Forge Desk rename until it is moved (see [the name](../README.md#the-name)).
 
 Contents:
 
@@ -24,7 +24,7 @@ Contents:
 1. Read [PREREQUISITES.md](PREREQUISITES.md): how dependencies must be declared, and which token you need.
 2. Decide between a config file ([CONFIGURATION.md](CONFIGURATION.md)) and env-only mode (one source, one view, from environment variables).
 3. Create a **read-only** token and keep it in an environment variable or a secret, not in the config file.
-4. Run `execution-view check` against your real repositories before exposing the service.
+4. Run `forge-desk check` against your real repositories before exposing the service.
 
 ## Docker
 
@@ -36,10 +36,10 @@ docker pull ghcr.io/brunoorsolon/execution-view:1
 
 Tags: the exact version (`1.0.0`), the minor (`1.0`), the major (`1`, used in these examples: it follows the newest 1.x release) and `latest`. Pin an exact version if you want to upgrade by hand.
 
-To build the image yourself instead (for example to test unreleased changes), run this from the repository root and use `execution-view` as the image name in the commands below:
+To build the image yourself instead (for example to test unreleased changes), run this from the repository root and use `forge-desk` as the image name in the commands below:
 
 ```sh
-docker build -t execution-view .
+docker build -t forge-desk .
 ```
 
 The image is a multi-stage build on `node:22-alpine`: it compiles the server and the web UI, then keeps only production dependencies and the compiled output. Its final stage also contains real `git`, OpenSSH `ssh` and util-linux `flock`, so the same image can publish releases; a planning-only container never uses them. It runs as the non-root user `node`, exposes port 8080, has `EV_HOST=0.0.0.0` and `EV_PORT=8080` set, and its entrypoint is the CLI with the default command `serve`. So `docker run ghcr.io/brunoorsolon/execution-view:1 check` runs the check instead of the server.
@@ -55,13 +55,13 @@ docker run --rm -p 8080:8080 -e EV_CONFIG=/app/config.demo.yaml ghcr.io/brunoors
 ### Env-only (no config file)
 
 ```sh
-docker run -d --name execution-view -p 8080:8080 --restart unless-stopped -e EV_PROVIDER=github -e EV_REPOS=owner/repo -e GITHUB_TOKEN ghcr.io/brunoorsolon/execution-view:1
+docker run -d --name forge-desk -p 8080:8080 --restart unless-stopped -e EV_PROVIDER=github -e EV_REPOS=owner/repo -e GITHUB_TOKEN ghcr.io/brunoorsolon/execution-view:1
 ```
 
 For Gitea add `-e EV_BASE_URL=https://gitea.example.com` and use `-e GITEA_TOKEN`. All variables are listed in [CONFIGURATION.md](CONFIGURATION.md#env-only-mode). Put the variables in a file to keep them out of your shell history and process list:
 
 ```sh
-docker run -d --name execution-view -p 8080:8080 --restart unless-stopped --env-file .env ghcr.io/brunoorsolon/execution-view:1
+docker run -d --name forge-desk -p 8080:8080 --restart unless-stopped --env-file .env ghcr.io/brunoorsolon/execution-view:1
 ```
 
 ### With a config file
@@ -69,7 +69,7 @@ docker run -d --name execution-view -p 8080:8080 --restart unless-stopped --env-
 The image does **not** set `EV_CONFIG`. Without it, the default lookup is `<cwd>/config.yaml`, which is `/app/config.yaml` in the image: mount your file there.
 
 ```sh
-docker run -d --name execution-view -p 8080:8080 --restart unless-stopped -v "$PWD/config.yaml:/app/config.yaml:ro" --env-file .env ghcr.io/brunoorsolon/execution-view:1
+docker run -d --name forge-desk -p 8080:8080 --restart unless-stopped -v "$PWD/config.yaml:/app/config.yaml:ro" --env-file .env ghcr.io/brunoorsolon/execution-view:1
 ```
 
 Notes:
@@ -85,7 +85,7 @@ Notes:
 docker run --rm -v "$PWD/config.yaml:/app/config.yaml:ro" --env-file .env ghcr.io/brunoorsolon/execution-view:1 check
 ```
 
-The exit code is `0`, `1` or `2` (see [PREREQUISITES.md](PREREQUISITES.md#verify-with-execution-view-check)).
+The exit code is `0`, `1` or `2` (see [PREREQUISITES.md](PREREQUISITES.md#verify-with-forge-desk-check)).
 
 The repository also has `scripts/smoke-test.sh`, which builds the image and tests the demo and env-only modes (it is what CI runs).
 
@@ -94,7 +94,7 @@ The repository also has `scripts/smoke-test.sh`, which builds the image and test
 The step-by-step setup is in the README: [Run it on your repo with docker compose](../README.md#run-it-on-your-repo-with-docker-compose). In short, put `docker-compose.yml` (from the repository) in a folder, set your repositories in its `environment:` block, put the token in a `.env` next to it (from `.env.example`), then:
 
 ```sh
-docker compose run --rm execution-view check
+docker compose run --rm forge-desk check
 ```
 
 ```sh
@@ -103,7 +103,7 @@ docker compose up -d
 
 What the compose file does:
 
-- runs `ghcr.io/brunoorsolon/execution-view` pinned to an exact version, as `container_name: execution-view`, publishes `8080:8080` and restarts `unless-stopped`;
+- runs `ghcr.io/brunoorsolon/execution-view` pinned to an exact version, as `container_name: forge-desk`, publishes `8080:8080` and restarts `unless-stopped`;
 - sets the env-only settings (`EV_PROVIDER`, `EV_REPOS`, and `EV_BASE_URL` for Gitea) in `environment:`, and passes the token as `GITHUB_TOKEN=${GITHUB_TOKEN}` (or `GITEA_TOKEN`). Docker Compose fills in `${...}` from `.env` in the same folder; nothing else from `.env` reaches the container. With a config file, keep only the token lines: `tokenEnv: GITHUB_TOKEN` in the config finds them;
 - has a commented-out `volumes:` entry that mounts `./config.yaml` at `/app/config.yaml` for config-file mode. Create the file before you uncomment it, otherwise Docker creates a directory with that name;
 - carries `wud.tag.include` / `wud.tag.exclude` labels so [What's Up Docker](https://getwud.github.io/wud/) reports new releases (exact `X.Y.Z` tags only). They do nothing without it.
@@ -121,7 +121,7 @@ install -d -m 0700 -o 1000 -g 1000 release-state
 # EV_IMAGE must name a Forge Desk image release that ships the release runtime; the Compose file
 # refuses to start without it. Replace `image:` with `build: .` instead to build this repository.
 printf 'EV_IMAGE=ghcr.io/brunoorsolon/execution-view:%s\n' '<release>' >> .env
-docker compose -f docker-compose.release.yml run --rm execution-view check
+docker compose -f docker-compose.release.yml run --rm forge-desk check
 docker compose -f docker-compose.release.yml up -d
 ```
 
@@ -148,30 +148,30 @@ npm start
 `npm start` runs `node dist/server/index.js`, which reads no command-line flags. To pass a config path as a flag, use the CLI:
 
 ```sh
-node dist/cli/index.js serve --config /etc/execution-view/config.yaml
+node dist/cli/index.js serve --config /etc/forge-desk/config.yaml
 ```
 
 Both handle `SIGTERM` and `SIGINT` with a graceful shutdown, and log JSON lines (one per request and event) to standard output. The server must be started from a checkout where `dist/web` is next to `dist/server`, otherwise it serves the API only (with a "web UI is not built" page at `/`). `npm run dev` (which watches `src/`) does not build the web UI.
 
 ## systemd
 
-An example unit for a bare-Node install in `/opt/execution-view` (build it there with `npm ci && npm run build`). This is an example: adapt users, paths and the Node.js path to your system.
+An example unit for a bare-Node install in `/opt/forge-desk` (build it there with `npm ci && npm run build`). This is an example: adapt users, paths and the Node.js path to your system.
 
-`/etc/systemd/system/execution-view.service`:
+`/etc/systemd/system/forge-desk.service`:
 
 ```ini
 [Unit]
-Description=execution-view
+Description=forge-desk
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=execution-view
-Group=execution-view
-WorkingDirectory=/opt/execution-view
-EnvironmentFile=/etc/execution-view/env
-ExecStart=/usr/bin/node dist/cli/index.js serve --config /etc/execution-view/config.yaml
+User=forge-desk
+Group=forge-desk
+WorkingDirectory=/opt/forge-desk
+EnvironmentFile=/etc/forge-desk/env
+ExecStart=/usr/bin/node dist/cli/index.js serve --config /etc/forge-desk/config.yaml
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -183,7 +183,7 @@ ProtectHome=true
 WantedBy=multi-user.target
 ```
 
-`/etc/execution-view/env` (readable only by root, mode `0600`; the file is read by systemd, which then hands the variables to the service):
+`/etc/forge-desk/env` (readable only by root, mode `0600`; the file is read by systemd, which then hands the variables to the service):
 
 ```sh
 GITHUB_TOKEN=ghp_your_token_here
@@ -192,11 +192,11 @@ EV_BASIC_AUTH=admin:change-me
 ```
 
 ```sh
-sudo systemctl daemon-reload && sudo systemctl enable --now execution-view
+sudo systemctl daemon-reload && sudo systemctl enable --now forge-desk
 ```
 
 ```sh
-journalctl -u execution-view -f
+journalctl -u forge-desk -f
 ```
 
 ## Reverse proxy
@@ -295,7 +295,7 @@ The cache TTL still applies as a safety net: a missed or failed delivery only de
 
 ## Health check
 
-`GET /healthz` returns `200` and `{"status":"ok"}`, with no authentication. It only says that the process is up and serving; it does **not** call your tracker. Use `execution-view check` to verify tokens and repositories.
+`GET /healthz` returns `200` and `{"status":"ok"}`, with no authentication. It only says that the process is up and serving; it does **not** call your tracker. Use `forge-desk check` to verify tokens and repositories.
 
 The Docker image already declares a `HEALTHCHECK` (every 30 s, 5 s timeout, 10 s start period, 3 retries) that requests `/healthz` on `EV_PORT`. `docker ps` shows `healthy` when it works.
 
@@ -329,13 +329,15 @@ Docker with compose:
 docker compose pull && docker compose up -d
 ```
 
-Plain Docker: `docker pull ghcr.io/brunoorsolon/execution-view:1`, remove the old container (`docker rm -f execution-view`) and run your usual `docker run` command again. With a pinned version, change the tag first. Release notes are on the [releases page](https://github.com/brunoorsolon/execution-view/releases).
+Plain Docker: `docker pull ghcr.io/brunoorsolon/execution-view:1`, remove the old container (`docker rm -f forge-desk`) and run your usual `docker run` command again. With a pinned version, change the tag first. Release notes are on the [releases page](https://github.com/brunoorsolon/execution-view/releases).
 
-From source: `git pull`, then `docker build -t execution-view .` (or `docker compose up -d --build` with `build: .`).
+From source: `git pull`, then `docker build -t forge-desk .` (or `docker compose up -d --build` with `build: .`).
 
-Bare Node.js: `git pull && npm ci && npm run build`, then restart the service (`sudo systemctl restart execution-view`).
+Bare Node.js: `git pull && npm ci && npm run build`, then restart the service (`sudo systemctl restart forge-desk`).
 
-After every upgrade, run `execution-view check`. The configuration schema is strict, so a key that was removed or renamed makes the app refuse to start with a clear message; compare your `config.yaml` with `config.example.yaml`. Cached snapshots are in memory only and start empty after a restart.
+Coming from a release before the Forge Desk rename: your config, `.env`, `EV_*` variables, image path and release state stay as they are. The current compose files name the service and container `forge-desk`; if you switch to them, remove the old container once with `docker rm -f execution-view` before `docker compose up -d`, because it still holds the port. With plain Docker, do the same and use `--name forge-desk`. An existing systemd unit can keep its name and paths. Scripts and units that call `execution-view` keep working through the CLI alias until the major release that moves the image path; switch them to `forge-desk`. Anything that matches the old tracker `User-Agent` (`execution-view`), the DOT graph id (`digraph "execution-view"`) or the `execution-view listening on` log line must match `forge-desk` instead. The web UI moves a saved theme and line mode to their new storage keys the first time it loads. If you copied `skills/execution-view-issues/` for your agents, replace it with [`skills/forge-desk-issues/`](../skills/forge-desk-issues/SKILL.md).
+
+After every upgrade, run `forge-desk check`. The configuration schema is strict, so a key that was removed or renamed makes the app refuse to start with a clear message; compare your `config.yaml` with `config.example.yaml`. Cached snapshots are in memory only and start empty after a restart.
 
 ## Building the image behind an HTTPS-intercepting proxy
 

@@ -9,12 +9,28 @@ import type { LineMode } from './graph-model.js';
 
 export type ThemePref = 'system' | 'light' | 'dark';
 
-const KEY = 'execution-view:theme';
-const LINES_KEY = 'execution-view:lines';
+const KEY = 'forge-desk:theme';
+const LINES_KEY = 'forge-desk:lines';
+// Keys from before the Forge Desk rename. Remove them, and the fallback in the login page, in the
+// major release that moves the image path, with the `execution-view` CLI alias.
+const LEGACY_KEY = 'execution-view:theme';
+const LEGACY_LINES_KEY = 'execution-view:lines';
+
+/** Reads a preference, moving a value saved under its pre-rename key to the new key. */
+function read(key: string, legacyKey: string): string | null {
+  const v = localStorage.getItem(key);
+  if (v !== null) return v;
+  const old = localStorage.getItem(legacyKey);
+  if (old !== null) {
+    localStorage.setItem(key, old);
+    localStorage.removeItem(legacyKey);
+  }
+  return old;
+}
 
 export function loadTheme(): ThemePref {
   try {
-    const v = localStorage.getItem(KEY);
+    const v = read(KEY, LEGACY_KEY);
     return v === 'light' || v === 'dark' ? v : 'system';
   } catch {
     return 'system';
@@ -39,7 +55,7 @@ export function saveTheme(pref: ThemePref): void {
 
 export function loadLineMode(): LineMode {
   try {
-    const v = localStorage.getItem(LINES_KEY);
+    const v = read(LINES_KEY, LEGACY_LINES_KEY);
     return v === 'selected' || v === 'all' ? v : 'dependencies';
   } catch {
     return 'dependencies';

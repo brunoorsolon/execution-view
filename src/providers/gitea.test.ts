@@ -251,7 +251,7 @@ describe('request construction', () => {
     await p.listOpenIssues(REPO, NONE);
     expect(calls[0]!.headers).toMatchObject({
       Accept: 'application/json',
-      'User-Agent': 'execution-view',
+      'User-Agent': 'forge-desk',
       Authorization: `token ${TOKEN}`,
     });
   });

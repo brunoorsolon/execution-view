@@ -23,7 +23,7 @@ export interface CliDeps {
   providerFor?: (source: ResolvedSource) => IssueProvider;
   now?: () => Date;
   startServer?: typeof startServer;
-  /** Name shown in help and usage. Default: the `execution-view` compatibility name. */
+  /** Name shown in help and usage. Default: `forge-desk`. */
   programName?: string;
   /**
    * Interactive yes/no confirmation for a release publication. Absent when stdin cannot answer,
@@ -34,9 +34,12 @@ export interface CliDeps {
   releasePollMs?: number;
 }
 
-/** The name this CLI was installed as: `forge-desk`, or its `execution-view` compatibility name. */
+/**
+ * The name this CLI was installed as: `forge-desk`, or its pre-rename `execution-view` alias. The
+ * alias keeps existing scripts working; remove it in the major release that moves the image path.
+ */
 export function programNameFor(invokedPath: string | undefined): string {
-  return path.basename(invokedPath ?? '') === 'forge-desk' ? 'forge-desk' : 'execution-view';
+  return path.basename(invokedPath ?? '') === 'execution-view' ? 'execution-view' : 'forge-desk';
 }
 
 /** Exit codes. */
@@ -275,7 +278,7 @@ export async function main(argv: string[], io: CliIo, deps: CliDeps = {}): Promi
 
   const program = new Command();
   program
-    .name(deps.programName ?? 'execution-view')
+    .name(deps.programName ?? 'forge-desk')
     .description('Deterministic dependency graph and execution order for open issues')
     .version(packageVersion())
     .option(

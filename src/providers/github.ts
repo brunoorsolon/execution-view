@@ -165,7 +165,7 @@ export function createGitHubProvider(opts: GitHubProviderOptions): IssueProvider
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
-    'User-Agent': 'execution-view',
+    'User-Agent': 'forge-desk',
   };
   if (opts.token !== null) headers.Authorization = `Bearer ${opts.token}`;
 

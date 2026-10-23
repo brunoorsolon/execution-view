@@ -1,6 +1,6 @@
 # Forge Desk: architecture and contracts
 
-> **Name.** The product is called **Forge Desk**. "execution-view" remains the package, image, repository and CLI alias name used throughout this document, and the image keeps its current registry path `ghcr.io/brunoorsolon/execution-view`.
+> **Name.** The product is called **Forge Desk**; it was previously called execution-view. The repository and the image registry path `ghcr.io/brunoorsolon/execution-view` keep the old name until they are moved ([the name](../README.md#the-name)).
 
 > **Status.** This document was the **implementation contract** for the first
 > version. The code follows it, with the deviations listed below; where they
@@ -758,12 +758,12 @@ Errors: unknown view → 404 `{ error }`; a provider error → 502 `{ error }`
 (no token in the message). Optional basic auth protects everything except
 `/healthz`.
 
-## 15. CLI (`src/cli/index.ts`, bins `forge-desk` and `execution-view`)
+## 15. CLI (`src/cli/index.ts`, bin `forge-desk` and its `execution-view` alias)
 
-- `execution-view serve [--config p]` starts the server.
-- `execution-view views [--config p]` lists views.
-- `execution-view plan <viewId> [--config p] [--format json|md|mermaid|dot] [--out file]` (default format `md`, default output stdout).
-- `execution-view check [--config p]` validates the config, fetches every view,
+- `forge-desk serve [--config p]` starts the server.
+- `forge-desk views [--config p]` lists views.
+- `forge-desk plan <viewId> [--config p] [--format json|md|mermaid|dot] [--out file]` (default format `md`, default output stdout).
+- `forge-desk check [--config p]` validates the config, fetches every view,
   and prints stats and warnings per view. It exits with code 1 on a config or
   fetch error, and code 2 when any view has cycles or dangling references.
   This is how users verify the prerequisites.

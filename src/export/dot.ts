@@ -36,7 +36,7 @@ export function toDot(snapshot: Snapshot): string {
   };
 
   const lines: string[] = [
-    'digraph "execution-view" {',
+    'digraph "forge-desk" {',
     '  rankdir=LR;',
     '  node [shape=box, style="rounded,filled"];',
   ];
